@@ -76,101 +76,115 @@ local STORE_COUNTERS = {
 -- Format: { itemName, storeName, price }
 -- Prices are approximate LT2 in-game values. Update as needed.
 local AB_ITEMS_RAW = {
-    -- ── Wood R Us ────────────────────────────────────────────────────────────
-    { "Basic Hatchet",          "Wood RUs",          10   },
-    { "Plain Axe",              "Wood RUs",          30   },
-    { "Steel Axe",              "Wood RUs",          100  },
-    { "Silver Axe",             "Wood RUs",          340  },
-    { "Golden Axe",             "Wood RUs",          1200 },
-    { "Rukiryaxe",              "Wood RUs",          1200 },
-    { "Beesaxe",                "Wood RUs",          800  },
-    { "Alpha Axe of Testing",   "Wood RUs",          500  },
+    -- ══════════════════════════════════════════════════════════════════
+    -- WOOD R US  (open 24/7 — Main Biome, near spawn)
+    -- Axes (5 always available year-round):
+    -- ══════════════════════════════════════════════════════════════════
+    { "Basic Hatchet",          "Wood RUs",          12      },
+    { "Plain Axe",              "Wood RUs",          90      },
+    { "Steel Axe",              "Wood RUs",          190     },
+    { "Hardened Axe",           "Wood RUs",          550     },
+    { "Silver Axe",             "Wood RUs",          2040    },
+    -- Sawmills:
+    { "Shabby Sawmill",         "Wood RUs",          130     },
+    { "Fair Sawmill",           "Wood RUs",          1600    },
+    { "Sawmax 01",              "Wood RUs",          11000   },
+    { "Sawmax 02",              "Wood RUs",          22500   },
+    { "Sawmax 02L",             "Wood RUs",          86500   },
+    -- Conveyors:
+    { "Straight Conveyor",      "Wood RUs",          80      },
+    { "Tilted Conveyor",        "Wood RUs",          95      },
+    { "Funnel Conveyor",        "Wood RUs",          60      },
+    { "Tight Turn Conveyor",    "Wood RUs",          100     },
+    { "Switch Conveyor",        "Wood RUs",          320     },
+    { "Wood Sweeper",           "Wood RUs",          430     },
+    { "Straight Support",       "Wood RUs",          12      },
+    { "Turn Support",           "Wood RUs",          20      },
+    { "Straight Switch Left",   "Wood RUs",          480     },
+    { "Straight Switch Right",  "Wood RUs",          480     },
+    -- Misc:
+    { "Worklight",              "Wood RUs",          80      },
+    { "Bag of Sand",            "Wood RUs",          1600    },
+    { "Utility Vehicle",        "Wood RUs",          400     },
 
-    -- ── Fancy Furnishings ────────────────────────────────────────────────────
-    { "Door",                   "Fancy Furnishings", 120  },
-    { "Window",                 "Fancy Furnishings", 80   },
-    { "Chair",                  "Fancy Furnishings", 200  },
-    { "Table",                  "Fancy Furnishings", 250  },
-    { "Couch",                  "Fancy Furnishings", 350  },
-    { "Bed",                    "Fancy Furnishings", 450  },
-    { "Bookshelf",              "Fancy Furnishings", 300  },
-    { "Cupboard",               "Fancy Furnishings", 280  },
-    { "Lamp",                   "Fancy Furnishings", 90   },
-    { "Fan",                    "Fancy Furnishings", 95   },
-    { "Candle",                 "Fancy Furnishings", 30   },
-    { "Clock",                  "Fancy Furnishings", 150  },
-    { "Picture Frame",          "Fancy Furnishings", 60   },
-    { "Rug",                    "Fancy Furnishings", 110  },
-    { "Vase",                   "Fancy Furnishings", 75   },
-    { "Flower Pot",             "Fancy Furnishings", 55   },
-    { "Mirror",                 "Fancy Furnishings", 130  },
-    { "Shelf",                  "Fancy Furnishings", 140  },
-    { "Cabinet",                "Fancy Furnishings", 220  },
-    { "Fireplace",              "Fancy Furnishings", 400  },
-    { "Desk",                   "Fancy Furnishings", 260  },
-    { "Piano",                  "Fancy Furnishings", 900  },
-    { "Washing Machine",        "Fancy Furnishings", 320  },
-    { "Toilet",                 "Fancy Furnishings", 180  },
-    { "Bathtub",                "Fancy Furnishings", 280  },
-    { "Shower",                 "Fancy Furnishings", 270  },
-    { "Sink",                   "Fancy Furnishings", 160  },
-    { "Fridge",                 "Fancy Furnishings", 340  },
-    { "Oven",                   "Fancy Furnishings", 310  },
-    { "Stove",                  "Fancy Furnishings", 290  },
-    { "Microwave",              "Fancy Furnishings", 150  },
-    { "Television",             "Fancy Furnishings", 420  },
-    { "Computer Desk",          "Fancy Furnishings", 380  },
-    { "Office Chair",           "Fancy Furnishings", 230  },
-    { "Sofa",                   "Fancy Furnishings", 370  },
-    { "Hammock",                "Fancy Furnishings", 200  },
-    { "End Table",              "Fancy Furnishings", 150  },
-    { "Coffee Table",           "Fancy Furnishings", 190  },
-    { "Dining Table",           "Fancy Furnishings", 300  },
-    { "Bench",                  "Fancy Furnishings", 170  },
-    { "Bar Stool",              "Fancy Furnishings", 140  },
+    -- ══════════════════════════════════════════════════════════════════
+    -- FANCY FURNISHINGS  (Safari — closes at night)
+    -- Glass Panes:
+    -- ══════════════════════════════════════════════════════════════════
+    { "Tiny Glass Pane",        "Fancy Furnishings", 12      },
+    { "Small Glass Pane",       "Fancy Furnishings", 50      },
+    { "Regular Glass Pane",     "Fancy Furnishings", 220     },
+    { "Large Glass Pane",       "Fancy Furnishings", 550     },
+    { "Glass Door",             "Fancy Furnishings", 720     },
+    -- Cabinets & counters:
+    { "Thin Cabinet",           "Fancy Furnishings", 80      },
+    { "Kitchen Cabinet",        "Fancy Furnishings", 150     },
+    { "Corner Cabinet",         "Fancy Furnishings", 150     },
+    { "Wide Corner Cabinet",    "Fancy Furnishings", 220     },
+    { "Short Countertop",       "Fancy Furnishings", 100     },
+    { "Countertop",             "Fancy Furnishings", 180     },
+    { "Corner Countertop",      "Fancy Furnishings", 300     },
+    -- Furniture & lighting:
+    { "Toilet",                 "Fancy Furnishings", 90      },
+    { "Wall Light",             "Fancy Furnishings", 90      },
+    { "Floodlight",             "Fancy Furnishings", 90      },
+    { "Lamp",                   "Fancy Furnishings", 90      },
+    { "Floor Lamp",             "Fancy Furnishings", 110     },
+    { "Armchair",               "Fancy Furnishings", 130     },
+    { "Loveseat",               "Fancy Furnishings", 150     },
+    { "Couch",                  "Fancy Furnishings", 200     },
+    { "Single Bed",             "Fancy Furnishings", 250     },
+    { "Refrigerator",           "Fancy Furnishings", 310     },
+    { "Stove",                  "Fancy Furnishings", 340     },
+    { "Twin Bed",               "Fancy Furnishings", 350     },
+    { "Dishwasher",             "Fancy Furnishings", 380     },
 
-    -- ── Boxed Cars ────────────────────────────────────────────────────────────
-    { "Truck",                  "Boxed Cars",        6800 },
-    { "Trailer",                "Boxed Cars",        3400 },
-    { "Flatbed",                "Boxed Cars",        4200 },
+    -- ══════════════════════════════════════════════════════════════════
+    -- BOXED CARS  (Safari — closes at night)
+    -- ══════════════════════════════════════════════════════════════════
+    { "Utility Vehicle XL",     "Boxed Cars",        5000    },
+    { "Small Trailer",          "Boxed Cars",        1800    },
+    { "531 Hauler",             "Boxed Cars",        13000   },
+    { "Val's All-Purpose Hauler","Boxed Cars",       19000   },
 
-    -- ── Bob's Shack ───────────────────────────────────────────────────────────
-    { "Dynamite",               "Bob's Shack",       150  },
-    { "Fire Extinguisher",      "Bob's Shack",       90   },
-    { "Blueprint",              "Bob's Shack",       200  },
-    { "Fertilizer",             "Bob's Shack",       80   },
+    -- ══════════════════════════════════════════════════════════════════
+    -- BOB'S SHACK  (Mountainside — open 24/7)
+    -- Only permanent, year-round purchasable items:
+    -- ══════════════════════════════════════════════════════════════════
+    { "Dynamite",               "Bob's Shack",       220     },
+    { "Can of Worms",           "Bob's Shack",       3200    },
 
-    -- ── Link's Logic ──────────────────────────────────────────────────────────
-    { "Button",                 "Link's Logic",      40   },
-    { "Pressure Plate",         "Link's Logic",      50   },
-    { "Switch",                 "Link's Logic",      35   },
-    { "Wire",                   "Link's Logic",      10   },
-    { "Basic Gate",             "Link's Logic",      60   },
-    { "NOT Gate",               "Link's Logic",      65   },
-    { "AND Gate",               "Link's Logic",      70   },
-    { "OR Gate",                "Link's Logic",      70   },
-    { "NAND Gate",              "Link's Logic",      80   },
-    { "NOR Gate",               "Link's Logic",      80   },
-    { "XOR Gate",               "Link's Logic",      85   },
-    { "Signal Light",           "Link's Logic",      55   },
-    { "Alarm",                  "Link's Logic",      90   },
-    { "Door Sensor",            "Link's Logic",      75   },
-    { "Counter",                "Link's Logic",      110  },
-    { "Timer",                  "Link's Logic",      120  },
-    { "Delay",                  "Link's Logic",      100  },
-    { "Conveyor",               "Link's Logic",      200  },
-    { "Display",                "Link's Logic",      160  },
-    { "Speaker",                "Link's Logic",      140  },
-    { "Detector",               "Link's Logic",      95   },
+    -- ══════════════════════════════════════════════════════════════════
+    -- LINK'S LOGIC  (Tropics — closes at night)
+    -- ══════════════════════════════════════════════════════════════════
+    { "Wire",                   "Link's Logic",      205     },
+    { "Neon Wires",             "Link's Logic",      720     },
+    { "Button",                 "Link's Logic",      320     },
+    { "Lever",                  "Link's Logic",      520     },
+    { "Pressure Plate",         "Link's Logic",      640     },
+    { "Signal Sustain",         "Link's Logic",      520     },
+    { "Signal Delay",           "Link's Logic",      520     },
+    { "Signal Inverter",        "Link's Logic",      200     },
+    { "AND Gate",               "Link's Logic",      260     },
+    { "OR Gate",                "Link's Logic",      260     },
+    { "XOR Gate",               "Link's Logic",      260     },
+    { "Clock",                  "Link's Logic",      902     },
+    { "Hatch",                  "Link's Logic",      830     },
+    { "Laser",                  "Link's Logic",      11300   },
+    { "Laser Detector",         "Link's Logic",      3200    },
+    { "Wood Detector",          "Link's Logic",      11300   },
 
-    -- ── Fine Art Shop ─────────────────────────────────────────────────────────
-    { "Canvas",                 "Fine Art Shop",     80   },
-    { "Sculpture Block",        "Fine Art Shop",     120  },
-    { "Painting: Landscape",    "Fine Art Shop",     250  },
-    { "Painting: Abstract",     "Fine Art Shop",     220  },
-    { "Painting: Portrait",     "Fine Art Shop",     280  },
-    { "Statue Base",            "Fine Art Shop",     180  },
-    { "Picture",                "Fine Art Shop",     90   },
+    -- ══════════════════════════════════════════════════════════════════
+    -- FINE ARTS SHOP  (inside the Maze)
+    -- All permanently-stocked paintings:
+    -- ══════════════════════════════════════════════════════════════════
+    { "Outdoor Watercolor Sketch","Fine Art Shop",   6        },
+    { "Disturbed Painting",     "Fine Art Shop",     2006    },
+    { "Title Unknown",          "Fine Art Shop",     5980    },
+    { "Arctic Light",           "Fine Art Shop",     16000   },
+    { "Gloomy Seascape at Dusk","Fine Art Shop",     16800   },
+    { "The Lonely Giraffe",     "Fine Art Shop",     26800   },
+    { "Pineapple",              "Fine Art Shop",     2406000 },
 }
 
 -- Build a lookup table by item name
@@ -926,71 +940,11 @@ local function runAutoBuy(remoteTeleport)
     end)
 end
 
--- Action buttons row 1
-do
-    local row = Instance.new("Frame", autoBuyPage)
-    row.Size = UDim2.new(1,-12,0,32); row.BackgroundTransparency = 1
-
-    local tpBtn = Instance.new("TextButton", row)
-    tpBtn.Size = UDim2.new(0.5,-4,1,0); tpBtn.Position = UDim2.new(0,0,0,0)
-    tpBtn.BackgroundColor3 = BTN_COLOR; tpBtn.Font = Enum.Font.GothamSemibold
-    tpBtn.TextSize = 12; tpBtn.TextColor3 = Color3.fromRGB(210,210,220); tpBtn.Text = "Teleport To"
-    Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0,6)
-
-    local remoteTpBtn = Instance.new("TextButton", row)
-    remoteTpBtn.Size = UDim2.new(0.5,-4,1,0); remoteTpBtn.Position = UDim2.new(0.5,4,0,0)
-    remoteTpBtn.BackgroundColor3 = Color3.fromRGB(45,70,55); remoteTpBtn.Font = Enum.Font.GothamSemibold
-    remoteTpBtn.TextSize = 12; remoteTpBtn.TextColor3 = Color3.fromRGB(180,230,200); remoteTpBtn.Text = "Remote Teleport To"
-    Instance.new("UICorner", remoteTpBtn).CornerRadius = UDim.new(0,6)
-
-    for _, b in {tpBtn, remoteTpBtn} do
-        local base = b.BackgroundColor3
-        local hov  = (b == tpBtn) and BTN_HOVER or Color3.fromRGB(60,95,75)
-        b.MouseEnter:Connect(function() TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3=hov}):Play() end)
-        b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3=base}):Play() end)
-    end
-
-    -- "Teleport To" — TP player to the store counter of the selected item
-    tpBtn.MouseButton1Click:Connect(function()
-        if abSelectedItem == "" then setABStatus("No item selected!", false); return end
-        local info = AB_ITEM_LOOKUP[abSelectedItem]
-        if info and STORE_COUNTERS[info.store] then
-            local char = player.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                hrp.CFrame = CFrame.new(STORE_COUNTERS[info.store] + Vector3.new(0,3,0))
-                setABStatus("Teleported to " .. info.store, false)
-            end
-        else
-            -- fallback: search workspace for the item
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                local nm = obj:FindFirstChild("ItemName")
-                local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
-                    or string.lower(obj.Name) == string.lower(abSelectedItem)
-                if nameMatch then
-                    local mp = (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
-                        or (obj:IsA("BasePart") and obj)
-                    if mp then
-                        local char = player.Character
-                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                        if hrp then hrp.CFrame = mp.CFrame * CFrame.new(0,4,3) end
-                        return
-                    end
-                end
-            end
-            setABStatus("Item not found in world", false)
-        end
-    end)
-
-    -- "Remote Teleport To" — buy and send items to destination with cash check
-    remoteTpBtn.MouseButton1Click:Connect(function()
-        if not abCircle then setABStatus("Set a destination first!", false); return end
-        runAutoBuy(true)
-    end)
-end
-
+-- "Buy Items" — finds item on shelf, teleports to it, picks it up, brings to counter,
+-- purchases it, then moves it to the set destination (if any). Repeats for amount.
 createABBtn("Buy Items", function()
-    runAutoBuy(false)
+    -- Always pass true so destination logic runs whenever abCircle is set
+    runAutoBuy(true)
 end)
 
 createABBtn("Cancel", function()
