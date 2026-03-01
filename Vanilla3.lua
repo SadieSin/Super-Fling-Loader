@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════
--- VANILLA3 — AutoBuy Tab + Settings Tab + Search Tab + Vehicle Tab + Input Handler
+-- VANILLA3 — AutoBuy Tab + Settings Tab + Search Tab + Input Handler
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
 local TweenService     = _G.VH.TweenService
@@ -32,160 +32,9 @@ local function getFlyToggleEnabled() return _G.VH.flyToggleEnabled end
 local function getIsFlyEnabled() return _G.VH.isFlyEnabled end
 
 -- ════════════════════════════════════════════════════
--- AUTOBUY TAB (kept empty)
+-- AUTOBUY TAB (tab kept, content intentionally empty)
 -- ════════════════════════════════════════════════════
 local autoBuyPage = pages["AutoBuyTab"]
-
--- ════════════════════════════════════════════════════
--- VEHICLE TAB
--- ════════════════════════════════════════════════════
-local vehiclePage = pages["VehicleTab"]
-
-local flipVehicleBtn = Instance.new("TextButton", vehiclePage)
-flipVehicleBtn.Size = UDim2.new(1,-12,0,32)
-flipVehicleBtn.BackgroundColor3 = BTN_COLOR
-flipVehicleBtn.Text = "Flip Vehicle"
-flipVehicleBtn.Font = Enum.Font.GothamSemibold
-flipVehicleBtn.TextSize = 13
-flipVehicleBtn.TextColor3 = Color3.fromRGB(210,210,220)
-flipVehicleBtn.BorderSizePixel = 0
-Instance.new("UICorner", flipVehicleBtn).CornerRadius = UDim.new(0,6)
-flipVehicleBtn.MouseEnter:Connect(function()
-    TweenService:Create(flipVehicleBtn, TweenInfo.new(0.15), {BackgroundColor3 = BTN_HOVER}):Play()
-end)
-flipVehicleBtn.MouseLeave:Connect(function()
-    TweenService:Create(flipVehicleBtn, TweenInfo.new(0.15), {BackgroundColor3 = BTN_COLOR}):Play()
-end)
-
-local isFlipping = false
-
-flipVehicleBtn.MouseButton1Click:Connect(function()
-    if isFlipping then return end
-
-    local char = player.Character
-    if not char then return end
-    local hum = char:FindFirstChild("Humanoid")
-    if not hum or not hum.SeatPart then return end
-
-    local seat = hum.SeatPart
-    local vehicle = seat.Parent
-
-    -- Collect all BaseParts in the vehicle
-    local parts = {}
-    for _, p in ipairs(vehicle:GetDescendants()) do
-        if p:IsA("BasePart") then table.insert(parts, p) end
-    end
-    if #parts == 0 then return end
-
-    -- Find root part to use as the rotation pivot
-    local root = vehicle.PrimaryPart
-    if not root then
-        for _, p in ipairs(parts) do
-            if p.Name == "Main" or p.Name == "Body" or p.Name == "Chassis" then
-                root = p; break
-            end
-        end
-        if not root then root = parts[1] end
-    end
-    if not root then return end
-
-    isFlipping = true
-
-    -- Unseat the player cleanly without fling
-    hum.Sit = false
-    task.wait(0.06)
-
-    -- Anchor all parts to take over positioning from physics
-    local wasAnchored = {}
-    for _, p in ipairs(parts) do
-        wasAnchored[p] = p.Anchored
-        p.Anchored = true
-    end
-
-    -- Smoothstep easing (S-curve, feels natural)
-    local function ss(t)
-        t = math.clamp(t, 0, 1)
-        return t * t * (3 - 2 * t)
-    end
-
-    -- ── Phase 1: Lift +8 studs over 0.3s ────────────────────
-    local LIFT_H = 8
-    local LIFT_STEPS = 18
-    local LIFT_TIME = 0.3
-
-    local startCFs = {}
-    for _, p in ipairs(parts) do startCFs[p] = p.CFrame end
-
-    for i = 1, LIFT_STEPS do
-        local dy = LIFT_H * ss(i / LIFT_STEPS)
-        for _, p in ipairs(parts) do
-            if p and p.Parent then
-                p.CFrame = startCFs[p] + Vector3.new(0, dy, 0)
-            end
-        end
-        task.wait(LIFT_TIME / LIFT_STEPS)
-    end
-
-    -- ── Phase 2: Rotate 180° around Z axis over 0.5s ────────
-    -- Pivots every part around the root's current lifted CFrame,
-    -- preserving each part's relative offset so the vehicle stays intact.
-    local ROTATE_STEPS = 30
-    local ROTATE_TIME = 0.5
-
-    local pivotCF = root.CFrame
-    local offsets = {}
-    for _, p in ipairs(parts) do
-        if p and p.Parent then
-            offsets[p] = pivotCF:ToObjectSpace(p.CFrame)
-        end
-    end
-
-    for i = 1, ROTATE_STEPS do
-        local angle = math.pi * ss(i / ROTATE_STEPS)
-        -- Rotate purely on Z so the top goes backward and wheels end up pointing down
-        local newPivot = CFrame.new(pivotCF.Position)
-            * CFrame.fromMatrix(pivotCF.XVector, pivotCF.YVector, pivotCF.ZVector)
-            * CFrame.Angles(0, 0, angle)
-        for _, p in ipairs(parts) do
-            if p and p.Parent and offsets[p] then
-                p.CFrame = newPivot * offsets[p]
-            end
-        end
-        task.wait(ROTATE_TIME / ROTATE_STEPS)
-    end
-
-    -- ── Phase 3: Lower back to ground (original Y + 1 stud) over 0.3s ──
-    local DROP_STEPS = 18
-    local DROP_TIME = 0.3
-
-    local postRotCFs = {}
-    for _, p in ipairs(parts) do
-        if p and p.Parent then postRotCFs[p] = p.CFrame end
-    end
-
-    local targetY   = startCFs[root].Position.Y + 1
-    local currentY  = root.CFrame.Position.Y
-    local dropDelta = targetY - currentY   -- negative = dropping down
-
-    for i = 1, DROP_STEPS do
-        local dy = dropDelta * ss(i / DROP_STEPS)
-        for _, p in ipairs(parts) do
-            if p and p.Parent and postRotCFs[p] then
-                p.CFrame = postRotCFs[p] + Vector3.new(0, dy, 0)
-            end
-        end
-        task.wait(DROP_TIME / DROP_STEPS)
-    end
-
-    -- Restore physics to all parts
-    for _, p in ipairs(parts) do
-        if p and p.Parent then
-            p.Anchored = wasAnchored[p] or false
-        end
-    end
-
-    isFlipping = false
-end)
 
 -- ════════════════════════════════════════════════════
 -- SETTINGS TAB
@@ -221,7 +70,7 @@ keybindButtonGUI.MouseLeave:Connect(function() TweenService:Create(keybindButton
 local searchPage = pages["SearchTab"]
 local searchInput = Instance.new("TextBox", searchPage)
 searchInput.Size = UDim2.new(1,-28,0,42); searchInput.BackgroundColor3 = Color3.fromRGB(22,22,28)
-searchInput.PlaceholderText = "Search for functions or tabs..."; searchInput.Text = ""
+searchInput.PlaceholderText = "🔍 Search for functions or tabs..."; searchInput.Text = ""
 searchInput.Font = Enum.Font.GothamSemibold; searchInput.TextSize = 15
 searchInput.TextColor3 = Color3.fromRGB(220,220,220); searchInput.TextXAlignment = Enum.TextXAlignment.Left
 searchInput.ClearTextOnFocus = false
@@ -245,7 +94,6 @@ local function updateSearchResults(query)
         {"Clear Selection", "ItemTab"}, {"Set Destination", "ItemTab"},
         {"GUI Keybind", "SettingsTab"},
         {"Home", "HomeTab"}, {"Ping", "HomeTab"}, {"Rejoin", "HomeTab"},
-        {"Flip Vehicle", "VehicleTab"},
     }
 
     local seen = {}
@@ -255,7 +103,7 @@ local function updateSearchResults(query)
                 seen[name.."Tab"] = true
                 local resBtn = Instance.new("TextButton", searchPage)
                 resBtn.Size = UDim2.new(1,-28,0,42); resBtn.BackgroundColor3 = Color3.fromRGB(22,22,28)
-                resBtn.Text = "   " .. name .. " Tab"; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
+                resBtn.Text = "📂  " .. name .. " Tab"; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
                 resBtn.TextColor3 = Color3.fromRGB(200,200,200); resBtn.TextXAlignment = Enum.TextXAlignment.Left
                 Instance.new("UIPadding", resBtn).PaddingLeft = UDim.new(0,16)
                 Instance.new("UICorner", resBtn).CornerRadius = UDim.new(0,10)
@@ -272,7 +120,7 @@ local function updateSearchResults(query)
                 seen[fname] = true
                 local resBtn = Instance.new("TextButton", searchPage)
                 resBtn.Size = UDim2.new(1,-28,0,42); resBtn.BackgroundColor3 = Color3.fromRGB(18,22,30)
-                resBtn.Text = "   " .. fname; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
+                resBtn.Text = "⚙  " .. fname; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
                 resBtn.TextColor3 = Color3.fromRGB(180,210,255); resBtn.TextXAlignment = Enum.TextXAlignment.Left
                 Instance.new("UIPadding", resBtn).PaddingLeft = UDim.new(0,16)
                 Instance.new("UICorner", resBtn).CornerRadius = UDim.new(0,10)
