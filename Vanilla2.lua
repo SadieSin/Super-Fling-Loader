@@ -160,10 +160,12 @@ createWorldToggle("Walk On Water", false, function(v)
 end)
 
 createWorldToggle("Remove Water", false, function(v)
+    -- Track state so onExit can restore water if gui is closed while active
+    if _G.VH and _G.VH.setRemovedWater then _G.VH.setRemovedWater(v) end
     for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
         if p:IsA("Part") and p.Name == "Water" then
             p.Transparency = v and 1 or 0.5
-            p.CanCollide = false
+            p.CanCollide   = false
         end
     end
 end)
@@ -819,7 +821,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                                 Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
                             end
                             RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                            task.wait(0.8) -- ← updated from 0.1
+                            task.wait(0.6) -- ← updated from 0.1
                             item.CFrame = data.TargetCFrame
                             cargoDone = cargoTotal - #retryList
                             setProgTrucks(cargoDone, cargoTotal)
