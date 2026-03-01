@@ -374,32 +374,130 @@ table.insert(cleanupTasks, function()
     if spawnThread then pcall(task.cancel, spawnThread); spawnThread = nil end
 end)
 
--- Helper: check if a vehicle matches the target BrickColor
-local function vehicleMatchesColor(vehicleModel, targetBrickColorName)
-    local bc = BrickColor.new(targetBrickColorName)
-    -- Check paint parts or main part color
-    local paintParts = vehicleModel:FindFirstChild("PaintParts")
-    if paintParts then
-        for _, part in ipairs(paintParts:GetChildren()) do
-            if part:IsA("BasePart") and part.BrickColor == bc then
-                return true
+-- Helper: find the spawner model that owns this spawn button part.
+-- In LT2, ButtonRemote_SpawnButton is a direct child of the spawner Model
+-- (e.g. workspace.PlayerModels.Pickup1.ButtonRemote_SpawnButton).
+-- The spawner model itself also has an Owner ObjectValue pointing to the Player.
+local function getSpawnerModel(spawnButtonPart)
+    local parent = spawnButtonPart.Parent
+    if parent and parent:IsA("Model") then return parent end
+    -- One level up as fallback
+    if parent and parent.Parent and parent.Parent:IsA("Model") then return parent.Parent end
+    return nil
+end
+
+-- Helper: given a spawner model, find the live vehicle model that was spawned by it.
+-- LT2 vehicles in workspace.PlayerModels have a "LinkedSpawner" ObjectValue pointing
+-- back to their spawner, OR they are nearby the spawner and have the same Owner.
+-- We use a proximity + Owner match approach since LinkedSpawner may not always be present.
+local function findVehicleForSpawner(spawnerModel)
+    local playerModels = workspace:FindFirstChild("PlayerModels")
+    if not playerModels then return nil end
+
+    -- Get spawner position for proximity check
+    local spawnerPart = spawnerModel:FindFirstChildWhichIsA("BasePart")
+    local spawnerPos = spawnerPart and spawnerPart.Position
+
+    -- Try LinkedSpawner first (most reliable)
+    for _, model in ipairs(playerModels:GetChildren()) do
+        if model ~= spawnerModel and model:IsA("Model") then
+            local ls = model:FindFirstChild("LinkedSpawner")
+            if ls and ls:IsA("ObjectValue") and ls.Value == spawnerModel then
+                if model:FindFirstChild("DriveSeat") or model:FindFirstChild("VehicleSeat") then
+                    return model
+                end
             end
         end
     end
-    -- Fallback: check any part named "Body" or the primary part
-    local body = vehicleModel:FindFirstChild("Body") or vehicleModel.PrimaryPart
-    if body and body:IsA("BasePart") and body.BrickColor == bc then
-        return true
+
+    -- Fallback: match by Owner ObjectValue == player AND proximity to spawner
+    local ownerVal_spawner = spawnerModel:FindFirstChild("Owner")
+    for _, model in ipairs(playerModels:GetChildren()) do
+        if model ~= spawnerModel and model:IsA("Model") then
+            if model:FindFirstChild("DriveSeat") or model:FindFirstChild("VehicleSeat") then
+                local ownerVal = model:FindFirstChild("Owner")
+                local ownerMatch = false
+                if ownerVal then
+                    -- Owner can be ObjectValue (pointing to Player) or StringValue (name)
+                    if ownerVal:IsA("ObjectValue") then
+                        ownerMatch = (ownerVal.Value == player)
+                    elseif ownerVal:IsA("StringValue") then
+                        ownerMatch = (ownerVal.Value == player.Name)
+                    end
+                end
+                if ownerMatch then
+                    -- Proximity check: vehicle should be within 100 studs of spawner
+                    if spawnerPos then
+                        local vPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+                        if vPart and (vPart.Position - spawnerPos).Magnitude < 100 then
+                            return model
+                        end
+                    else
+                        return model
+                    end
+                end
+            end
+        end
     end
+    return nil
+end
+
+-- Helper: check if a vehicle model matches the target BrickColor.
+-- LT2 vehicles store their body color on PaintParts children OR directly on a part named "Body".
+-- We check the majority color: if most painted parts match, it's a match.
+local function vehicleMatchesColor(vehicleModel, targetBrickColorName)
+    local bc = BrickColor.new(targetBrickColorName)
+
+    -- Check PaintParts folder first (most reliable in LT2)
+    local paintParts = vehicleModel:FindFirstChild("PaintParts")
+    if paintParts then
+        local total, matched = 0, 0
+        for _, part in ipairs(paintParts:GetDescendants()) do
+            if part:IsA("BasePart") then
+                total += 1
+                if part.BrickColor == bc then matched += 1 end
+            end
+        end
+        if total > 0 then
+            -- More than half the painted parts match = correct color
+            return (matched / total) >= 0.5
+        end
+    end
+
+    -- Fallback: scan all BaseParts in the model for a majority color match
+    local total, matched = 0, 0
+    for _, part in ipairs(vehicleModel:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            -- Skip wheels, glass, axles — only count "body" colored parts
+            local n = string.lower(part.Name)
+            if not (n:find("wheel") or n:find("axle") or n:find("glass")
+                    or n:find("window") or n:find("seat") or n:find("hinge")
+                    or n:find("weld") or n:find("light") or n:find("chrome")) then
+                total += 1
+                if part.BrickColor == bc then matched += 1 end
+            end
+        end
+    end
+    if total > 0 then return (matched / total) >= 0.4 end
     return false
 end
 
--- The spawning loop: fires the spawn button remote every 1.5s (server-side),
--- checks after each fire if the spawned vehicle matches the selected color.
--- If it does, stops. Otherwise keeps cycling until cancelled or max attempts.
+-- The spawning loop.
+-- Flow per iteration:
+--   1. Fire ButtonRemote_SpawnButton via RemoteProxy (server respawn, same as pressing E)
+--   2. Wait 1.5s for the server to destroy the old vehicle and spawn a new one
+--   3. Find the newly spawned vehicle linked to this spawner
+--   4. Check its color — if match, stop; otherwise repeat
 local function runSpawnLoop(spawnButtonPart)
     local RS = game:GetService("ReplicatedStorage")
+    local remoteProxy = RS:FindFirstChild("Interaction") and RS.Interaction:FindFirstChild("RemoteProxy")
+    if not remoteProxy then
+        setSpawnStatus("RemoteProxy not found!", false)
+        isSpawning = false; spawnThread = nil; return
+    end
+
     local targetBrickName = colorToBrickColor[selectedColor] or "Medium stone grey"
+    local spawnerModel = getSpawnerModel(spawnButtonPart)
     local maxAttempts = 300
     local attempt = 0
 
@@ -407,50 +505,50 @@ local function runSpawnLoop(spawnButtonPart)
 
     while isSpawning and attempt < maxAttempts do
         attempt = attempt + 1
+        setSpawnStatus("Attempt " .. attempt .. "...", true)
 
-        -- Fire the SpawnButton remote server-side (equivalent to pressing E on the spawn button)
+        -- Fire the spawn button (server-side respawn — same as the player pressing E on the orange cylinder)
         pcall(function()
-            RS.Interaction.RemoteProxy:FireServer(spawnButtonPart)
+            remoteProxy:FireServer(spawnButtonPart)
         end)
 
-        -- Wait 1.5 seconds for the vehicle to spawn/cycle on the server
+        -- Wait 1.5 seconds for the server to process the respawn and stream the new vehicle
         task.wait(1.5)
-
         if not isSpawning then break end
 
-        -- Check workspace.PlayerModels for a vehicle owned by the local player
-        -- that matches the selected BrickColor
-        local found = false
-        pcall(function()
+        -- Find the vehicle that belongs to this spawner
+        local vehicleModel = nil
+        if spawnerModel then
+            vehicleModel = findVehicleForSpawner(spawnerModel)
+        else
+            -- No spawner model found — fall back to any vehicle owned by the player
             local playerModels = workspace:FindFirstChild("PlayerModels")
-            if not playerModels then return end
-            for _, model in ipairs(playerModels:GetChildren()) do
-                local ownerVal = model:FindFirstChild("Owner")
-                if ownerVal and tostring(ownerVal.Value) == player.Name then
-                    if model:FindFirstChild("DriveSeat") or model:FindFirstChild("VehicleSeat") then
-                        if vehicleMatchesColor(model, targetBrickName) then
-                            found = true
+            if playerModels then
+                for _, model in ipairs(playerModels:GetChildren()) do
+                    if model:IsA("Model") and (model:FindFirstChild("DriveSeat") or model:FindFirstChild("VehicleSeat")) then
+                        local ov = model:FindFirstChild("Owner")
+                        if ov then
+                            local match = (ov:IsA("ObjectValue") and ov.Value == player)
+                                       or (ov:IsA("StringValue") and ov.Value == player.Name)
+                            if match then vehicleModel = model; break end
                         end
                     end
                 end
             end
-        end)
-
-        if found then
-            setSpawnStatus("Found: " .. selectedColor .. "!", false)
-            isSpawning = false
-            break
         end
 
-        setSpawnStatus("Attempt " .. attempt .. " — cycling...", true)
+        if vehicleModel then
+            if vehicleMatchesColor(vehicleModel, targetBrickName) then
+                setSpawnStatus("Found " .. selectedColor .. "! Done.", false)
+                isSpawning = false
+                break
+            end
+        end
+        -- Color didn't match (or vehicle not found yet) — loop and fire again
     end
 
     if isSpawning then
-        -- Loop ended due to maxAttempts, not cancel or find
-        setSpawnStatus("Max attempts reached (" .. maxAttempts .. ")", false)
-    elseif attempt > 0 then
-        -- Only overwrite status if we didn't already set "Found" or "Cancelled"
-        -- (the cancel button sets its own status, found sets its own above)
+        setSpawnStatus("Max attempts reached.", false)
     end
 
     isSpawning = false
