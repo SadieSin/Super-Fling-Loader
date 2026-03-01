@@ -13,6 +13,7 @@ end
 
 -- Nuke leftover _G.VH table completely
 if _G.VH then
+    -- Cancel any running dupe thread
     if _G.VH.butter and _G.VH.butter.running then
         _G.VH.butter.running = false
         if _G.VH.butter.thread then pcall(task.cancel, _G.VH.butter.thread) end
@@ -107,19 +108,16 @@ local player           = Players.LocalPlayer
 -- ════════════════════════════════════════════════════
 -- CLEANUP REGISTRY
 -- ════════════════════════════════════════════════════
-local cleanupTasks  = {}
+local cleanupTasks = {}
 local butterRunning = false
 local butterThread  = nil
 
--- Track original fog/water values so cleanup can properly restore them
-local _origFogEnd   = game:GetService("Lighting").FogEnd
-local _origFogStart = game:GetService("Lighting").FogStart
-local _removedWater = false  -- set true when Remove Water is active
-
 local function onExit()
+    -- Stop dupe if running
     butterRunning = false
     if butterThread then pcall(task.cancel, butterThread); butterThread = nil end
 
+    -- Cancel butter via _G.VH if Vanilla2 set it
     if _G.VH and _G.VH.butter then
         _G.VH.butter.running = false
         if _G.VH.butter.thread then
@@ -128,25 +126,15 @@ local function onExit()
         end
     end
 
-    for _, fn in ipairs(cleanupTasks) do pcall(fn) end
-    cleanupTasks = {}
-
-    -- Restore water if Remove Water was active
-    if _removedWater then
-        pcall(function()
-            for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
-                if p:IsA("Part") and p.Name == "Water" then
-                    p.Transparency = 0.5
-                    p.CanCollide   = false
-                end
-            end
-        end)
-        _removedWater = false
+    -- Run all registered cleanup functions
+    for _, fn in ipairs(cleanupTasks) do
+        pcall(fn)
     end
+    cleanupTasks = {}
 
     -- Hard-restore humanoid state
     pcall(function()
-        local lp   = game:GetService("Players").LocalPlayer
+        local lp = game:GetService("Players").LocalPlayer
         local char = lp and lp.Character
         if not char then return end
         local hum = char:FindFirstChild("Humanoid")
@@ -168,18 +156,21 @@ local function onExit()
         end
     end)
 
+    -- Destroy teleport circle marker if it survived
     pcall(function()
         if workspace:FindFirstChild("VanillaHubTpCircle") then
             workspace.VanillaHubTpCircle:Destroy()
         end
     end)
 
+    -- Nuke walk-on-water planes left by Vanilla2
     pcall(function()
         for _, obj in ipairs(workspace:GetChildren()) do
             if obj.Name == "WalkWaterPlane" then obj:Destroy() end
         end
     end)
 
+    -- Nuke the shared globals table so Vanilla2/3 can't fire stale references
     _G.VH = nil
     _G.VanillaHubCleanup = nil
 end
@@ -195,6 +186,7 @@ table.insert(cleanupTasks, function()
     if gui and gui.Parent then gui:Destroy() end
 end)
 
+-- Register cleanup in _G immediately so a second execute can kill this run
 _G.VanillaHubCleanup = onExit
 
 local main = Instance.new("Frame", gui)
@@ -211,28 +203,24 @@ TweenService:Create(main, TweenInfo.new(0.65, Enum.EasingStyle.Back, Enum.Easing
     BackgroundTransparency = 0
 }):Play()
 
--- ════════════════════════════════════════════════════
 -- TOP BAR
--- ════════════════════════════════════════════════════
 local topBar = Instance.new("Frame", main)
 topBar.Size = UDim2.new(1, 0, 0, 38)
 topBar.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
 topBar.BorderSizePixel = 0
 
--- Hub icon (asset id: 91848271495779)
 local hubIcon = Instance.new("ImageLabel", topBar)
-hubIcon.Size               = UDim2.new(0, 26, 0, 26)
-hubIcon.Position           = UDim2.new(0, 8, 0.5, -13)
+hubIcon.Size               = UDim2.new(0, 30, 0, 30)
+hubIcon.Position           = UDim2.new(0, 6, 0.5, -15)
 hubIcon.BackgroundTransparency = 1
 hubIcon.BorderSizePixel    = 0
 hubIcon.ScaleType          = Enum.ScaleType.Fit
-hubIcon.Image              = "rbxassetid://91848271495779"
-Instance.new("UICorner", hubIcon).CornerRadius = UDim.new(0, 4)
+hubIcon.Image = "rbxassetid://91848271495779"
+Instance.new("UICorner", hubIcon).CornerRadius = UDim.new(0, 5)
 
--- Title label (sits right of icon)
 local titleLbl = Instance.new("TextLabel", topBar)
 titleLbl.Size = UDim2.new(1, -90, 1, 0)
-titleLbl.Position = UDim2.new(0, 40, 0, 0)
+titleLbl.Position = UDim2.new(0, 42, 0, 0)
 titleLbl.BackgroundTransparency = 1
 titleLbl.Text = "VanillaHub"
 titleLbl.Font = Enum.Font.GothamBold
@@ -251,9 +239,7 @@ closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 closeBtn.BorderSizePixel = 0
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
 
--- ════════════════════════════════════════════════════
 -- CONFIRM CLOSE DIALOG
--- ════════════════════════════════════════════════════
 local function showConfirmClose()
     if main:FindFirstChild("ConfirmOverlay") then return end
     local overlay = Instance.new("Frame", main)
@@ -328,7 +314,9 @@ local function showConfirmClose()
     cancelBtn2.MouseButton1Click:Connect(function() overlay:Destroy(); dialog:Destroy() end)
     confirmBtn2.MouseButton1Click:Connect(function()
         overlay:Destroy(); dialog:Destroy()
+        -- Full cleanup first (stops fly, noclip, dupe, clears _G.VH, etc.)
         onExit()
+        -- Animate GUI out then destroy it
         local t = TweenService:Create(main, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0),
             BackgroundTransparency = 1
@@ -342,9 +330,7 @@ end
 
 closeBtn.MouseButton1Click:Connect(showConfirmClose)
 
--- ════════════════════════════════════════════════════
 -- DRAG
--- ════════════════════════════════════════════════════
 local dragging, dragStart, startPos = false, nil, nil
 topBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -361,9 +347,7 @@ UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
 end)
 
--- ════════════════════════════════════════════════════
 -- SIDE PANEL
--- ════════════════════════════════════════════════════
 local side = Instance.new("ScrollingFrame", main)
 side.Size = UDim2.new(0, 160, 1, -38)
 side.Position = UDim2.new(0, 0, 0, 38)
@@ -380,18 +364,14 @@ sideLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     side.CanvasSize = UDim2.new(0, 0, 0, sideLayout.AbsoluteContentSize.Y + 24)
 end)
 
--- ════════════════════════════════════════════════════
 -- CONTENT AREA
--- ════════════════════════════════════════════════════
 local content = Instance.new("Frame", main)
 content.Size = UDim2.new(1, -160, 1, -38)
 content.Position = UDim2.new(0, 160, 0, 38)
 content.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 content.BorderSizePixel = 0
 
--- ════════════════════════════════════════════════════
 -- WELCOME POPUP
--- ════════════════════════════════════════════════════
 task.spawn(function()
     task.wait(0.8)
     if not (gui and gui.Parent) then return end
@@ -463,9 +443,7 @@ for _, name in ipairs(tabs) do
     pages[name .. "Tab"] = page
 end
 
--- ════════════════════════════════════════════════════
 -- TAB SWITCHING
--- ════════════════════════════════════════════════════
 local activeTabButton = nil
 local function switchTab(targetName)
     for _, page in pairs(pages) do page.Visible = (page.Name == targetName) end
@@ -516,10 +494,10 @@ switchTab("HomeTab")
 -- ════════════════════════════════════════════════════
 -- GUI TOGGLE
 -- ════════════════════════════════════════════════════
-local currentToggleKey  = Enum.KeyCode.LeftAlt
-local waitingForKeyGUI  = false
-local guiOpen           = true
-local isAnimatingGUI    = false
+local currentToggleKey = Enum.KeyCode.LeftAlt
+local waitingForKeyGUI = false
+local guiOpen = true
+local isAnimatingGUI = false
 local keybindButtonGUI
 
 local function toggleGUI()
@@ -683,14 +661,14 @@ local BTN_COLOR = Color3.fromRGB(45, 45, 50)
 local BTN_HOVER = Color3.fromRGB(70, 70, 80)
 
 local clickSelection = false
-local lassoTool      = false
+local lassoTool = false
 local groupSelection = false
-local selectedItems  = {}
-local tpCircle       = nil
-local isItemTeleporting   = false
+local selectedItems = {}
+local tpCircle = nil
+local isItemTeleporting = false
 local tpProgressContainer = nil
-local tpProgressFill      = nil
-local tpProgressLabel     = nil
+local tpProgressFill = nil
+local tpProgressLabel = nil
 
 local function createSectionLabel(text)
     local lbl = Instance.new("TextLabel", itemPage)
@@ -752,7 +730,7 @@ end
 
 createSectionLabel("Selection Mode")
 createItemToggle("Click Selection", false, function(val) clickSelection = val; if val then lassoTool = false end end)
-createItemToggle("Lasso Tool",      false, function(val) lassoTool = val;      if val then clickSelection = false end end)
+createItemToggle("Lasso Tool", false, function(val) lassoTool = val; if val then clickSelection = false end end)
 createItemToggle("Group Selection", false, function(val) groupSelection = val end)
 createSep()
 
@@ -783,7 +761,7 @@ local function isMoveableItem(model)
         Fence=true,Road=true,Path=true,River=true,Cliff=true,Hill=true,Bridge=true,
     }
     if staticNames[model.Name] then return false end
-    local hasOwner   = model:FindFirstChild("Owner") ~= nil
+    local hasOwner = model:FindFirstChild("Owner") ~= nil
     if not hasOwner then
         local hasItemName = model:FindFirstChild("ItemName") ~= nil
         if not hasItemName then return false end
@@ -831,7 +809,8 @@ local function handleSelection(target, forceSelect)
             end
         end
     else
-        if forceSelect then highlightModel(model)
+        if forceSelect then
+            highlightModel(model)
         else
             if selectedItems[model] then unhighlightModel(model) else highlightModel(model) end
         end
@@ -892,13 +871,14 @@ createItemButton("Teleport Selected Items", function()
     if not tpCircle then return end
     if isItemTeleporting then return end
     isItemTeleporting = true
+
     task.spawn(function()
         local queue = {}
         for model in pairs(selectedItems) do
             if model and model.Parent then table.insert(queue, model) end
         end
         local total = #queue
-        local done  = 0
+        local done = 0
         if tpProgressContainer then
             tpProgressContainer.Visible = true
             tpProgressFill.Size = UDim2.new(0, 0, 1, 0)
@@ -906,12 +886,12 @@ createItemButton("Teleport Selected Items", function()
         end
         for _, model in ipairs(queue) do
             if not isItemTeleporting then break end
-            if not (model and model.Parent) then done += 1; continue end
+            if not (model and model.Parent) then done = done + 1; continue end
             local mainPart = model.PrimaryPart or model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
-            if not mainPart then done += 1; continue end
+            if not mainPart then done = done + 1; continue end
             local char = player.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then done += 1; continue end
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then done = done + 1; continue end
             hrp.CFrame = mainPart.CFrame * CFrame.new(0, 4, 2)
             task.wait(0.12)
             local dragger = game.ReplicatedStorage:FindFirstChild("Interaction")
@@ -925,7 +905,7 @@ createItemButton("Teleport Selected Items", function()
             local hl = selectedItems[model]
             if hl and hl.Parent then hl:Destroy() end
             selectedItems[model] = nil
-            done += 1
+            done = done + 1
             if tpProgressContainer and tpProgressContainer.Visible then
                 local pct = done / math.max(total, 1)
                 TweenService:Create(tpProgressFill, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {
@@ -941,8 +921,8 @@ createItemButton("Teleport Selected Items", function()
             task.delay(1.8, function()
                 if tpProgressContainer then
                     TweenService:Create(tpProgressContainer, TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
-                    TweenService:Create(tpProgressFill,      TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
-                    TweenService:Create(tpProgressLabel,     TweenInfo.new(0.4), {TextTransparency = 1}):Play()
+                    TweenService:Create(tpProgressFill, TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
+                    TweenService:Create(tpProgressLabel, TweenInfo.new(0.4), {TextTransparency = 1}):Play()
                     task.delay(0.45, function()
                         if tpProgressContainer then
                             tpProgressContainer.Visible = false
@@ -958,7 +938,7 @@ createItemButton("Teleport Selected Items", function()
 end)
 
 createItemButton("Cancel Teleport", function() isItemTeleporting = false end)
-createItemButton("Clear Selection",  function() unhighlightAll() end)
+createItemButton("Clear Selection", function() unhighlightAll() end)
 
 do
     local pbWrapper = Instance.new("Frame", itemPage)
@@ -989,8 +969,8 @@ do
     pbFill.BorderSizePixel = 0
     Instance.new("UICorner", pbFill).CornerRadius = UDim.new(1,0)
     tpProgressContainer = pbWrapper
-    tpProgressFill      = pbFill
-    tpProgressLabel     = pbLabel
+    tpProgressFill = pbFill
+    tpProgressLabel = pbLabel
 end
 
 local lassoFrame = Instance.new("Frame", gui)
@@ -1013,7 +993,7 @@ end
 local camera = workspace.CurrentCamera
 local function selectItemsInLasso()
     if not lassoStartPos then return end
-    local cur  = Vector2.new(player:GetMouse().X, player:GetMouse().Y)
+    local cur = Vector2.new(player:GetMouse().X, player:GetMouse().Y)
     local minX = math.min(lassoStartPos.X, cur.X); local maxX = math.max(lassoStartPos.X, cur.X)
     local minY = math.min(lassoStartPos.Y, cur.Y); local maxY = math.max(lassoStartPos.Y, cur.Y)
     for _, obj in ipairs(workspace:GetDescendants()) do
@@ -1029,7 +1009,7 @@ local function selectItemsInLasso()
     end
 end
 
-local mouse           = player:GetMouse()
+local mouse = player:GetMouse()
 local mouseIsDragging = false
 
 mouse.Button1Down:Connect(function()
@@ -1086,7 +1066,7 @@ local statsConn2 = RunService.Heartbeat:Connect(function()
     local hum = char:FindFirstChild("Humanoid")
     if not hum then return end
     if hum.WalkSpeed ~= savedWalkSpeed then hum.WalkSpeed = savedWalkSpeed end
-    if hum.JumpPower  ~= savedJumpPower  then hum.JumpPower  = savedJumpPower  end
+    if hum.JumpPower ~= savedJumpPower then hum.JumpPower = savedJumpPower end
 end)
 table.insert(cleanupTasks, function()
     if statsConn2 then statsConn2:Disconnect(); statsConn2 = nil end
@@ -1169,7 +1149,7 @@ local function createPToggle(text, defaultState, callback)
     circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
     Instance.new("UICorner", circle).CornerRadius = UDim.new(1,0)
     local toggled = defaultState
-    -- ← do NOT fire callback on creation; state matches UI default visually
+    if callback then callback(toggled) end
     local function setToggled(val)
         toggled = val
         TweenService:Create(tb, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
@@ -1212,8 +1192,8 @@ flyKeyLabel.Size = UDim2.new(0.6,0,1,0); flyKeyLabel.Position = UDim2.new(0,10,0
 flyKeyLabel.BackgroundTransparency = 1; flyKeyLabel.Font = Enum.Font.GothamSemibold; flyKeyLabel.TextSize = 13
 flyKeyLabel.TextColor3 = Color3.fromRGB(220,220,220); flyKeyLabel.TextXAlignment = Enum.TextXAlignment.Left
 flyKeyLabel.Text = "Fly Key"
-local currentFlyKey     = Enum.KeyCode.Q
-local waitingForFlyKey  = false
+local currentFlyKey = Enum.KeyCode.Q
+local waitingForFlyKey = false
 local flyKeyBtn = Instance.new("TextButton", flyKeyFrame)
 flyKeyBtn.Size = UDim2.new(0,60,0,22); flyKeyBtn.Position = UDim2.new(1,-68,0.5,-11)
 flyKeyBtn.BackgroundColor3 = BTN_COLOR; flyKeyBtn.Font = Enum.Font.GothamSemibold
@@ -1228,8 +1208,8 @@ flyKeyBtn.MouseButton1Click:Connect(function()
     flyKeyBtn.BackgroundColor3 = Color3.fromRGB(60,100,60)
 end)
 
-local isFlyEnabled    = false
-local flyToggleEnabled = false   -- ← starts false so fly is OFF on load
+local isFlyEnabled = false
+local flyToggleEnabled = true
 local flyBV, flyBG, flyConn
 
 local function stopFly()
@@ -1251,7 +1231,7 @@ local function startFly()
     local char = player.Character
     if not char then isFlyEnabled = false; return end
     local root = char:FindFirstChild("HumanoidRootPart")
-    local hum  = char:FindFirstChild("Humanoid")
+    local hum = char:FindFirstChild("Humanoid")
     if not root or not hum then isFlyEnabled = false; return end
     hum.PlatformStand = true
     flyBV = Instance.new("BodyVelocity", root)
@@ -1262,33 +1242,30 @@ local function startFly()
     flyBG.P = 1e4; flyBG.D = 100
     flyConn = RunService.Heartbeat:Connect(function()
         if not (flyBV and flyBV.Parent and flyBG and flyBG.Parent) then return end
-        local c2   = player.Character
-        local hum2 = c2 and c2:FindFirstChild("Humanoid")
-        local root2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-        if not (hum2 and root2) then return end
+        local char = player.Character
+        local hum = char and char:FindFirstChild("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not (hum and root) then return end
         local cam = workspace.CurrentCamera
-        local cf  = cam.CFrame
+        local cf = cam.CFrame
         local UIS = UserInputService
         local dir = Vector3.zero
-        if UIS:IsKeyDown(Enum.KeyCode.W)          then dir = dir + cf.LookVector end
-        if UIS:IsKeyDown(Enum.KeyCode.S)          then dir = dir - cf.LookVector end
-        if UIS:IsKeyDown(Enum.KeyCode.A)          then dir = dir - cf.RightVector end
-        if UIS:IsKeyDown(Enum.KeyCode.D)          then dir = dir + cf.RightVector end
-        if UIS:IsKeyDown(Enum.KeyCode.Space)      then dir = dir + Vector3.new(0,1,0) end
-        if UIS:IsKeyDown(Enum.KeyCode.LeftShift)  then dir = dir - Vector3.new(0,1,0) end
-        hum2.PlatformStand = true
+        if UIS:IsKeyDown(Enum.KeyCode.W) then dir = dir + cf.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then dir = dir - cf.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then dir = dir - cf.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then dir = dir + cf.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0,1,0) end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0,1,0) end
+        hum.PlatformStand = true
         flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
         flyBV.Velocity = dir.Magnitude > 0 and dir.Unit * flySpeed or Vector3.zero
-        flyBG.CFrame   = cf
+        flyBG.CFrame = cf
     end)
 end
 
 table.insert(cleanupTasks, stopFly)
 
--- Fly toggle — default OFF, callback NOT called on creation
--- (passing false as defaultState and NOT auto-invoking callback means
---  no fly starts automatically)
-local _, setFlyToggle = createPToggle("Fly", false, function(val)
+local _, setFlyToggle = createPToggle("Fly", true, function(val)
     flyToggleEnabled = val
     if val then
         local char = Players.LocalPlayer.Character
@@ -1378,7 +1355,7 @@ _G.VH = {
     stopFly          = stopFly,
     startFly         = startFly,
     butter           = { running = false, thread = nil },
-    flyToggleEnabled = false,      -- ← off by default
+    flyToggleEnabled = true,
     isFlyEnabled     = false,
     currentFlyKey    = Enum.KeyCode.Q,
     waitingForFlyKey = false,
@@ -1386,10 +1363,10 @@ _G.VH = {
     currentToggleKey = currentToggleKey,
     waitingForKeyGUI = waitingForKeyGUI,
     keybindButtonGUI = nil,
-    -- expose water flag so Vanilla2 can set it
-    setRemovedWater  = function(v) _removedWater = v end,
 }
 
+-- Point _G.VanillaHubCleanup at onExit so any future execute or re-execute
+-- will fully tear down this instance before starting fresh.
 _G.VanillaHubCleanup = onExit
 
 print("[VanillaHub] Vanilla1 loaded")
