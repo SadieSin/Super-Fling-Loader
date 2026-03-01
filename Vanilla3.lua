@@ -852,30 +852,34 @@ local function runAutoBuy(remoteTeleport)
             local shelfItem, shelfPart = findShelfItem()
 
             if shelfItem and shelfPart then
-                -- Step 2: Teleport character right next to the shelf item
-                hrp.CFrame = shelfPart.CFrame * CFrame.new(0, 3, 3)
-                task.wait(0.2)
+                -- Step 2: Teleport character directly ON TOP of the shelf item
+                -- so the server registers the player as close enough to pick it up
+                hrp.CFrame = shelfPart.CFrame * CFrame.new(0, 3, 0)
+                task.wait(0.25)
 
                 -- Step 3: Pick up the item (fire ClientIsDragging → item attaches to player)
+                -- This mirrors the exact ClientIsDragging call SimpleSpy shows at start of sequence
                 if dragRemote then
                     pcall(function() dragRemote:FireServer(shelfItem) end)
                 end
-                task.wait(0.15)
+                task.wait(0.2)
 
-                -- Step 4: While holding item, teleport character to the store counter
-                -- The held item will follow the player's position automatically
+                -- Step 4: Move the item to the counter first, then teleport player on top of it.
+                -- Moving item CFrame then snapping HRP on it keeps them co-located so the
+                -- server-side drag joint keeps the item attached to the player at the counter.
                 if counterPos then
-                    hrp.CFrame = CFrame.new(counterPos + Vector3.new(0, 3, 0))
-                    task.wait(0.2)
-
-                    -- Also force the item to be at counter position in case it didn't follow
+                    -- Move the dragged item part to the counter
                     pcall(function()
-                        shelfPart.CFrame = CFrame.new(counterPos + Vector3.new(0, 2, 0))
+                        shelfPart.CFrame = CFrame.new(counterPos + Vector3.new(0, 3, 0))
                     end)
-                    task.wait(0.1)
+                    task.wait(0.05)
+                    -- Teleport player right on top of the item at the counter
+                    hrp.CFrame = CFrame.new(counterPos + Vector3.new(0, 5, 0))
+                    task.wait(0.25)
                 end
 
                 -- Step 5: Fire the buy remote (NPC processes the sale)
+                -- This mirrors the ClientIsDragging → buy → ClientIsDragging sequence in SimpleSpy
                 if buyRemote then
                     pcall(function() buyRemote:FireServer(shelfItem) end)
                 end
