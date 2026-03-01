@@ -374,121 +374,54 @@ table.insert(cleanupTasks, function()
     if spawnThread then pcall(task.cancel, spawnThread); spawnThread = nil end
 end)
 
--- Helper: find the spawner model that owns this spawn button part.
--- In LT2, ButtonRemote_SpawnButton is a direct child of the spawner Model
--- (e.g. workspace.PlayerModels.Pickup1.ButtonRemote_SpawnButton).
--- The spawner model itself also has an Owner ObjectValue pointing to the Player.
-local function getSpawnerModel(spawnButtonPart)
-    local parent = spawnButtonPart.Parent
-    if parent and parent:IsA("Model") then return parent end
-    -- One level up as fallback
-    if parent and parent.Parent and parent.Parent:IsA("Model") then return parent.Parent end
-    return nil
+-- ── HOW LT2 VEHICLE SPAWNING ACTUALLY WORKS ─────────────────────────────────
+-- The spawner model (e.g. workspace.PlayerModels.Pickup1) has:
+--   • ButtonRemote_SpawnButton  — the part you interact with (fires RemoteProxy)
+--   • PaintParts folder         — contains the painted body parts of the CURRENT vehicle
+--                                  These parts get REPLACED each respawn cycle.
+--   • Type StringValue = "Vehicle Spot"
+--
+-- Correct loop (based on working reference scripts):
+--   1. Record the current PaintParts first child as FP (the "old" paint part reference)
+--   2. Fire RemoteProxy:FireServer(ButtonRemote_SpawnButton)  ← respawns the truck
+--   3. Wait in a tight loop (0.05s) until FP no longer exists / has changed
+--      (the old vehicle was destroyed and new one spawned = PaintParts has new children)
+--   4. Get the NEW first PaintPart child = new FP
+--   5. Check new FP.BrickColor.Name == target color → stop if match
+--   6. Otherwise go back to step 1 and repeat every 1.5s
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Get the spawner model from the clicked part.
+-- The user clicks anywhere on the spawner (typically the orange ButtonRemote_SpawnButton).
+-- We need the top-level spawner Model, then find ButtonRemote_SpawnButton inside it recursively.
+local function getSpawnerInfo(clickedPart)
+    -- Walk up to find a Model with Type = "Vehicle Spot"
+    local model = clickedPart
+    for _ = 1, 4 do
+        if model:IsA("Model") then
+            local t = model:FindFirstChild("Type")
+            if t and t:IsA("StringValue") and t.Value == "Vehicle Spot" then
+                local spawnBtn = model:FindFirstChild("ButtonRemote_SpawnButton", true)
+                local paintFolder = model:FindFirstChild("PaintParts", true)
+                return model, spawnBtn, paintFolder
+            end
+        end
+        if model.Parent then model = model.Parent else break end
+    end
+    -- Fallback: just use the parent model and search recursively
+    local parent = clickedPart.Parent
+    if parent then
+        local spawnBtn = parent:FindFirstChild("ButtonRemote_SpawnButton", true)
+        local paintFolder = parent:FindFirstChild("PaintParts", true)
+        if spawnBtn then
+            return parent, spawnBtn, paintFolder
+        end
+    end
+    return nil, nil, nil
 end
 
--- Helper: given a spawner model, find the live vehicle model that was spawned by it.
--- LT2 vehicles in workspace.PlayerModels have a "LinkedSpawner" ObjectValue pointing
--- back to their spawner, OR they are nearby the spawner and have the same Owner.
--- We use a proximity + Owner match approach since LinkedSpawner may not always be present.
-local function findVehicleForSpawner(spawnerModel)
-    local playerModels = workspace:FindFirstChild("PlayerModels")
-    if not playerModels then return nil end
-
-    -- Get spawner position for proximity check
-    local spawnerPart = spawnerModel:FindFirstChildWhichIsA("BasePart")
-    local spawnerPos = spawnerPart and spawnerPart.Position
-
-    -- Try LinkedSpawner first (most reliable)
-    for _, model in ipairs(playerModels:GetChildren()) do
-        if model ~= spawnerModel and model:IsA("Model") then
-            local ls = model:FindFirstChild("LinkedSpawner")
-            if ls and ls:IsA("ObjectValue") and ls.Value == spawnerModel then
-                if model:FindFirstChild("DriveSeat") or model:FindFirstChild("VehicleSeat") then
-                    return model
-                end
-            end
-        end
-    end
-
-    -- Fallback: match by Owner ObjectValue == player AND proximity to spawner
-    local ownerVal_spawner = spawnerModel:FindFirstChild("Owner")
-    for _, model in ipairs(playerModels:GetChildren()) do
-        if model ~= spawnerModel and model:IsA("Model") then
-            if model:FindFirstChild("DriveSeat") or model:FindFirstChild("VehicleSeat") then
-                local ownerVal = model:FindFirstChild("Owner")
-                local ownerMatch = false
-                if ownerVal then
-                    -- Owner can be ObjectValue (pointing to Player) or StringValue (name)
-                    if ownerVal:IsA("ObjectValue") then
-                        ownerMatch = (ownerVal.Value == player)
-                    elseif ownerVal:IsA("StringValue") then
-                        ownerMatch = (ownerVal.Value == player.Name)
-                    end
-                end
-                if ownerMatch then
-                    -- Proximity check: vehicle should be within 100 studs of spawner
-                    if spawnerPos then
-                        local vPart = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
-                        if vPart and (vPart.Position - spawnerPos).Magnitude < 100 then
-                            return model
-                        end
-                    else
-                        return model
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
--- Helper: check if a vehicle model matches the target BrickColor.
--- LT2 vehicles store their body color on PaintParts children OR directly on a part named "Body".
--- We check the majority color: if most painted parts match, it's a match.
-local function vehicleMatchesColor(vehicleModel, targetBrickColorName)
-    local bc = BrickColor.new(targetBrickColorName)
-
-    -- Check PaintParts folder first (most reliable in LT2)
-    local paintParts = vehicleModel:FindFirstChild("PaintParts")
-    if paintParts then
-        local total, matched = 0, 0
-        for _, part in ipairs(paintParts:GetDescendants()) do
-            if part:IsA("BasePart") then
-                total += 1
-                if part.BrickColor == bc then matched += 1 end
-            end
-        end
-        if total > 0 then
-            -- More than half the painted parts match = correct color
-            return (matched / total) >= 0.5
-        end
-    end
-
-    -- Fallback: scan all BaseParts in the model for a majority color match
-    local total, matched = 0, 0
-    for _, part in ipairs(vehicleModel:GetDescendants()) do
-        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-            -- Skip wheels, glass, axles — only count "body" colored parts
-            local n = string.lower(part.Name)
-            if not (n:find("wheel") or n:find("axle") or n:find("glass")
-                    or n:find("window") or n:find("seat") or n:find("hinge")
-                    or n:find("weld") or n:find("light") or n:find("chrome")) then
-                total += 1
-                if part.BrickColor == bc then matched += 1 end
-            end
-        end
-    end
-    if total > 0 then return (matched / total) >= 0.4 end
-    return false
-end
-
--- The spawning loop.
--- Flow per iteration:
---   1. Fire ButtonRemote_SpawnButton via RemoteProxy (server respawn, same as pressing E)
---   2. Wait 1.5s for the server to destroy the old vehicle and spawn a new one
---   3. Find the newly spawned vehicle linked to this spawner
---   4. Check its color — if match, stop; otherwise repeat
-local function runSpawnLoop(spawnButtonPart)
+-- The spawning loop — mirrors the logic of the working reference LT2 car spawner scripts.
+local function runSpawnLoop(clickedPart)
     local RS = game:GetService("ReplicatedStorage")
     local remoteProxy = RS:FindFirstChild("Interaction") and RS.Interaction:FindFirstChild("RemoteProxy")
     if not remoteProxy then
@@ -496,55 +429,88 @@ local function runSpawnLoop(spawnButtonPart)
         isSpawning = false; spawnThread = nil; return
     end
 
+    -- Resolve the spawner model + ButtonRemote_SpawnButton + PaintParts
+    local spawnerModel, spawnBtn, paintFolder = getSpawnerInfo(clickedPart)
+
+    if not spawnBtn then
+        setSpawnStatus("No SpawnButton found! Click the orange button.", false)
+        isSpawning = false; spawnThread = nil; return
+    end
+    if not paintFolder then
+        setSpawnStatus("No PaintParts found on spawner!", false)
+        isSpawning = false; spawnThread = nil; return
+    end
+
     local targetBrickName = colorToBrickColor[selectedColor] or "Medium stone grey"
-    local spawnerModel = getSpawnerModel(spawnButtonPart)
     local maxAttempts = 300
     local attempt = 0
 
-    setSpawnStatus("Spawning for: " .. selectedColor, true)
+    setSpawnStatus("Starting spawn cycle...", true)
+
+    -- Get initial paint part reference (to detect when vehicle respawns)
+    local function getFirstPaintPart()
+        for _, p in ipairs(paintFolder:GetChildren()) do
+            if p:IsA("BasePart") then return p end
+        end
+        return nil
+    end
+
+    local currentFP = getFirstPaintPart()
 
     while isSpawning and attempt < maxAttempts do
         attempt = attempt + 1
-        setSpawnStatus("Attempt " .. attempt .. "...", true)
+        setSpawnStatus("Attempt " .. attempt .. " — firing...", true)
 
-        -- Fire the spawn button (server-side respawn — same as the player pressing E on the orange cylinder)
+        -- Step 1: Fire the spawn button (respawns the vehicle server-side)
         pcall(function()
-            remoteProxy:FireServer(spawnButtonPart)
+            remoteProxy:FireServer(spawnBtn)
         end)
 
-        -- Wait 1.5 seconds for the server to process the respawn and stream the new vehicle
-        task.wait(1.5)
+        -- Step 2: Wait up to 3 seconds for the vehicle to respawn
+        -- We detect respawn by watching for the old paint part to be destroyed
+        -- and a new one to appear in PaintParts
+        local waitStart = tick()
+        local newFP = nil
+        repeat
+            task.wait(0.05)
+            local fp = getFirstPaintPart()
+            -- The vehicle has respawned when:
+            --   a) the old FP no longer exists (parent is nil), OR
+            --   b) a different part object is now first in PaintParts
+            if fp ~= nil and fp ~= currentFP then
+                newFP = fp
+                break
+            end
+            if currentFP == nil and fp ~= nil then
+                newFP = fp
+                break
+            end
+        until (not isSpawning) or (tick() - waitStart > 3)
+
         if not isSpawning then break end
 
-        -- Find the vehicle that belongs to this spawner
-        local vehicleModel = nil
-        if spawnerModel then
-            vehicleModel = findVehicleForSpawner(spawnerModel)
-        else
-            -- No spawner model found — fall back to any vehicle owned by the player
-            local playerModels = workspace:FindFirstChild("PlayerModels")
-            if playerModels then
-                for _, model in ipairs(playerModels:GetChildren()) do
-                    if model:IsA("Model") and (model:FindFirstChild("DriveSeat") or model:FindFirstChild("VehicleSeat")) then
-                        local ov = model:FindFirstChild("Owner")
-                        if ov then
-                            local match = (ov:IsA("ObjectValue") and ov.Value == player)
-                                       or (ov:IsA("StringValue") and ov.Value == player.Name)
-                            if match then vehicleModel = model; break end
-                        end
-                    end
-                end
-            end
-        end
-
-        if vehicleModel then
-            if vehicleMatchesColor(vehicleModel, targetBrickName) then
-                setSpawnStatus("Found " .. selectedColor .. "! Done.", false)
+        -- Step 3: Read the color of the new vehicle
+        if newFP and newFP.Parent then
+            local colorName = newFP.BrickColor.Name
+            setSpawnStatus("Got: " .. colorName .. " | Want: " .. targetBrickName, true)
+            if colorName == targetBrickName then
+                setSpawnStatus("Found " .. selectedColor .. "!", false)
                 isSpawning = false
                 break
             end
+            -- Update reference for next cycle
+            currentFP = newFP
+        else
+            -- Couldn't detect new vehicle yet — update reference and try again
+            currentFP = getFirstPaintPart()
         end
-        -- Color didn't match (or vehicle not found yet) — loop and fire again
+
+        -- Step 4: Wait out the remainder of the 1.5s cycle before firing again
+        local elapsed = tick() - waitStart
+        local remaining = 1.5 - elapsed
+        if remaining > 0 and isSpawning then
+            task.wait(remaining)
+        end
     end
 
     if isSpawning then
@@ -560,9 +526,8 @@ end
 startSpawnBtn.MouseButton1Click:Connect(function()
     if isSpawning then setSpawnStatus("Already spawning!", true) return end
 
-    -- Show instruction popup
     showVehiclePopup("Click on the SpawnButton to begin. The SpawnButton is the spawn button for Lumber Tycoon 2 vehicles, trailers, and all other LT2 vehicles.", 7)
-    setSpawnStatus("Waiting for SpawnButton click...", true)
+    setSpawnStatus("Waiting — click your vehicle spawner...", true)
     spawnClickMode = true
 end)
 
@@ -574,20 +539,18 @@ cancelSpawnBtn.MouseButton1Click:Connect(function()
     setSpawnStatus("Cancelled", false)
 end)
 
--- Mouse click detection for spawn button selection
+-- Mouse click detection: user clicks anywhere on their vehicle spawner.
+-- We pass the clicked part to runSpawnLoop which walks up to find the spawner model,
+-- then resolves ButtonRemote_SpawnButton and PaintParts from it.
 local mouse = player:GetMouse()
 mouse.Button1Down:Connect(function()
     if not spawnClickMode then return end
-
     local target = mouse.Target
     if not target then return end
-
-    -- Accept any part with "spawnbutton" in name (case-insensitive), or whatever the user clicked
-    -- We'll treat any clicked BasePart as the spawn button when in spawnClickMode
     if target:IsA("BasePart") then
         spawnClickMode = false
         isSpawning = true
-        setSpawnStatus("Spawning...", true)
+        setSpawnStatus("Resolving spawner...", true)
         spawnThread = task.spawn(function()
             runSpawnLoop(target)
         end)
