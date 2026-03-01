@@ -78,7 +78,6 @@ local alwaysNightActive = false
 local walkOnWaterConn = nil
 local walkOnWaterParts = {}
 
--- Register world-specific cleanup with the shared task list
 table.insert(cleanupTasks, function()
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
     if walkOnWaterConn then walkOnWaterConn:Disconnect(); walkOnWaterConn = nil end
@@ -584,7 +583,6 @@ local function resetAllDupeProgress()
     resetProgItems(); resetProgGifs(); resetProgWood()
 end
 
--- Register dupe cancellation in the shared cleanup list
 table.insert(cleanupTasks, function()
     if _G.VH and _G.VH.butter then
         _G.VH.butter.running = false
@@ -699,23 +697,14 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        -- ══════════════════════════════════════════
-        -- TRUCK SECTION
-        -- Key fixes:
-        --   1. Snapshot the truck model BEFORE sitting (owner changes on sit)
-        --   2. Teleport the truck explicitly even if it has no cargo (empty trucks)
-        --   3. After all trucks done, warp back to giver plot for leftover slot items
-        --   4. Gifts/items land 2.70 studs above the receiver-side truck
-        -- ══════════════════════════════════════════
         local teleportedParts  = {}
         local ignoredParts     = {}
-        local truckDestPositions = {}  -- receiver-side truck positions, for item placement
+        local truckDestPositions = {}
 
         local ABOVE_TRUCK_Y = 2.70
 
         if getTrucks() and _G.VH.butter.running then
 
-            -- ── Snapshot all giver trucks BEFORE any sitting changes Owner ──
             local giverTrucks = {}
             for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
                 if v.Name == "Owner" and tostring(v.Value) == giverName then
@@ -734,7 +723,6 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
 
                 for _, tModel in ipairs(giverTrucks) do
                     if not _G.VH.butter.running then break end
-                    -- Safety: model must still exist
                     if not (tModel and tModel.Parent) then
                         truckDone += 1; setProgTrucks(truckDone, truckCount); continue
                     end
@@ -744,7 +732,6 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         truckDone += 1; setProgTrucks(truckDone, truckCount); continue
                     end
 
-                    -- Mark all truck parts as ignored before sitting
                     for _, p in ipairs(tModel:GetDescendants()) do
                         if p:IsA("BasePart") then ignoredParts[p] = true end
                     end
@@ -752,7 +739,6 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         if p:IsA("BasePart") then ignoredParts[p] = true end
                     end
 
-                    -- Sit to gain net ownership
                     driveSeat:Sit(Char.Humanoid)
                     local sitTimeout = 0
                     repeat task.wait(0.05); sitTimeout += 0.05; driveSeat:Sit(Char.Humanoid)
@@ -762,14 +748,12 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         truckDone += 1; setProgTrucks(truckDone, truckCount); continue
                     end
 
-                    -- Compute destination CFrame for this truck (giver→receiver offset)
                     local mainPart = tModel:FindFirstChild("Main")
                     local truckSrcCF = mainPart and mainPart.CFrame or tModel:GetPrimaryPartCFrame()
                     local truckDestPos = truckSrcCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                     local truckDestCF  = CFrame.new(truckDestPos) * truckSrcCF.Rotation
                     table.insert(truckDestPositions, truckDestPos)
 
-                    -- Scan cargo in the truck's bounding box
                     local mCF, mSz = tModel:GetBoundingBox()
                     for _, part in ipairs(workspace:GetDescendants()) do
                         if part:IsA("BasePart") and not ignoredParts[part]
@@ -788,7 +772,6 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         end
                     end
 
-                    -- Teleport the truck itself explicitly (covers empty trucks too)
                     tModel:SetPrimaryPartCFrame(truckDestCF)
 
                     local SitPart = Char.Humanoid.SeatPart
@@ -806,7 +789,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                     truckDone += 1; setProgTrucks(truckDone, truckCount)
                 end
 
-                -- Retry missed cargo
+                -- First retry pass after initial wait
                 task.wait(5)
                 local retryList = {}
                 for _, data in ipairs(teleportedParts) do
@@ -836,7 +819,8 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                                 Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
                             end
                             RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                            task.wait(0.1); item.CFrame = data.TargetCFrame; task.wait(0.1)
+                            task.wait(0.6) -- ← updated from 0.1
+                            item.CFrame = data.TargetCFrame
                             cargoDone = cargoTotal - #retryList
                             setProgTrucks(cargoDone, cargoTotal)
                         end
@@ -845,7 +829,6 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 setProgTrucks(cargoTotal, cargoTotal)
             end
 
-            -- Return to giver's base so slot items are within reach
             if _G.VH.butter.running and Char:FindFirstChild("HumanoidRootPart") then
                 setDupeStatus("Returning to giver slot...", true)
                 Char.HumanoidRootPart.CFrame = CFrame.new(GiveBaseOrigin.Position + Vector3.new(0, 5, 0))
@@ -853,8 +836,6 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        -- ── Helpers ──────────────────────────────────────────────────────────
-        -- "above truck" destination: 2.70 studs above the first receiver truck
         local function getAboveTruckCFrame(srcPCF)
             local basePos = (#truckDestPositions > 0)
                 and truckDestPositions[1]
@@ -953,7 +934,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                             end
                             for i=1,50 do task.wait(0.05); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
                             for i=1,200 do part.CFrame = CFrame.new(nPos) * PCF.Rotation end
-                            task.wait(0.5) -- 0.5s pacing
+                            task.wait(0.5)
                             done+=1; setProgWood(done, total)
                         end
                     end
