@@ -2,6 +2,13 @@
 -- VANILLA2 — World Tab + Dupe Tab
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
+
+-- Guard: if _G.VH is missing, Vanilla1 wasn't executed first (or was already cleaned up)
+if not _G.VH then
+    warn("[VanillaHub] Vanilla2: _G.VH not found. Execute Vanilla1 first.")
+    return
+end
+
 local TweenService     = _G.VH.TweenService
 local Players          = _G.VH.Players
 local UserInputService = _G.VH.UserInputService
@@ -65,18 +72,16 @@ local function createWorldToggle(text, defaultState, callback)
     return frame
 end
 
--- ── State variables ──────────────────────────────────
 local worldClockConn = nil
 local alwaysDayActive = false
 local alwaysNightActive = false
 local walkOnWaterConn = nil
 local walkOnWaterParts = {}
 
--- Cleanup world connections on exit
+-- Register world-specific cleanup with the shared task list
 table.insert(cleanupTasks, function()
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
     if walkOnWaterConn then walkOnWaterConn:Disconnect(); walkOnWaterConn = nil end
-    -- Destroy any walk-on-water planes
     for _, p in ipairs(walkOnWaterParts) do
         if p and p.Parent then p:Destroy() end
     end
@@ -85,12 +90,9 @@ table.insert(cleanupTasks, function()
     alwaysNightActive = false
 end)
 
--- ════ ENVIRONMENT panel ════
 createWSectionLabel("Environment")
 
--- Always Day
-local alwaysDayToggle
-alwaysDayToggle = createWorldToggle("Always Day", false, function(v)
+createWorldToggle("Always Day", false, function(v)
     alwaysDayActive = v
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
     if v then
@@ -103,7 +105,6 @@ alwaysDayToggle = createWorldToggle("Always Day", false, function(v)
     end
 end)
 
--- Always Night
 createWorldToggle("Always Night", false, function(v)
     alwaysNightActive = v
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
@@ -117,7 +118,6 @@ createWorldToggle("Always Night", false, function(v)
     end
 end)
 
--- Remove Fog (save original values so toggling off restores them exactly)
 local _origFogEnd   = game:GetService("Lighting").FogEnd
 local _origFogStart = game:GetService("Lighting").FogStart
 createWorldToggle("Remove Fog", false, function(v)
@@ -131,17 +131,13 @@ createWorldToggle("Remove Fog", false, function(v)
     end
 end)
 
--- Shadows (on by default)
 createWorldToggle("Shadows", true, function(v)
     game:GetService("Lighting").GlobalShadows = v
 end)
 
 createWSep()
-
--- ════ WATER panel ════
 createWSectionLabel("Water")
 
--- Walk On Water
 createWorldToggle("Walk On Water", false, function(v)
     if walkOnWaterConn then walkOnWaterConn:Disconnect(); walkOnWaterConn = nil end
     for _, p in ipairs(walkOnWaterParts) do
@@ -164,7 +160,6 @@ createWorldToggle("Walk On Water", false, function(v)
     end
 end)
 
--- Remove Water
 createWorldToggle("Remove Water", false, function(v)
     for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
         if p:IsA("Part") and p.Name == "Water" then
@@ -173,8 +168,9 @@ createWorldToggle("Remove Water", false, function(v)
         end
     end
 end)
+
 -- ════════════════════════════════════════════════════
--- DUPE TAP TAB  (Butter Leak system)
+-- DUPE TAB  (Butter Leak system)
 -- ════════════════════════════════════════════════════
 local dupePage = pages["DupeTab"]
 
@@ -238,36 +234,27 @@ local function createDToggle(text, default, callback)
     return frame, function() return toggled end
 end
 
--- ── PLAYER DROPDOWN ────────────────────────────────────────────────────────────
--- Creates a row with a label and a live-updating dropdown of server players.
--- Returns: frame, getValue() fn
--- makeDupeDropdown: inline-expanding dropdown that grows the container and
--- pushes all sibling content down via the page's UIListLayout.
--- Returns: outerFrame, getValue()
 local function makeDupeDropdown(labelText)
     local selected  = ""
     local isOpen    = false
-    local ITEM_H    = 34   -- height of each player row
-    local MAX_SHOW  = 5    -- max rows before scrolling
-    local HEADER_H  = 40   -- closed height of the whole widget
+    local ITEM_H    = 34
+    local MAX_SHOW  = 5
+    local HEADER_H  = 40
 
-    -- ── Outer container (grows when open) ─────────────────────
     local outer = Instance.new("Frame", dupePage)
     outer.Size             = UDim2.new(1,-12, 0, HEADER_H)
     outer.BackgroundColor3 = Color3.fromRGB(22,22,30)
     outer.BorderSizePixel  = 0
-    outer.ClipsDescendants = true          -- clips the list while animating
+    outer.ClipsDescendants = true
     Instance.new("UICorner", outer).CornerRadius = UDim.new(0,8)
     local outerStroke = Instance.new("UIStroke", outer)
     outerStroke.Color = Color3.fromRGB(60,60,90); outerStroke.Thickness = 1; outerStroke.Transparency = 0.5
 
-    -- ── Header row (always visible) ────────────────────────────
     local header = Instance.new("Frame", outer)
     header.Size             = UDim2.new(1,0,0,HEADER_H)
     header.BackgroundTransparency = 1
     header.BorderSizePixel  = 0
 
-    -- Label on the left
     local lbl = Instance.new("TextLabel", header)
     lbl.Size               = UDim2.new(0,80,1,0)
     lbl.Position           = UDim2.new(0,12,0,0)
@@ -278,7 +265,6 @@ local function makeDupeDropdown(labelText)
     lbl.TextColor3         = Color3.fromRGB(140,140,170)
     lbl.TextXAlignment     = Enum.TextXAlignment.Left
 
-    -- Selected player display (right side, acts as the clickable button)
     local selFrame = Instance.new("Frame", header)
     selFrame.Size             = UDim2.new(1,-96,0,28)
     selFrame.Position         = UDim2.new(0,90,0.5,-14)
@@ -288,7 +274,6 @@ local function makeDupeDropdown(labelText)
     local selStroke = Instance.new("UIStroke", selFrame)
     selStroke.Color = Color3.fromRGB(70,70,110); selStroke.Thickness = 1; selStroke.Transparency = 0.4
 
-    -- Avatar thumbnail (small circle)
     local avatar = Instance.new("ImageLabel", selFrame)
     avatar.Size               = UDim2.new(0,20,0,20)
     avatar.Position           = UDim2.new(0,6,0.5,-10)
@@ -309,7 +294,6 @@ local function makeDupeDropdown(labelText)
     selLbl.TextXAlignment     = Enum.TextXAlignment.Left
     selLbl.TextTruncate       = Enum.TextTruncate.AtEnd
 
-    -- Arrow icon
     local arrowLbl = Instance.new("TextLabel", selFrame)
     arrowLbl.Size               = UDim2.new(0,22,1,0)
     arrowLbl.Position           = UDim2.new(1,-24,0,0)
@@ -320,14 +304,12 @@ local function makeDupeDropdown(labelText)
     arrowLbl.TextColor3         = Color3.fromRGB(120,120,160)
     arrowLbl.TextXAlignment     = Enum.TextXAlignment.Center
 
-    -- Invisible click-capture button over the whole selFrame
     local headerBtn = Instance.new("TextButton", selFrame)
     headerBtn.Size               = UDim2.new(1,0,1,0)
     headerBtn.BackgroundTransparency = 1
     headerBtn.Text               = ""
     headerBtn.ZIndex             = 5
 
-    -- ── Divider ────────────────────────────────────────────────
     local divider = Instance.new("Frame", outer)
     divider.Size             = UDim2.new(1,-16,0,1)
     divider.Position         = UDim2.new(0,8,0,HEADER_H)
@@ -335,10 +317,9 @@ local function makeDupeDropdown(labelText)
     divider.BorderSizePixel  = 0
     divider.Visible          = false
 
-    -- ── Scrolling list (inside the same outer frame) ───────────
     local listScroll = Instance.new("ScrollingFrame", outer)
     listScroll.Position           = UDim2.new(0,0,0,HEADER_H+2)
-    listScroll.Size               = UDim2.new(1,0,0,0)   -- starts at 0 height
+    listScroll.Size               = UDim2.new(1,0,0,0)
     listScroll.BackgroundTransparency = 1
     listScroll.BorderSizePixel    = 0
     listScroll.ScrollBarThickness = 3
@@ -358,7 +339,6 @@ local function makeDupeDropdown(labelText)
     listPad.PaddingLeft   = UDim.new(0,6)
     listPad.PaddingRight  = UDim.new(0,6)
 
-    -- ── Helpers ────────────────────────────────────────────────
     local function setSelected(name, userId)
         selected = name
         selLbl.Text      = name
@@ -387,18 +367,14 @@ local function makeDupeDropdown(labelText)
         end
         local playerList = Players:GetPlayers()
         table.sort(playerList, function(a,b) return a.Name < b.Name end)
-
         for i, plr in ipairs(playerList) do
             local isSelected = (plr.Name == selected)
-
             local row = Instance.new("Frame", listScroll)
             row.Size             = UDim2.new(1,0,0,ITEM_H)
             row.BackgroundColor3 = isSelected and Color3.fromRGB(45,45,75) or Color3.fromRGB(28,28,40)
             row.BorderSizePixel  = 0
             row.LayoutOrder      = i
             Instance.new("UICorner", row).CornerRadius = UDim.new(0,6)
-
-            -- Mini avatar
             local miniAvatar = Instance.new("ImageLabel", row)
             miniAvatar.Size             = UDim2.new(0,22,0,22)
             miniAvatar.Position         = UDim2.new(0,8,0.5,-11)
@@ -411,8 +387,6 @@ local function makeDupeDropdown(labelText)
                     miniAvatar.Image = Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
                 end)
             end)
-
-            -- Player name
             local nameLbl = Instance.new("TextLabel", row)
             nameLbl.Size               = UDim2.new(1,-70,1,0)
             nameLbl.Position           = UDim2.new(0,36,0,0)
@@ -423,8 +397,6 @@ local function makeDupeDropdown(labelText)
             nameLbl.TextColor3         = isSelected and Color3.fromRGB(210,215,255) or Color3.fromRGB(200,200,215)
             nameLbl.TextXAlignment     = Enum.TextXAlignment.Left
             nameLbl.TextTruncate       = Enum.TextTruncate.AtEnd
-
-            -- Checkmark if selected
             if isSelected then
                 local check = Instance.new("TextLabel", row)
                 check.Size               = UDim2.new(0,24,1,0)
@@ -436,14 +408,11 @@ local function makeDupeDropdown(labelText)
                 check.TextColor3         = Color3.fromRGB(120,180,255)
                 check.TextXAlignment     = Enum.TextXAlignment.Center
             end
-
-            -- Click capture
             local rowBtn = Instance.new("TextButton", row)
             rowBtn.Size               = UDim2.new(1,0,1,0)
             rowBtn.BackgroundTransparency = 1
             rowBtn.Text               = ""
             rowBtn.ZIndex             = 5
-
             rowBtn.MouseEnter:Connect(function()
                 if plr.Name ~= selected then
                     TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(38,38,58)}):Play()
@@ -455,20 +424,12 @@ local function makeDupeDropdown(labelText)
                 end
             end)
             rowBtn.MouseButton1Click:Connect(function()
-                -- Toggle: clicking already-selected player deselects them
-                if plr.Name == selected then
-                    clearSelected()
-                else
-                    setSelected(plr.Name, plr.UserId)
-                end
-                -- Rebuild to update checkmarks
+                if plr.Name == selected then clearSelected() else setSelected(plr.Name, plr.UserId) end
                 buildList()
-                -- Close after a tiny delay so the click registers visually
                 task.delay(0.05, function()
                     isOpen = false
                     TweenService:Create(arrowLbl, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation = 0}):Play()
-                    local targetH = HEADER_H
-                    TweenService:Create(outer, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size = UDim2.new(1,-12,0,targetH)}):Play()
+                    TweenService:Create(outer, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size = UDim2.new(1,-12,0,HEADER_H)}):Play()
                     TweenService:Create(listScroll, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size = UDim2.new(1,0,0,0)}):Play()
                     divider.Visible = false
                 end)
@@ -499,8 +460,6 @@ local function makeDupeDropdown(labelText)
     headerBtn.MouseButton1Click:Connect(function()
         if isOpen then closeList() else openList() end
     end)
-
-    -- Hover effect on header
     headerBtn.MouseEnter:Connect(function()
         TweenService:Create(selFrame, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(38,38,55)}):Play()
     end)
@@ -508,27 +467,23 @@ local function makeDupeDropdown(labelText)
         TweenService:Create(selFrame, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(30,30,42)}):Play()
     end)
 
-    -- Live update: player joins
     Players.PlayerAdded:Connect(function()
         if isOpen then
             buildList()
             local count  = #Players:GetPlayers()
             local listH  = math.min(count, MAX_SHOW) * (ITEM_H + 3) + 8
-            local totalH = HEADER_H + 2 + listH
-            outer.Size      = UDim2.new(1,-12,0,totalH)
+            outer.Size      = UDim2.new(1,-12,0,HEADER_H + 2 + listH)
             listScroll.Size = UDim2.new(1,0,0,listH)
         end
     end)
 
-    -- Live update: player leaves
     Players.PlayerRemoving:Connect(function(leaving)
         if leaving.Name == selected then clearSelected() end
         if isOpen then
             buildList()
             local count  = #Players:GetPlayers()
             local listH  = math.min(math.max(count-1,0), MAX_SHOW) * (ITEM_H + 3) + 8
-            local totalH = HEADER_H + 2 + listH
-            outer.Size      = UDim2.new(1,-12,0,totalH)
+            outer.Size      = UDim2.new(1,-12,0,HEADER_H + 2 + listH)
             listScroll.Size = UDim2.new(1,0,0,listH)
         end
     end)
@@ -536,7 +491,6 @@ local function makeDupeDropdown(labelText)
     return outer, function() return selected end
 end
 
--- ── BUILD DUPE TAP UI ─────────────────────────────────────────────────────────
 createDSection("Players")
 local _, getGiverName    = makeDupeDropdown("Giver")
 local _, getReceiverName = makeDupeDropdown("Receiver")
@@ -546,15 +500,14 @@ createDSection("What to Transfer")
 
 local _, getStructures = createDToggle("Structures",      false)
 local _, getFurniture  = createDToggle("Furniture",       false)
-local _, getTrucks     = createDToggle("Truck Load",  false)
+local _, getTrucks     = createDToggle("Truck Load",      false)
 local _, getDupeItems  = createDToggle("Purchased Items", false)
-local _, getGifs       = createDToggle("Gift Items",       false)
+local _, getGifs       = createDToggle("Gift Items",      false)
 local _, getWood       = createDToggle("Wood",            false)
 
 createDSep()
 createDSection("Status")
 
--- Status pill
 local dupeStatusFrame = Instance.new("Frame", dupePage)
 dupeStatusFrame.Size = UDim2.new(1,-12,0,28); dupeStatusFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
 dupeStatusFrame.BorderSizePixel = 0
@@ -574,7 +527,6 @@ local function setDupeStatus(msg, active)
     sdot.BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
 end
 
--- Progress bar helper for dupe tab
 local function makeDupeProgress(labelText)
     local container = Instance.new("Frame", dupePage)
     container.Size = UDim2.new(1,-12,0,44); container.BackgroundColor3 = Color3.fromRGB(18,18,24)
@@ -627,13 +579,25 @@ local progWood,       setProgWood,       resetProgWood       = makeDupeProgress(
 
 createDSep()
 
-
 local function resetAllDupeProgress()
     resetProgStructures(); resetProgFurniture(); resetProgTrucks()
     resetProgItems(); resetProgGifs(); resetProgWood()
 end
 
-local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
+-- Register dupe cancellation in the shared cleanup list
+table.insert(cleanupTasks, function()
+    if _G.VH and _G.VH.butter then
+        _G.VH.butter.running = false
+        if _G.VH.butter.thread then
+            pcall(task.cancel, _G.VH.butter.thread)
+            _G.VH.butter.thread = nil
+        end
+    end
+    setDupeStatus("Stopped", false)
+    resetAllDupeProgress()
+end)
+
+createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
     if _G.VH.butter.running then setDupeStatus("Already running!", true) return end
     local giverName    = getGiverName()
     local receiverName = getReceiverName()
@@ -675,7 +639,6 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             return n
         end
 
-        -- STRUCTURES
         if getStructures() then
             local total = countItems(function(p)
                 return p:FindFirstChild("Type") and tostring(p.Type.Value)=="Structure"
@@ -706,7 +669,6 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        -- FURNITURE
         if getFurniture() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("Type") and tostring(p.Type.Value)=="Furniture" and p:FindFirstChildOfClass("Part")
@@ -737,7 +699,6 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        -- TRUCKS + CARGO
         local teleportedParts = {}
         local ignoredParts    = {}
         local DidTruckTeleport = false
@@ -794,7 +755,6 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         truckDone+=1; setProgTrucks(truckDone, truckCount)
                     end
                 end
-                -- Retry cargo
                 task.wait(5)
                 local retryList = {}
                 for _, data in ipairs(teleportedParts) do
@@ -829,7 +789,6 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        -- ITEM SEND HELPERS
         local function seekNetOwn(part)
             if not _G.VH.butter.running then return end
             if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
@@ -847,7 +806,6 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             task.wait(0.2)
         end
 
-        -- PURCHASED ITEMS
         if getDupeItems() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("PurchasedBoxItemName") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
@@ -872,7 +830,6 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        -- GIF ITEMS
         if getGifs() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChildOfClass("Script") and p:FindFirstChild("DraggableItem")
@@ -899,7 +856,6 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        -- WOOD
         if getWood() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("TreeClass") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
@@ -934,13 +890,12 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
     end)
 end)
 
-local stopDupeBtn = createDBtn("Cancel Dupe", BTN_COLOR, function()
+createDBtn("Cancel Dupe", BTN_COLOR, function()
     _G.VH.butter.running = false
-    if _G.VH.butter.thread then task.cancel(_G.VH.butter.thread) end
+    if _G.VH.butter.thread then pcall(task.cancel, _G.VH.butter.thread) end
     _G.VH.butter.thread = nil
     setDupeStatus("Stopped", false)
     resetAllDupeProgress()
 end)
-
 
 print("[VanillaHub] Vanilla2 loaded")
