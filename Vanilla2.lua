@@ -1,19 +1,16 @@
 -- ════════════════════════════════════════════════════
--- IMPORT SHARED GLOBALS FROM Vanilla1
+-- VANILLA2 — World Tab + Dupe Tab
+-- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
-local TweenService     = _G.VH_TweenService
-local Players          = _G.VH_Players
-local UserInputService = _G.VH_UserInputService
-local RunService       = _G.VH_RunService
-local player           = _G.VH_player
-local cleanupTasks     = _G.VH_cleanupTasks
-local pages            = _G.VH_pages
-local switchTab        = _G.VH_switchTab
-local toggleGUI        = _G.VH_toggleGUI
-local stopFly          = _G.VH_stopFly
-local startFly         = _G.VH_startFly
--- _G.VH_butter.running managed via _G.VH_butter
--- _G.VH_butter.thread managed via _G.VH_butter
+local TweenService     = _G.VH.TweenService
+local Players          = _G.VH.Players
+local UserInputService = _G.VH.UserInputService
+local RunService       = _G.VH.RunService
+local player           = _G.VH.player
+local cleanupTasks     = _G.VH.cleanupTasks
+local pages            = _G.VH.pages
+local BTN_COLOR        = _G.VH.BTN_COLOR
+local BTN_HOVER        = _G.VH.BTN_HOVER
 
 -- ════════════════════════════════════════════════════
 -- WORLD TAB
@@ -637,16 +634,16 @@ local function resetAllDupeProgress()
 end
 
 local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
-    if _G.VH_butter.running then setDupeStatus("Already running!", true) return end
+    if _G.VH.butter.running then setDupeStatus("Already running!", true) return end
     local giverName    = getGiverName()
     local receiverName = getReceiverName()
     if giverName == "" or receiverName == "" then setDupeStatus("Select both players!", false) return end
 
-    _G.VH_butter.running = true
+    _G.VH.butter.running = true
     setDupeStatus("Finding bases...", true)
     resetAllDupeProgress()
 
-    _G.VH_butter.thread = task.spawn(function()
+    _G.VH.butter.thread = task.spawn(function()
         local RS   = game:GetService("ReplicatedStorage")
         local LP   = Players.LocalPlayer
         local Char = LP.Character or LP.CharacterAdded:Wait()
@@ -662,7 +659,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
         end
 
         if not (GiveBaseOrigin and ReceiverBaseOrigin) then
-            setDupeStatus("Couldn't find bases!", false); _G.VH_butter.running=false; return
+            setDupeStatus("Couldn't find bases!", false); _G.VH.butter.running=false; return
         end
 
         local function isPointInside(point, boxCFrame, boxSize)
@@ -689,7 +686,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 setDupeStatus("Sending structures...", true); local done=0
                 pcall(function()
                     for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
-                        if not _G.VH_butter.running then break end
+                        if not _G.VH.butter.running then break end
                         if v.Name=="Owner" and tostring(v.Value)==giverName
                             and v.Parent:FindFirstChild("Type") and tostring(v.Parent.Type.Value)=="Structure"
                             and (v.Parent:FindFirstChildOfClass("Part") or v.Parent:FindFirstChildOfClass("WedgePart")) then
@@ -698,14 +695,9 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                             local DA  = v.Parent:FindFirstChild("BlueprintWoodClass") and v.Parent.BlueprintWoodClass.Value or nil
                             local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                             local Off  = CFrame.new(nPos) * PCF.Rotation
-                            task.spawn(function()
-                                for _=1,30 do
-                                    pcall(function() RS.PlaceStructure.ClientPlacedStructure:FireServer(v.Parent.ItemName.Value, Off, LP, DA, v.Parent, true) end)
-                                    if not v.Parent then break end
-                                    task.wait(0.01)
-                                end
-                            end)
-                            task.wait(0.01)
+                            repeat task.wait()
+                                pcall(function() RS.PlaceStructure.ClientPlacedStructure:FireServer(v.Parent.ItemName.Value, Off, LP, DA, v.Parent, true) end)
+                            until not v.Parent
                             done+=1; setProgStructures(done, total)
                         end
                     end
@@ -715,7 +707,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
         end
 
         -- FURNITURE
-        if getFurniture() and _G.VH_butter.running then
+        if getFurniture() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("Type") and tostring(p.Type.Value)=="Furniture" and p:FindFirstChildOfClass("Part")
             end)
@@ -724,7 +716,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 setDupeStatus("Sending furniture...", true); local done=0
                 pcall(function()
                     for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
-                        if not _G.VH_butter.running then break end
+                        if not _G.VH.butter.running then break end
                         if v.Name=="Owner" and tostring(v.Value)==giverName
                             and v.Parent:FindFirstChild("Type") and tostring(v.Parent.Type.Value)=="Furniture"
                             and v.Parent:FindFirstChildOfClass("Part") then
@@ -734,14 +726,9 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                             local DA  = v.Parent:FindFirstChild("BlueprintWoodClass") and v.Parent.BlueprintWoodClass.Value or nil
                             local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                             local Off  = CFrame.new(nPos) * PCF.Rotation
-                            task.spawn(function()
-                                for _=1,30 do
-                                    pcall(function() RS.PlaceStructure.ClientPlacedStructure:FireServer(v.Parent.ItemName.Value, Off, LP, DA, v.Parent, true) end)
-                                    if not v.Parent then break end
-                                    task.wait(0.01)
-                                end
-                            end)
-                            task.wait(0.01)
+                            repeat task.wait()
+                                pcall(function() RS.PlaceStructure.ClientPlacedStructure:FireServer(v.Parent.ItemName.Value, Off, LP, DA, v.Parent, true) end)
+                            until not v.Parent
                             done+=1; setProgFurniture(done, total)
                         end
                     end
@@ -764,7 +751,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             DidTruckTeleport = true
         end
 
-        if getTrucks() and _G.VH_butter.running then
+        if getTrucks() and _G.VH.butter.running then
             local truckCount = 0
             for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
                 if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("DriveSeat") then truckCount+=1 end
@@ -773,10 +760,10 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 progTrucks.Visible=true; setProgTrucks(0,truckCount)
                 setDupeStatus("Sending trucks...", true); local truckDone=0
                 for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
-                    if not _G.VH_butter.running then break end
+                    if not _G.VH.butter.running then break end
                     if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("DriveSeat") then
                         v.Parent.DriveSeat:Sit(Char.Humanoid)
-                        repeat task.wait(0.05) v.Parent.DriveSeat:Sit(Char.Humanoid) until Char.Humanoid.SeatPart
+                        repeat task.wait() v.Parent.DriveSeat:Sit(Char.Humanoid) until Char.Humanoid.SeatPart
                         local tModel = Char.Humanoid.SeatPart.Parent
                         local mCF, mSz = tModel:GetBoundingBox()
                         for _, p in ipairs(tModel:GetDescendants()) do if p:IsA("BasePart") then ignoredParts[p]=true end end
@@ -800,18 +787,18 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         local DoorHinge = SitPart.Parent:FindFirstChild("PaintParts")
                             and SitPart.Parent.PaintParts:FindFirstChild("DoorLeft")
                             and SitPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
-                        task.wait(0.05)
+                        task.wait()
                         Char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                        task.wait(0.05); SitPart:Destroy(); TeleportTruck(); DidTruckTeleport=false; task.wait(0.05)
+                        task.wait(0.1); SitPart:Destroy(); TeleportTruck(); DidTruckTeleport=false; task.wait(0.1)
                         if DoorHinge then for i=1,10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end end
                         truckDone+=1; setProgTrucks(truckDone, truckCount)
                     end
                 end
                 -- Retry cargo
-                task.wait(2)
+                task.wait(5)
                 local retryList = {}
                 for _, data in ipairs(teleportedParts) do
-                    if (data.Instance.Position - data.TargetCFrame.Position).Magnitude > 10 then
+                    if (data.Instance.Position - data.OldPos).Magnitude < 5 then
                         ignoredParts[data.Instance]=nil; table.insert(retryList, data)
                     end
                 end
@@ -819,50 +806,49 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 local cargoDone  = cargoTotal - #retryList
                 if cargoTotal > 0 then progTrucks.Visible=true; setProgTrucks(cargoDone, cargoTotal) end
                 repeat
-                    task.wait(2); retryList={}
+                    task.wait(5); retryList={}
                     for _, data in ipairs(teleportedParts) do
-                        if (data.Instance.Position - data.TargetCFrame.Position).Magnitude > 10 then table.insert(retryList, data) end
+                        if (data.Instance.Position - data.OldPos).Magnitude < 25 then table.insert(retryList, data) end
                     end
                     if #retryList > 0 then
                         setDupeStatus("Retrying "..#retryList.." cargo...", true)
                         for _, data in ipairs(retryList) do
-                            if not _G.VH_butter.running then break end
+                            if not _G.VH.butter.running then break end
                             local item = data.Instance
-                            if not item or not item.Parent then continue end
                             while (Char.HumanoidRootPart.Position - item.Position).Magnitude > 25 do
-                                Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.05)
+                                Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
                             end
                             RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                            task.wait(0.05); item.CFrame = data.TargetCFrame; task.wait(0.05)
+                            task.wait(0.1); item.CFrame = data.TargetCFrame; task.wait(0.1)
                             cargoDone = cargoTotal - #retryList
                             setProgTrucks(cargoDone, cargoTotal)
                         end
                     end
-                until #retryList == 0 or not _G.VH_butter.running
+                until #retryList == 0 or not _G.VH.butter.running
                 setProgTrucks(cargoTotal, cargoTotal)
             end
         end
 
         -- ITEM SEND HELPERS
         local function seekNetOwn(part)
-            if not _G.VH_butter.running then return end
+            if not _G.VH.butter.running then return end
             if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                Char.HumanoidRootPart.CFrame = part.CFrame
+                Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
             end
-            for i=1,5 do task.wait(0.01); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
+            for i=1,50 do task.wait(0.05); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
         end
         local function sendItem(part, Offset)
-            if not _G.VH_butter.running then return end
+            if not _G.VH.butter.running then return end
             if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                Char.HumanoidRootPart.CFrame = part.CFrame
+                Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
             end
             seekNetOwn(part)
             for i=1,200 do part.CFrame = Offset end
-            task.wait(0.02)
+            task.wait(0.2)
         end
 
         -- PURCHASED ITEMS
-        if getDupeItems() and _G.VH_butter.running then
+        if getDupeItems() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("PurchasedBoxItemName") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
             end)
@@ -871,7 +857,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 setDupeStatus("Sending purchased items...", true); local done=0
                 pcall(function()
                     for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
-                        if not _G.VH_butter.running then break end
+                        if not _G.VH.butter.running then break end
                         if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("PurchasedBoxItemName") then
                             local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
                             if not part then continue end
@@ -887,7 +873,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
         end
 
         -- GIF ITEMS
-        if getGifs() and _G.VH_butter.running then
+        if getGifs() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChildOfClass("Script") and p:FindFirstChild("DraggableItem")
                     and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
@@ -897,7 +883,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 setDupeStatus("Sending gif items...", true); local done=0
                 pcall(function()
                     for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
-                        if not _G.VH_butter.running then break end
+                        if not _G.VH.butter.running then break end
                         if v.Name=="Owner" and tostring(v.Value)==giverName
                             and v.Parent:FindFirstChildOfClass("Script") and v.Parent:FindFirstChild("DraggableItem") then
                             local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
@@ -914,7 +900,7 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
         end
 
         -- WOOD
-        if getWood() and _G.VH_butter.running then
+        if getWood() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("TreeClass") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
             end)
@@ -923,18 +909,18 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 setDupeStatus("Sending wood...", true); local done=0
                 pcall(function()
                     for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
-                        if not _G.VH_butter.running then break end
+                        if not _G.VH.butter.running then break end
                         if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("TreeClass") then
                             local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
                             if not part then continue end
                             local PCF  = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame) or v.Parent:FindFirstChildOfClass("Part").CFrame
                             local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                             if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                                Char.HumanoidRootPart.CFrame = part.CFrame
+                                Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
                             end
-                            for i=1,5 do task.wait(0.01); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
+                            for i=1,50 do task.wait(0.05); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
                             for i=1,200 do part.CFrame = CFrame.new(nPos) * PCF.Rotation end
-                            task.wait(0.02)
+                            task.wait(0.2)
                             done+=1; setProgWood(done, total)
                         end
                     end
@@ -943,18 +929,18 @@ local runBtn  = createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        if _G.VH_butter.running then setDupeStatus("Done!", false) end
-        _G.VH_butter.running = false; _G.VH_butter.thread = nil
+        if _G.VH.butter.running then setDupeStatus("Done!", false) end
+        _G.VH.butter.running = false; _G.VH.butter.thread = nil
     end)
 end)
 
 local stopDupeBtn = createDBtn("Cancel Dupe", BTN_COLOR, function()
-    _G.VH_butter.running = false
-    if _G.VH_butter.thread then task.cancel(_G.VH_butter.thread) end
-    _G.VH_butter.thread = nil
+    _G.VH.butter.running = false
+    if _G.VH.butter.thread then task.cancel(_G.VH.butter.thread) end
+    _G.VH.butter.thread = nil
     setDupeStatus("Stopped", false)
     resetAllDupeProgress()
 end)
 
 
-print("VanillaHub Vanilla2 loaded")
+print("[VanillaHub] Vanilla2 loaded")
