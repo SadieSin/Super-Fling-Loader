@@ -819,7 +819,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                                 Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
                             end
                             RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                            task.wait(0.6) -- ← updated from 0.1
+                            task.wait(0.8) -- ← updated from 0.1
                             item.CFrame = data.TargetCFrame
                             cargoDone = cargoTotal - #retryList
                             setProgTrucks(cargoDone, cargoTotal)
