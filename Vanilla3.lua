@@ -394,38 +394,32 @@ local function vehicleMatchesColor(vehicleModel, targetBrickColorName)
     return false
 end
 
--- Helper: find all spawn buttons for LT2 vehicles in workspace
-local function findSpawnButtons()
-    local buttons = {}
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and string.find(string.lower(obj.Name), "spawnbutton") then
-            table.insert(buttons, obj)
-        end
-    end
-    return buttons
-end
-
--- The spawning loop: called after user clicks a spawn button
+-- The spawning loop: fires the spawn button remote every 1.5s (server-side),
+-- checks after each fire if the spawned vehicle matches the selected color.
+-- If it does, stops. Otherwise keeps cycling until cancelled or max attempts.
 local function runSpawnLoop(spawnButtonPart)
     local RS = game:GetService("ReplicatedStorage")
     local targetBrickName = colorToBrickColor[selectedColor] or "Medium stone grey"
-    local maxAttempts = 200
+    local maxAttempts = 300
     local attempt = 0
 
-    setSpawnStatus("Spawning for color: " .. selectedColor, true)
+    setSpawnStatus("Spawning for: " .. selectedColor, true)
 
     while isSpawning and attempt < maxAttempts do
         attempt = attempt + 1
 
-        -- Fire the spawn remote (server-side)
+        -- Fire the SpawnButton remote server-side (equivalent to pressing E on the spawn button)
         pcall(function()
             RS.Interaction.RemoteProxy:FireServer(spawnButtonPart)
         end)
 
-        task.wait(0.35)
+        -- Wait 1.5 seconds for the vehicle to spawn/cycle on the server
+        task.wait(1.5)
 
-        -- Check if any newly spawned vehicle near player matches our color
-        -- We check workspace.PlayerModels for a vehicle owned by the player
+        if not isSpawning then break end
+
+        -- Check workspace.PlayerModels for a vehicle owned by the local player
+        -- that matches the selected BrickColor
         local found = false
         pcall(function()
             local playerModels = workspace:FindFirstChild("PlayerModels")
@@ -443,24 +437,20 @@ local function runSpawnLoop(spawnButtonPart)
         end)
 
         if found then
-            setSpawnStatus("Found matching color: " .. selectedColor, false)
+            setSpawnStatus("Found: " .. selectedColor .. "!", false)
             isSpawning = false
             break
         end
 
-        -- Press E to despawn/respawn (simulate key press via keypress if executor supports it,
-        -- otherwise use UserInputService simulation via a remote or direct input)
-        -- Since we can't directly simulate key presses in a safe way, we re-fire the spawn remote
-        -- which effectively cycles the vehicle. The game handles E via its own input.
-        -- We'll use the FireServer approach each loop iteration as the "spam E" equivalent.
-        task.wait(0.15)
+        setSpawnStatus("Attempt " .. attempt .. " — cycling...", true)
     end
 
-    if not isSpawning then
-        -- was cancelled
-        setSpawnStatus("Cancelled", false)
-    elseif attempt >= maxAttempts then
-        setSpawnStatus("Max attempts reached", false)
+    if isSpawning then
+        -- Loop ended due to maxAttempts, not cancel or find
+        setSpawnStatus("Max attempts reached (" .. maxAttempts .. ")", false)
+    elseif attempt > 0 then
+        -- Only overwrite status if we didn't already set "Found" or "Cancelled"
+        -- (the cancel button sets its own status, found sets its own above)
     end
 
     isSpawning = false
