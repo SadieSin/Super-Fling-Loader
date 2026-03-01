@@ -229,42 +229,76 @@ end)
 createVSectionLabel("Vehicle Tools")
 
 -- Flip Vehicle
+-- Only flips the vehicle the player is currently seated in.
+-- Uses the server-side RemoteProxy so the flip is acknowledged by the server.
 createVBtn("🔄  Flip Vehicle", BTN_COLOR, function()
     local char = player.Character
     if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChild("Humanoid")
-    if not (hrp and hum) then return end
+    if not hum then return end
 
-    -- Try to find the nearest vehicle/seat
-    local bestSeat = nil
-    local bestDist = 50
+    -- Must be seated in a vehicle
+    local seatPart = hum.SeatPart
+    if not seatPart then
+        setSpawnStatus("Not seated in a vehicle!", false)
+        return
+    end
 
-    -- First priority: seat the player is currently in
-    if hum.SeatPart then
-        bestSeat = hum.SeatPart
-    else
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if (obj:IsA("VehicleSeat") or obj:IsA("Seat")) then
-                local dist = (obj.Position - hrp.Position).Magnitude
-                if dist < bestDist then
-                    bestDist = dist
-                    bestSeat = obj
-                end
+    local model = seatPart:FindFirstAncestorOfClass("Model")
+    if not model then return end
+
+    -- Look for a ButtonRemote_Flip or similar flip remote inside the vehicle.
+    -- LT2 vehicles expose their interactive buttons as named Parts with
+    -- ButtonRemote_ prefixes that are fired via ReplicatedStorage.Interaction.RemoteProxy.
+    local RS = game:GetService("ReplicatedStorage")
+    local remoteProxy = RS:FindFirstChild("Interaction")
+        and RS.Interaction:FindFirstChild("RemoteProxy")
+
+    -- Search the vehicle model for a flip-related ButtonRemote part
+    local flipPart = nil
+    for _, desc in ipairs(model:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            local n = desc.Name:lower()
+            if n:find("flip") or n:find("reset") or n:find("respawn") then
+                flipPart = desc
+                break
             end
         end
     end
 
-    if bestSeat then
-        local model = bestSeat:FindFirstAncestorOfClass("Model")
-        if model and model.PrimaryPart then
-            local cf = model.PrimaryPart.CFrame
-            local pos = cf.Position + Vector3.new(0, 5, 0)
-            -- Flip upside-down around the Y axis of the current orientation
-            model:SetPrimaryPartCFrame(
-                CFrame.new(pos) *
-                CFrame.fromEulerAnglesYXZ(0, select(2, cf:ToEulerAnglesYXZ()), math.pi)
-            )
+    if remoteProxy and flipPart then
+        -- Fire the server remote — same pattern as the spy output
+        remoteProxy:FireServer(flipPart)
+    else
+        -- Fallback: no flip remote found — do a direct server-acknowledged
+        -- position correction via the drag remote so the server sees it.
+        -- Eject the player first so the vehicle is free, then reposition.
+        local main = model.PrimaryPart or model:FindFirstChild("Main")
+        if not main then return end
+
+        -- Step 1: eject player
+        hum.Jump = true
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        task.wait(0.1)
+
+        -- Step 2: use ClientIsDragging to net-own the vehicle
+        local dragRemote = RS:FindFirstChild("Interaction")
+            and RS.Interaction:FindFirstChild("ClientIsDragging")
+        if dragRemote then
+            dragRemote:FireServer(model)
+            task.wait(0.15)
+        end
+
+        -- Step 3: flip CFrame (client-side fallback only)
+        local cf  = main.CFrame
+        local pos = cf.Position + Vector3.new(0, 5, 0)
+        main.CFrame = CFrame.new(pos) *
+            CFrame.fromEulerAnglesYXZ(0, select(2, cf:ToEulerAnglesYXZ()), math.pi)
+
+        -- Step 4: release drag
+        if dragRemote then
+            task.wait(0.1)
+            dragRemote:FireServer(model)
         end
     end
 end)
@@ -658,70 +692,148 @@ end
 
 -- ── Spawn button click handler ────────────────────────
 -- When waitingForSpawnClick is true and the player clicks something in-world,
--- we treat the clicked object's model as the spawn button's vehicle spawn point.
--- We then spam E to cycle colors until we hit the target.
+-- we walk up to find the vehicle model, then locate its ButtonRemote_SpawnButton
+-- part. That part is what gets passed to RemoteProxy:FireServer() each cycle,
+-- exactly matching the SimpleSpy output:
+--   game:GetService("ReplicatedStorage").Interaction.RemoteProxy
+--       :FireServer(workspace.PlayerModels.Pickup1.ButtonRemote_SpawnButton)
 
-local spawnButtonPart = nil  -- the Part the player clicked as the "spawn button"
+local spawnButtonPart = nil  -- will be set to ButtonRemote_SpawnButton part
 
--- We hook mouse clicks globally; when waiting we capture the next world click.
 local mouse = player:GetMouse()
 
 local function beginSpawnLoop()
     if isSpawning then return end
+    if not spawnButtonPart then
+        setSpawnStatus("No spawn button found!", false)
+        return
+    end
     isSpawning = true
     local targetEntry = COLOR_OPTIONS[selectedColorIndex]
     setSpawnStatus("Spawning — targeting: " .. targetEntry.label, true)
 
+    local RS          = game:GetService("ReplicatedStorage")
+    local remoteProxy = RS:FindFirstChild("Interaction")
+        and RS.Interaction:FindFirstChild("RemoteProxy")
+
+    if not remoteProxy then
+        setSpawnStatus("RemoteProxy not found!", false)
+        isSpawning = false
+        return
+    end
+
     spawnThread = task.spawn(function()
-        local attempts = 0
-        local maxAttempts = 200  -- safety cap
+        local attempts    = 0
+        local maxAttempts = 300  -- safety cap (~5 min at 1s intervals)
 
         while isSpawning and attempts < maxAttempts do
             attempts = attempts + 1
 
-            -- Press E to cycle/spawn the vehicle
-            -- In LT2, pressing E while looking at a spawn button triggers it.
-            -- We simulate by firing the VehicleSpawn RemoteEvent if accessible,
-            -- or by using keypress simulation.
-            local RS = game:GetService("ReplicatedStorage")
+            -- Fire the spawn button remote — identical to what SimpleSpy recorded
+            pcall(function()
+                remoteProxy:FireServer(spawnButtonPart)
+            end)
 
-            -- Try the known LT2 remote for vehicle respawn
-            local respawnRemote = RS:FindFirstChild("Interaction")
-                and RS.Interaction:FindFirstChild("RemoteProxy")
-            if respawnRemote and spawnButtonPart then
-                respawnRemote:FireServer(spawnButtonPart)
-            end
+            -- Wait a moment for the server to spawn/respawn the vehicle
+            task.wait(1)
 
-            task.wait(0.35)
-
-            -- Check spawned vehicle color
+            -- Check if the newly spawned vehicle matches the target color.
+            -- LT2 stores the active vehicle color in its PaintParts children.
+            -- We search workspace.PlayerModels for a vehicle owned by us.
             local vmodel = findPlayerVehicle()
-            if vmodel and colorMatches(vmodel, targetEntry.brick) then
-                setSpawnStatus("✓ Got " .. targetEntry.label .. "!", false)
-                isSpawning = false
-                spawnThread = nil
-                return
+            if vmodel then
+                -- Look for PaintParts folder — that holds the BrickColor
+                local pp = vmodel:FindFirstChild("PaintParts")
+                local matched = false
+                if pp then
+                    for _, part in ipairs(pp:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            if part.BrickColor == BrickColor.new(targetEntry.brick) then
+                                matched = true
+                                break
+                            end
+                        end
+                    end
+                end
+                -- Fallback: check the model's direct BasePart children
+                if not matched then
+                    for _, part in ipairs(vmodel:GetDescendants()) do
+                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                            if part.BrickColor == BrickColor.new(targetEntry.brick) then
+                                matched = true
+                                break
+                            end
+                        end
+                    end
+                end
+
+                if matched then
+                    setSpawnStatus("✓ Got " .. targetEntry.label .. "! (" .. attempts .. " tries)", false)
+                    isSpawning    = false
+                    spawnThread   = nil
+                    return
+                end
             end
+
+            setSpawnStatus("Trying... attempt " .. attempts .. "/" .. maxAttempts, true)
         end
 
-        -- Hit cap without matching
-        setSpawnStatus("Stopped — color not found after " .. maxAttempts .. " tries", false)
-        isSpawning = false
+        setSpawnStatus("Stopped — not found after " .. maxAttempts .. " tries", false)
+        isSpawning  = false
         spawnThread = nil
     end)
 end
 
--- Global mouse click listener: captures the spawn button click
--- We always have this connected, but only act when waitingForSpawnClick = true.
+-- Capture the player's next world-click as the spawn button.
+-- Walk up from the clicked Part to find ButtonRemote_SpawnButton inside
+-- the vehicle model — that is the exact arg LT2 expects.
 mouse.Button1Down:Connect(function()
     if not waitingForSpawnClick then return end
     local target = mouse.Target
     if not target then return end
-    -- Record the clicked part as the spawn button
-    spawnButtonPart = target
+
+    -- Walk up to the containing Model
+    local model = target:FindFirstAncestorOfClass("Model")
+    if not model then
+        -- target itself might be inside PlayerModels directly
+        model = target.Parent
+    end
+
+    -- Search the model for ButtonRemote_SpawnButton
+    local foundBtn = nil
+    if model then
+        for _, desc in ipairs(model:GetDescendants()) do
+            if desc:IsA("BasePart") and desc.Name == "ButtonRemote_SpawnButton" then
+                foundBtn = desc
+                break
+            end
+        end
+        -- Fallback: any ButtonRemote_ prefixed spawn part
+        if not foundBtn then
+            for _, desc in ipairs(model:GetDescendants()) do
+                if desc:IsA("BasePart") and desc.Name:lower():find("spawnbutton") then
+                    foundBtn = desc
+                    break
+                end
+            end
+        end
+    end
+
+    -- Last resort: use the clicked part itself (in case it IS the button)
+    if not foundBtn and target.Name == "ButtonRemote_SpawnButton" then
+        foundBtn = target
+    end
+
+    if not foundBtn then
+        setSpawnStatus("Couldn't find ButtonRemote_SpawnButton — try clicking the button directly", false)
+        waitingForSpawnClick = false
+        return
+    end
+
+    spawnButtonPart      = foundBtn
     waitingForSpawnClick = false
-    setSpawnStatus("Spawn button set. Starting...", true)
-    task.delay(0.1, beginSpawnLoop)
+    setSpawnStatus("Spawn button locked. Starting...", true)
+    task.delay(0.15, beginSpawnLoop)
 end)
 
 -- ── Buttons ───────────────────────────────────────────
