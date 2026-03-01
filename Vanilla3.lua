@@ -32,7 +32,7 @@ local function getFlyToggleEnabled() return _G.VH.flyToggleEnabled end
 local function getIsFlyEnabled() return _G.VH.isFlyEnabled end
 
 -- ════════════════════════════════════════════════════
--- AUTOBUY TAB (tab kept, content intentionally empty)
+-- AUTOBUY TAB (kept empty intentionally)
 -- ════════════════════════════════════════════════════
 local autoBuyPage = pages["AutoBuyTab"]
 
@@ -42,13 +42,17 @@ local autoBuyPage = pages["AutoBuyTab"]
 local settingsPage = pages["SettingsTab"]
 
 local kbFrame = Instance.new("Frame", settingsPage)
-kbFrame.Size = UDim2.new(1,0,0,70); kbFrame.BackgroundColor3 = Color3.fromRGB(18,18,18)
-kbFrame.BorderSizePixel = 0; Instance.new("UICorner", kbFrame).CornerRadius = UDim.new(0,10)
+kbFrame.Size = UDim2.new(1,0,0,70)
+kbFrame.BackgroundColor3 = Color3.fromRGB(18,18,18)
+kbFrame.BorderSizePixel = 0
+Instance.new("UICorner", kbFrame).CornerRadius = UDim.new(0,10)
+
 local kbTitle = Instance.new("TextLabel", kbFrame)
 kbTitle.Size = UDim2.new(1,-20,0,28); kbTitle.Position = UDim2.new(0,10,0,8)
 kbTitle.BackgroundTransparency = 1; kbTitle.Font = Enum.Font.GothamBold; kbTitle.TextSize = 15
 kbTitle.TextColor3 = Color3.fromRGB(220,220,220); kbTitle.TextXAlignment = Enum.TextXAlignment.Left
 kbTitle.Text = "GUI Toggle Keybind"
+
 keybindButtonGUI = Instance.new("TextButton", kbFrame)
 keybindButtonGUI.Size = UDim2.new(0,200,0,28); keybindButtonGUI.Position = UDim2.new(0,10,0,36)
 keybindButtonGUI.BackgroundColor3 = Color3.fromRGB(30,30,30); keybindButtonGUI.BorderSizePixel = 0
@@ -61,18 +65,25 @@ keybindButtonGUI.MouseButton1Click:Connect(function()
     keybindButtonGUI.Text = "Press any key..."
     setWaitingForKeyGUI(true)
 end)
-keybindButtonGUI.MouseEnter:Connect(function() TweenService:Create(keybindButtonGUI, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(45,45,45)}):Play() end)
-keybindButtonGUI.MouseLeave:Connect(function() TweenService:Create(keybindButtonGUI, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(30,30,30)}):Play() end)
+keybindButtonGUI.MouseEnter:Connect(function()
+    TweenService:Create(keybindButtonGUI, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(45,45,45)}):Play()
+end)
+keybindButtonGUI.MouseLeave:Connect(function()
+    TweenService:Create(keybindButtonGUI, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(30,30,30)}):Play()
+end)
 
 -- ════════════════════════════════════════════════════
 -- SEARCH TAB
 -- ════════════════════════════════════════════════════
 local searchPage = pages["SearchTab"]
 local searchInput = Instance.new("TextBox", searchPage)
-searchInput.Size = UDim2.new(1,-28,0,42); searchInput.BackgroundColor3 = Color3.fromRGB(22,22,28)
-searchInput.PlaceholderText = "🔍 Search for functions or tabs..."; searchInput.Text = ""
+searchInput.Size = UDim2.new(1,-28,0,42)
+searchInput.BackgroundColor3 = Color3.fromRGB(22,22,28)
+searchInput.PlaceholderText = "Search for functions or tabs..."
+searchInput.Text = ""
 searchInput.Font = Enum.Font.GothamSemibold; searchInput.TextSize = 15
-searchInput.TextColor3 = Color3.fromRGB(220,220,220); searchInput.TextXAlignment = Enum.TextXAlignment.Left
+searchInput.TextColor3 = Color3.fromRGB(220,220,220)
+searchInput.TextXAlignment = Enum.TextXAlignment.Left
 searchInput.ClearTextOnFocus = false
 Instance.new("UICorner", searchInput).CornerRadius = UDim.new(0,10)
 Instance.new("UIPadding", searchInput).PaddingLeft = UDim.new(0,14)
@@ -82,7 +93,6 @@ local function updateSearchResults(query)
         if child:IsA("TextButton") then child:Destroy() end
     end
     local lq = string.lower(query or "")
-
     local functions = {
         {"Fly", "PlayerTab"}, {"Noclip", "PlayerTab"}, {"InfJump", "PlayerTab"},
         {"Walkspeed", "PlayerTab"}, {"Jump Power", "PlayerTab"}, {"Fly Speed", "PlayerTab"},
@@ -97,7 +107,6 @@ local function updateSearchResults(query)
         {"Flip Vehicle", "VehicleTab"}, {"Color Spawner", "VehicleTab"},
         {"Start Spawn", "VehicleTab"}, {"Cancel Spawning", "VehicleTab"},
     }
-
     local seen = {}
     for _, name in ipairs(tabs) do
         if lq == "" or string.find(string.lower(name), lq) then
@@ -105,7 +114,7 @@ local function updateSearchResults(query)
                 seen[name.."Tab"] = true
                 local resBtn = Instance.new("TextButton", searchPage)
                 resBtn.Size = UDim2.new(1,-28,0,42); resBtn.BackgroundColor3 = Color3.fromRGB(22,22,28)
-                resBtn.Text = "📂  " .. name .. " Tab"; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
+                resBtn.Text = name .. " Tab"; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
                 resBtn.TextColor3 = Color3.fromRGB(200,200,200); resBtn.TextXAlignment = Enum.TextXAlignment.Left
                 Instance.new("UIPadding", resBtn).PaddingLeft = UDim.new(0,16)
                 Instance.new("UICorner", resBtn).CornerRadius = UDim.new(0,10)
@@ -122,15 +131,16 @@ local function updateSearchResults(query)
                 seen[fname] = true
                 local resBtn = Instance.new("TextButton", searchPage)
                 resBtn.Size = UDim2.new(1,-28,0,42); resBtn.BackgroundColor3 = Color3.fromRGB(18,22,30)
-                resBtn.Text = "⚙  " .. fname; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
+                resBtn.Text = fname; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
                 resBtn.TextColor3 = Color3.fromRGB(180,210,255); resBtn.TextXAlignment = Enum.TextXAlignment.Left
                 Instance.new("UIPadding", resBtn).PaddingLeft = UDim.new(0,16)
                 Instance.new("UICorner", resBtn).CornerRadius = UDim.new(0,10)
                 local subLbl = Instance.new("TextLabel", resBtn)
-                subLbl.Size = UDim2.new(1,-20,0,16); subLbl.Position = UDim2.new(0,36,1,-18)
+                subLbl.Size = UDim2.new(1,-20,0,16); subLbl.Position = UDim2.new(0,0,1,-18)
                 subLbl.BackgroundTransparency = 1; subLbl.Font = Enum.Font.Gotham; subLbl.TextSize = 11
                 subLbl.TextColor3 = Color3.fromRGB(120,120,150); subLbl.TextXAlignment = Enum.TextXAlignment.Left
                 subLbl.Text = "in " .. ftab:gsub("Tab","") .. " tab"
+                Instance.new("UIPadding", subLbl).PaddingLeft = UDim.new(0,16)
                 resBtn.MouseEnter:Connect(function() TweenService:Create(resBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(28,35,52), TextColor3 = Color3.fromRGB(255,255,255)}):Play() end)
                 resBtn.MouseLeave:Connect(function() TweenService:Create(resBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(18,22,30), TextColor3 = Color3.fromRGB(180,210,255)}):Play() end)
                 resBtn.MouseButton1Click:Connect(function() switchTab(ftab) end)
@@ -146,18 +156,17 @@ task.delay(0.1, function() updateSearchResults("") end)
 -- ════════════════════════════════════════════════════
 local vehiclePage = pages["VehicleTab"]
 
--- ── Shared helpers ────────────────────────────────────
-
-local function createVSectionLabel(text)
+-- ── Helpers ───────────────────────────────────────────
+local function createVLabel(text)
     local lbl = Instance.new("TextLabel", vehiclePage)
-    lbl.Size = UDim2.new(1,-12,0,22)
+    lbl.Size = UDim2.new(1,-12,0,20)
     lbl.BackgroundTransparency = 1
     lbl.Font = Enum.Font.GothamBold
     lbl.TextSize = 11
     lbl.TextColor3 = Color3.fromRGB(120,120,150)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.Text = string.upper(text)
-    Instance.new("UIPadding", lbl).PaddingLeft = UDim.new(0, 4)
+    Instance.new("UIPadding", lbl).PaddingLeft = UDim.new(0,4)
 end
 
 local function createVSep()
@@ -167,34 +176,28 @@ local function createVSep()
     s.BorderSizePixel = 0
 end
 
-local function createVBtn(text, color, callback)
-    color = color or BTN_COLOR
+-- All vehicle buttons use the same grey theme — BTN_COLOR
+local function createVBtn(text, callback)
     local btn = Instance.new("TextButton", vehiclePage)
-    btn.Size = UDim2.new(1,-12,0,36)
-    btn.BackgroundColor3 = color
+    btn.Size = UDim2.new(1,-12,0,34)
+    btn.BackgroundColor3 = BTN_COLOR
     btn.Text = text
     btn.Font = Enum.Font.GothamSemibold
     btn.TextSize = 13
     btn.TextColor3 = Color3.fromRGB(210,210,220)
     btn.BorderSizePixel = 0
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,8)
-    local r,g,b = color.R*255, color.G*255, color.B*255
-    local hov = Color3.fromRGB(
-        math.min(r+22,255)/255,
-        math.min(g+10,255)/255,
-        math.min(b+22,255)/255
-    )
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,7)
     btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.13), {BackgroundColor3 = hov}):Play()
+        TweenService:Create(btn, TweenInfo.new(0.13), {BackgroundColor3 = BTN_HOVER}):Play()
     end)
     btn.MouseLeave:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.13), {BackgroundColor3 = color}):Play()
+        TweenService:Create(btn, TweenInfo.new(0.13), {BackgroundColor3 = BTN_COLOR}):Play()
     end)
     btn.MouseButton1Click:Connect(callback)
     return btn
 end
 
--- ── Color options ─────────────────────────────────────
+-- ── State ─────────────────────────────────────────────
 local COLOR_OPTIONS = {
     { label = "Medium Stone Grey",  brick = "Medium stone grey"  },
     { label = "Dark Grey Metallic", brick = "Dark grey metallic" },
@@ -210,260 +213,232 @@ local COLOR_OPTIONS = {
     { label = "Hot Pink",           brick = "Hot pink"           },
 }
 
-local selectedColorIndex = 1
-local isSpawning         = false
-local spawnThread        = nil
-local spawnClickConn     = nil
+local selectedColorIndex   = 1
+local isSpawning           = false
+local spawnThread          = nil
 local waitingForSpawnClick = false
+local spawnButtonPart      = nil
 
--- Cleanup on exit
 table.insert(cleanupTasks, function()
     isSpawning = false
     waitingForSpawnClick = false
     if spawnThread then pcall(task.cancel, spawnThread); spawnThread = nil end
-    if spawnClickConn then spawnClickConn:Disconnect(); spawnClickConn = nil end
 end)
 
--- ════ SECTION: VEHICLE TOOLS ════════════════════════
+-- ── Status pill ───────────────────────────────────────
+-- Declared early so flip and other helpers can call setVehicleStatus
+local vStatusFrame = Instance.new("Frame", vehiclePage)
+vStatusFrame.Size = UDim2.new(1,-12,0,26)
+vStatusFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
+vStatusFrame.BorderSizePixel = 0
+Instance.new("UICorner", vStatusFrame).CornerRadius = UDim.new(0,6)
 
-createVSectionLabel("Vehicle Tools")
+local vDot = Instance.new("Frame", vStatusFrame)
+vDot.Size = UDim2.new(0,6,0,6)
+vDot.Position = UDim2.new(0,10,0.5,-3)
+vDot.BackgroundColor3 = Color3.fromRGB(80,80,100)
+vDot.BorderSizePixel = 0
+Instance.new("UICorner", vDot).CornerRadius = UDim.new(1,0)
 
--- Flip Vehicle
--- Only flips the vehicle the player is currently seated in.
--- Uses the server-side RemoteProxy so the flip is acknowledged by the server.
-createVBtn("🔄  Flip Vehicle", BTN_COLOR, function()
+local vStatusLbl = Instance.new("TextLabel", vStatusFrame)
+vStatusLbl.Size = UDim2.new(1,-26,1,0)
+vStatusLbl.Position = UDim2.new(0,22,0,0)
+vStatusLbl.BackgroundTransparency = 1
+vStatusLbl.Font = Enum.Font.Gotham
+vStatusLbl.TextSize = 12
+vStatusLbl.TextColor3 = Color3.fromRGB(150,150,170)
+vStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+vStatusLbl.Text = "Ready"
+
+local function setVehicleStatus(msg, active)
+    vStatusLbl.Text = msg
+    TweenService:Create(vDot, TweenInfo.new(0.2), {
+        BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
+    }):Play()
+end
+
+-- ════ VEHICLE TOOLS ══════════════════════════════════
+
+createVLabel("Vehicle Tools")
+
+-- Flip Vehicle:
+-- Fires RemoteProxy with the vehicle's flip/reset ButtonRemote part.
+-- Never touches the humanoid state or CFrame on the client.
+createVBtn("Flip Vehicle", function()
     local char = player.Character
     if not char then return end
     local hum = char:FindFirstChild("Humanoid")
-    if not hum then return end
-
-    -- Must be seated in a vehicle
-    local seatPart = hum.SeatPart
-    if not seatPart then
-        setSpawnStatus("Not seated in a vehicle!", false)
+    if not (hum and hum.SeatPart) then
+        setVehicleStatus("Not seated in a vehicle", false)
         return
     end
 
-    local model = seatPart:FindFirstAncestorOfClass("Model")
+    local model = hum.SeatPart:FindFirstAncestorOfClass("Model")
     if not model then return end
 
-    -- Look for a ButtonRemote_Flip or similar flip remote inside the vehicle.
-    -- LT2 vehicles expose their interactive buttons as named Parts with
-    -- ButtonRemote_ prefixes that are fired via ReplicatedStorage.Interaction.RemoteProxy.
     local RS = game:GetService("ReplicatedStorage")
     local remoteProxy = RS:FindFirstChild("Interaction")
         and RS.Interaction:FindFirstChild("RemoteProxy")
+    if not remoteProxy then
+        setVehicleStatus("RemoteProxy not found", false)
+        return
+    end
 
-    -- Search the vehicle model for a flip-related ButtonRemote part
+    -- Search for a ButtonRemote_ flip/reset part inside the vehicle
     local flipPart = nil
     for _, desc in ipairs(model:GetDescendants()) do
         if desc:IsA("BasePart") then
             local n = desc.Name:lower()
-            if n:find("flip") or n:find("reset") or n:find("respawn") then
+            if n:find("flip") or n:find("reset") then
                 flipPart = desc
                 break
             end
         end
     end
 
-    if remoteProxy and flipPart then
-        -- Fire the server remote — same pattern as the spy output
+    if flipPart then
         remoteProxy:FireServer(flipPart)
+        setVehicleStatus("Flip fired", false)
     else
-        -- Fallback: no flip remote found — do a direct server-acknowledged
-        -- position correction via the drag remote so the server sees it.
-        -- Eject the player first so the vehicle is free, then reposition.
-        local main = model.PrimaryPart or model:FindFirstChild("Main")
-        if not main then return end
-
-        -- Step 1: eject player
-        hum.Jump = true
-        hum:ChangeState(Enum.HumanoidStateType.Jumping)
-        task.wait(0.1)
-
-        -- Step 2: use ClientIsDragging to net-own the vehicle
-        local dragRemote = RS:FindFirstChild("Interaction")
-            and RS.Interaction:FindFirstChild("ClientIsDragging")
-        if dragRemote then
-            dragRemote:FireServer(model)
-            task.wait(0.15)
-        end
-
-        -- Step 3: flip CFrame (client-side fallback only)
-        local cf  = main.CFrame
-        local pos = cf.Position + Vector3.new(0, 5, 0)
-        main.CFrame = CFrame.new(pos) *
-            CFrame.fromEulerAnglesYXZ(0, select(2, cf:ToEulerAnglesYXZ()), math.pi)
-
-        -- Step 4: release drag
-        if dragRemote then
-            task.wait(0.1)
-            dragRemote:FireServer(model)
-        end
+        setVehicleStatus("No flip button found on this vehicle", false)
     end
 end)
 
 createVSep()
 
--- ════ SECTION: COLOR SPAWNER ════════════════════════
+-- ════ COLOR SPAWNER ══════════════════════════════════
 
-createVSectionLabel("Color Spawner")
+createVLabel("Color Spawner")
 
--- ── Inline expanding dropdown ─────────────────────────
-local DROP_ITEM_H   = 32
+-- Compact inline dropdown — single row, 28px tall, expands downward
+local DROP_ITEM_H   = 26
 local DROP_MAX_SHOW = 6
-local DROP_HEADER_H = 38
+local DROP_H        = 28   -- closed height
 local isDropOpen    = false
 
 local dropOuter = Instance.new("Frame", vehiclePage)
-dropOuter.Size = UDim2.new(1,-12,0,DROP_HEADER_H)
-dropOuter.BackgroundColor3 = Color3.fromRGB(22,22,30)
+dropOuter.Size = UDim2.new(1,-12,0,DROP_H)
+dropOuter.BackgroundColor3 = Color3.fromRGB(24,24,30)
 dropOuter.BorderSizePixel = 0
 dropOuter.ClipsDescendants = true
-Instance.new("UICorner", dropOuter).CornerRadius = UDim.new(0,8)
+Instance.new("UICorner", dropOuter).CornerRadius = UDim.new(0,7)
 local dropStroke = Instance.new("UIStroke", dropOuter)
-dropStroke.Color = Color3.fromRGB(60,60,90)
+dropStroke.Color = Color3.fromRGB(55,55,80)
 dropStroke.Thickness = 1
 dropStroke.Transparency = 0.5
 
--- Header row
-local dropHeader = Instance.new("Frame", dropOuter)
-dropHeader.Size = UDim2.new(1,0,0,DROP_HEADER_H)
-dropHeader.BackgroundTransparency = 1
+-- The single visible header row
+local dropHeaderBtn = Instance.new("TextButton", dropOuter)
+dropHeaderBtn.Size = UDim2.new(1,0,0,DROP_H)
+dropHeaderBtn.BackgroundTransparency = 1
+dropHeaderBtn.Text = ""
+dropHeaderBtn.ZIndex = 4
 
-local dropPrefixLbl = Instance.new("TextLabel", dropHeader)
-dropPrefixLbl.Size = UDim2.new(0,110,1,0)
-dropPrefixLbl.Position = UDim2.new(0,10,0,0)
-dropPrefixLbl.BackgroundTransparency = 1
-dropPrefixLbl.Text = "Select Color:"
-dropPrefixLbl.Font = Enum.Font.GothamBold
-dropPrefixLbl.TextSize = 12
-dropPrefixLbl.TextColor3 = Color3.fromRGB(140,140,170)
-dropPrefixLbl.TextXAlignment = Enum.TextXAlignment.Left
+-- Color swatch dot
+local headerDot = Instance.new("Frame", dropOuter)
+headerDot.Size = UDim2.new(0,10,0,10)
+headerDot.Position = UDim2.new(0,10,0.5,-5)   -- vertically centred in closed height
+headerDot.BorderSizePixel = 0
+local _ok0, _bc0 = pcall(function() return BrickColor.new(COLOR_OPTIONS[1].brick) end)
+headerDot.BackgroundColor3 = _ok0 and _bc0.Color or Color3.fromRGB(180,180,180)
+Instance.new("UICorner", headerDot).CornerRadius = UDim.new(0,2)
 
--- Selected value display
-local swatchRow = Instance.new("Frame", dropHeader)
-swatchRow.Size = UDim2.new(1,-120,0,26)
-swatchRow.Position = UDim2.new(0,112,0.5,-13)
-swatchRow.BackgroundColor3 = Color3.fromRGB(30,30,42)
-swatchRow.BorderSizePixel = 0
-Instance.new("UICorner", swatchRow).CornerRadius = UDim.new(0,6)
-local swatchStroke = Instance.new("UIStroke", swatchRow)
-swatchStroke.Color = Color3.fromRGB(70,70,110)
-swatchStroke.Thickness = 1
-swatchStroke.Transparency = 0.45
+local headerLbl = Instance.new("TextLabel", dropOuter)
+headerLbl.Size = UDim2.new(1,-50,0,DROP_H)
+headerLbl.Position = UDim2.new(0,28,0,0)
+headerLbl.BackgroundTransparency = 1
+headerLbl.Text = COLOR_OPTIONS[1].label
+headerLbl.Font = Enum.Font.GothamSemibold
+headerLbl.TextSize = 12
+headerLbl.TextColor3 = Color3.fromRGB(210,210,225)
+headerLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-local colorSwatch = Instance.new("Frame", swatchRow)
-colorSwatch.Size = UDim2.new(0,14,0,14)
-colorSwatch.Position = UDim2.new(0,7,0.5,-7)
-colorSwatch.BorderSizePixel = 0
-local _ok, _bc = pcall(function() return BrickColor.new(COLOR_OPTIONS[1].brick) end)
-colorSwatch.BackgroundColor3 = _ok and _bc.Color or Color3.fromRGB(180,180,180)
-Instance.new("UICorner", colorSwatch).CornerRadius = UDim.new(0,3)
-
-local selColorLbl = Instance.new("TextLabel", swatchRow)
-selColorLbl.Size = UDim2.new(1,-52,1,0)
-selColorLbl.Position = UDim2.new(0,28,0,0)
-selColorLbl.BackgroundTransparency = 1
-selColorLbl.Text = COLOR_OPTIONS[1].label
-selColorLbl.Font = Enum.Font.GothamSemibold
-selColorLbl.TextSize = 12
-selColorLbl.TextColor3 = Color3.fromRGB(220,225,255)
-selColorLbl.TextXAlignment = Enum.TextXAlignment.Left
-selColorLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
-local dropArrow = Instance.new("TextLabel", swatchRow)
-dropArrow.Size = UDim2.new(0,20,1,0)
+local dropArrow = Instance.new("TextLabel", dropOuter)
+dropArrow.Size = UDim2.new(0,18,0,DROP_H)
 dropArrow.Position = UDim2.new(1,-22,0,0)
 dropArrow.BackgroundTransparency = 1
-dropArrow.Text = "▾"
+dropArrow.Text = "v"
 dropArrow.Font = Enum.Font.GothamBold
-dropArrow.TextSize = 13
-dropArrow.TextColor3 = Color3.fromRGB(120,120,160)
+dropArrow.TextSize = 11
+dropArrow.TextColor3 = Color3.fromRGB(100,100,130)
 dropArrow.TextXAlignment = Enum.TextXAlignment.Center
 
-local dropClickBtn = Instance.new("TextButton", swatchRow)
-dropClickBtn.Size = UDim2.new(1,0,1,0)
-dropClickBtn.BackgroundTransparency = 1
-dropClickBtn.Text = ""
-dropClickBtn.ZIndex = 5
-
 -- Divider between header and list
-local dropDivider = Instance.new("Frame", dropOuter)
-dropDivider.Size = UDim2.new(1,-12,0,1)
-dropDivider.Position = UDim2.new(0,6,0,DROP_HEADER_H)
-dropDivider.BackgroundColor3 = Color3.fromRGB(50,50,75)
-dropDivider.BorderSizePixel = 0
-dropDivider.Visible = false
+local dropDiv = Instance.new("Frame", dropOuter)
+dropDiv.Size = UDim2.new(1,-10,0,1)
+dropDiv.Position = UDim2.new(0,5,0,DROP_H)
+dropDiv.BackgroundColor3 = Color3.fromRGB(45,45,65)
+dropDiv.BorderSizePixel = 0
+dropDiv.Visible = false
 
--- Scrolling list container
-local dropList = Instance.new("ScrollingFrame", dropOuter)
-dropList.Position = UDim2.new(0,0,0,DROP_HEADER_H+2)
-dropList.Size = UDim2.new(1,0,0,0)
-dropList.BackgroundTransparency = 1
-dropList.BorderSizePixel = 0
-dropList.ScrollBarThickness = 3
-dropList.ScrollBarImageColor3 = Color3.fromRGB(90,90,130)
-dropList.CanvasSize = UDim2.new(0,0,0,0)
-dropList.ClipsDescendants = true
+-- Scrolling list
+local dropScroll = Instance.new("ScrollingFrame", dropOuter)
+dropScroll.Position = UDim2.new(0,0,0,DROP_H+1)
+dropScroll.Size = UDim2.new(1,0,0,0)
+dropScroll.BackgroundTransparency = 1
+dropScroll.BorderSizePixel = 0
+dropScroll.ScrollBarThickness = 3
+dropScroll.ScrollBarImageColor3 = Color3.fromRGB(80,80,120)
+dropScroll.CanvasSize = UDim2.new(0,0,0,0)
+dropScroll.ClipsDescendants = true
 
-local dropListLayout = Instance.new("UIListLayout", dropList)
-dropListLayout.Padding = UDim.new(0,3)
-dropListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-dropListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    dropList.CanvasSize = UDim2.new(0,0,0, dropListLayout.AbsoluteContentSize.Y + 6)
+local dropLayout = Instance.new("UIListLayout", dropScroll)
+dropLayout.Padding = UDim.new(0,2)
+dropLayout.SortOrder = Enum.SortOrder.LayoutOrder
+dropLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    dropScroll.CanvasSize = UDim2.new(0,0,0, dropLayout.AbsoluteContentSize.Y + 4)
 end)
-local dlPad = Instance.new("UIPadding", dropList)
-dlPad.PaddingTop = UDim.new(0,4); dlPad.PaddingBottom = UDim.new(0,4)
-dlPad.PaddingLeft = UDim.new(0,5); dlPad.PaddingRight = UDim.new(0,5)
+local dropPad = Instance.new("UIPadding", dropScroll)
+dropPad.PaddingTop = UDim.new(0,3); dropPad.PaddingBottom = UDim.new(0,3)
+dropPad.PaddingLeft = UDim.new(0,4); dropPad.PaddingRight = UDim.new(0,4)
 
-local function refreshSwatch(idx)
+local function refreshHeader(idx)
     local entry = COLOR_OPTIONS[idx]
     local ok2, bc2 = pcall(function() return BrickColor.new(entry.brick) end)
-    colorSwatch.BackgroundColor3 = ok2 and bc2.Color or Color3.fromRGB(180,180,180)
-    selColorLbl.Text = entry.label
+    headerDot.BackgroundColor3 = ok2 and bc2.Color or Color3.fromRGB(180,180,180)
+    headerLbl.Text = entry.label
 end
 
 local function buildDropList()
-    for _, c in ipairs(dropList:GetChildren()) do
+    for _, c in ipairs(dropScroll:GetChildren()) do
         if c:IsA("Frame") then c:Destroy() end
     end
     for i, entry in ipairs(COLOR_OPTIONS) do
         local isSel = (i == selectedColorIndex)
-        local row = Instance.new("Frame", dropList)
+        local row = Instance.new("Frame", dropScroll)
         row.Size = UDim2.new(1,0,0,DROP_ITEM_H)
-        row.BackgroundColor3 = isSel and Color3.fromRGB(40,40,70) or Color3.fromRGB(26,26,38)
+        row.BackgroundColor3 = isSel and Color3.fromRGB(40,40,60) or Color3.fromRGB(28,28,38)
         row.BorderSizePixel = 0
         row.LayoutOrder = i
-        Instance.new("UICorner", row).CornerRadius = UDim.new(0,6)
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0,5)
 
         local dot = Instance.new("Frame", row)
-        dot.Size = UDim2.new(0,12,0,12)
-        dot.Position = UDim2.new(0,8,0.5,-6)
+        dot.Size = UDim2.new(0,9,0,9)
+        dot.Position = UDim2.new(0,7,0.5,-4)
         dot.BorderSizePixel = 0
         local ok3, bc3 = pcall(function() return BrickColor.new(entry.brick) end)
         dot.BackgroundColor3 = ok3 and bc3.Color or Color3.fromRGB(180,180,180)
-        Instance.new("UICorner", dot).CornerRadius = UDim.new(0,3)
+        Instance.new("UICorner", dot).CornerRadius = UDim.new(0,2)
 
         local nameLbl = Instance.new("TextLabel", row)
-        nameLbl.Size = UDim2.new(1,-48,1,0)
-        nameLbl.Position = UDim2.new(0,28,0,0)
+        nameLbl.Size = UDim2.new(1,-36,1,0)
+        nameLbl.Position = UDim2.new(0,22,0,0)
         nameLbl.BackgroundTransparency = 1
         nameLbl.Text = entry.label
         nameLbl.Font = Enum.Font.GothamSemibold
-        nameLbl.TextSize = 12
-        nameLbl.TextColor3 = isSel and Color3.fromRGB(210,215,255) or Color3.fromRGB(190,190,210)
+        nameLbl.TextSize = 11
+        nameLbl.TextColor3 = isSel and Color3.fromRGB(210,215,255) or Color3.fromRGB(180,180,200)
         nameLbl.TextXAlignment = Enum.TextXAlignment.Left
 
         if isSel then
             local check = Instance.new("TextLabel", row)
-            check.Size = UDim2.new(0,22,1,0)
-            check.Position = UDim2.new(1,-26,0,0)
+            check.Size = UDim2.new(0,18,1,0)
+            check.Position = UDim2.new(1,-20,0,0)
             check.BackgroundTransparency = 1
-            check.Text = "✓"
+            check.Text = "+"
             check.Font = Enum.Font.GothamBold
-            check.TextSize = 13
-            check.TextColor3 = Color3.fromRGB(120,180,255)
+            check.TextSize = 12
+            check.TextColor3 = Color3.fromRGB(140,160,220)
             check.TextXAlignment = Enum.TextXAlignment.Center
         end
 
@@ -475,24 +450,24 @@ local function buildDropList()
 
         rowBtn.MouseEnter:Connect(function()
             if i ~= selectedColorIndex then
-                TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(36,36,55)}):Play()
+                TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(36,36,52)}):Play()
             end
         end)
         rowBtn.MouseLeave:Connect(function()
             if i ~= selectedColorIndex then
-                TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(26,26,38)}):Play()
+                TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(28,28,38)}):Play()
             end
         end)
         rowBtn.MouseButton1Click:Connect(function()
             selectedColorIndex = i
-            refreshSwatch(i)
+            refreshHeader(i)
             buildDropList()
-            task.delay(0.05, function()
+            task.delay(0.04, function()
                 isDropOpen = false
-                TweenService:Create(dropArrow, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation = 0}):Play()
-                TweenService:Create(dropOuter, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size = UDim2.new(1,-12,0,DROP_HEADER_H)}):Play()
-                TweenService:Create(dropList, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size = UDim2.new(1,0,0,0)}):Play()
-                dropDivider.Visible = false
+                TweenService:Create(dropArrow, TweenInfo.new(0.18, Enum.EasingStyle.Quint), {Rotation = 0}):Play()
+                TweenService:Create(dropOuter, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Size = UDim2.new(1,-12,0,DROP_H)}):Play()
+                TweenService:Create(dropScroll, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Size = UDim2.new(1,0,0,0)}):Play()
+                dropDiv.Visible = false
             end)
         end)
     end
@@ -501,179 +476,38 @@ end
 local function openDrop()
     isDropOpen = true
     buildDropList()
-    local listH = math.min(#COLOR_OPTIONS, DROP_MAX_SHOW) * (DROP_ITEM_H + 3) + 8
-    local totalH = DROP_HEADER_H + 2 + listH
-    dropDivider.Visible = true
-    TweenService:Create(dropArrow, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation = 180}):Play()
-    TweenService:Create(dropOuter, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1,-12,0,totalH)}):Play()
-    TweenService:Create(dropList, TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size = UDim2.new(1,0,0,listH)}):Play()
+    local listH = math.min(#COLOR_OPTIONS, DROP_MAX_SHOW) * (DROP_ITEM_H + 2) + 6
+    dropDiv.Visible = true
+    TweenService:Create(dropArrow, TweenInfo.new(0.18, Enum.EasingStyle.Quint), {Rotation = 180}):Play()
+    TweenService:Create(dropOuter, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Size = UDim2.new(1,-12,0,DROP_H+1+listH)}):Play()
+    TweenService:Create(dropScroll, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Size = UDim2.new(1,0,0,listH)}):Play()
 end
 
 local function closeDrop()
     isDropOpen = false
-    TweenService:Create(dropArrow, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation = 0}):Play()
-    TweenService:Create(dropOuter, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size = UDim2.new(1,-12,0,DROP_HEADER_H)}):Play()
-    TweenService:Create(dropList, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size = UDim2.new(1,0,0,0)}):Play()
-    dropDivider.Visible = false
+    TweenService:Create(dropArrow, TweenInfo.new(0.18, Enum.EasingStyle.Quint), {Rotation = 0}):Play()
+    TweenService:Create(dropOuter, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Size = UDim2.new(1,-12,0,DROP_H)}):Play()
+    TweenService:Create(dropScroll, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Size = UDim2.new(1,0,0,0)}):Play()
+    dropDiv.Visible = false
 end
 
-dropClickBtn.MouseButton1Click:Connect(function()
+dropHeaderBtn.MouseButton1Click:Connect(function()
     if isDropOpen then closeDrop() else openDrop() end
 end)
-dropClickBtn.MouseEnter:Connect(function()
-    TweenService:Create(swatchRow, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(38,38,55)}):Play()
+dropHeaderBtn.MouseEnter:Connect(function()
+    TweenService:Create(dropOuter, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(30,30,38)}):Play()
 end)
-dropClickBtn.MouseLeave:Connect(function()
-    TweenService:Create(swatchRow, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(30,30,42)}):Play()
+dropHeaderBtn.MouseLeave:Connect(function()
+    TweenService:Create(dropOuter, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(24,24,30)}):Play()
 end)
 
 createVSep()
 
--- ════ SECTION: VEHICLE SPAWN ════════════════════════
+-- ════ SPAWN ══════════════════════════════════════════
 
-createVSectionLabel("Vehicle Spawn")
+createVLabel("Spawn")
 
--- Status pill
-local spawnStatusFrame = Instance.new("Frame", vehiclePage)
-spawnStatusFrame.Size = UDim2.new(1,-12,0,28)
-spawnStatusFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
-spawnStatusFrame.BorderSizePixel = 0
-Instance.new("UICorner", spawnStatusFrame).CornerRadius = UDim.new(0,6)
-
-local vsdot = Instance.new("Frame", spawnStatusFrame)
-vsdot.Size = UDim2.new(0,7,0,7)
-vsdot.Position = UDim2.new(0,10,0.5,-3)
-vsdot.BackgroundColor3 = Color3.fromRGB(80,80,100)
-vsdot.BorderSizePixel = 0
-Instance.new("UICorner", vsdot).CornerRadius = UDim.new(1,0)
-
-local spawnStatusLbl = Instance.new("TextLabel", spawnStatusFrame)
-spawnStatusLbl.Size = UDim2.new(1,-28,1,0)
-spawnStatusLbl.Position = UDim2.new(0,24,0,0)
-spawnStatusLbl.BackgroundTransparency = 1
-spawnStatusLbl.Font = Enum.Font.Gotham
-spawnStatusLbl.TextSize = 12
-spawnStatusLbl.TextColor3 = Color3.fromRGB(150,150,170)
-spawnStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
-spawnStatusLbl.Text = "Ready"
-
-local function setSpawnStatus(msg, active)
-    spawnStatusLbl.Text = msg
-    TweenService:Create(vsdot, TweenInfo.new(0.2), {
-        BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
-    }):Play()
-end
-
--- ── Popup helper (matches VanillaHub style) ───────────
-local function showVehiclePopup(message)
-    local gui = game.CoreGui:FindFirstChild("VanillaHub")
-    if not gui then return end
-
-    local popup = Instance.new("Frame", gui)
-    popup.Size = UDim2.new(0,380,0,0)
-    popup.Position = UDim2.new(0.5,-190,0.5,-60)
-    popup.BackgroundColor3 = Color3.fromRGB(18,18,24)
-    popup.BackgroundTransparency = 0
-    popup.BorderSizePixel = 0
-    popup.ClipsDescendants = true
-    popup.ZIndex = 20
-    Instance.new("UICorner", popup).CornerRadius = UDim.new(0,14)
-    local pStroke = Instance.new("UIStroke", popup)
-    pStroke.Color = Color3.fromRGB(80,80,120)
-    pStroke.Thickness = 1.2
-    pStroke.Transparency = 0.4
-
-    local icon = Instance.new("TextLabel", popup)
-    icon.Size = UDim2.new(0,40,0,40)
-    icon.Position = UDim2.new(0,16,0,16)
-    icon.BackgroundTransparency = 1
-    icon.Text = "🚗"
-    icon.Font = Enum.Font.GothamBold
-    icon.TextSize = 28
-    icon.ZIndex = 21
-
-    local msgLbl = Instance.new("TextLabel", popup)
-    msgLbl.Size = UDim2.new(1,-76,0,72)
-    msgLbl.Position = UDim2.new(0,64,0,12)
-    msgLbl.BackgroundTransparency = 1
-    msgLbl.Font = Enum.Font.GothamSemibold
-    msgLbl.TextSize = 14
-    msgLbl.TextColor3 = Color3.fromRGB(220,220,235)
-    msgLbl.TextWrapped = true
-    msgLbl.TextXAlignment = Enum.TextXAlignment.Left
-    msgLbl.TextYAlignment = Enum.TextYAlignment.Top
-    msgLbl.Text = message
-    msgLbl.ZIndex = 21
-
-    local okBtn = Instance.new("TextButton", popup)
-    okBtn.Size = UDim2.new(1,-24,0,36)
-    okBtn.Position = UDim2.new(0,12,0,92)
-    okBtn.BackgroundColor3 = Color3.fromRGB(40,40,60)
-    okBtn.Text = "Got it — click the Spawn Button now"
-    okBtn.Font = Enum.Font.GothamSemibold
-    okBtn.TextSize = 13
-    okBtn.TextColor3 = Color3.fromRGB(200,210,255)
-    okBtn.BorderSizePixel = 0
-    okBtn.ZIndex = 21
-    Instance.new("UICorner", okBtn).CornerRadius = UDim.new(0,10)
-
-    -- Expand in
-    TweenService:Create(popup, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0,380,0,142)
-    }):Play()
-
-    okBtn.MouseEnter:Connect(function()
-        TweenService:Create(okBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(60,60,90)}):Play()
-    end)
-    okBtn.MouseLeave:Connect(function()
-        TweenService:Create(okBtn, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(40,40,60)}):Play()
-    end)
-
-    local function closePopup(andStartWaiting)
-        local t = TweenService:Create(popup, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-            Size = UDim2.new(0,380,0,0)
-        })
-        t:Play()
-        t.Completed:Connect(function() popup:Destroy() end)
-        if andStartWaiting then
-            -- Now arm the click listener for the spawn button
-            waitingForSpawnClick = true
-            setSpawnStatus("Waiting for spawn button click...", true)
-        end
-    end
-
-    okBtn.MouseButton1Click:Connect(function() closePopup(true) end)
-end
-
--- ── Detect vehicle color after spawn ─────────────────
--- LT2 vehicles are in workspace.PlayerModels; their PaintParts hold BrickColor.
-local function getVehicleColor(model)
-    -- Check PaintParts folder first
-    local pp = model:FindFirstChild("PaintParts")
-    if pp then
-        local part = pp:FindFirstChildWhichIsA("BasePart")
-        if part then return part.BrickColor end
-    end
-    -- Fallback: check Body Colors
-    local bc = model:FindFirstChildOfClass("BodyColors")
-    if bc then return BrickColor.new(bc.TorsoColor3 or bc.HeadColor3 or Color3.new()) end
-    -- Fallback: first painted BasePart
-    for _, p in ipairs(model:GetDescendants()) do
-        if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
-            return p.BrickColor
-        end
-    end
-    return nil
-end
-
-local function colorMatches(model, targetBrick)
-    local vc = getVehicleColor(model)
-    if not vc then return false end
-    return vc == BrickColor.new(targetBrick)
-end
-
--- ── Find the vehicle/model the player spawned most recently ──
--- LT2 spawned vehicles appear in workspace.PlayerModels with an Owner value.
+-- Find the player's currently spawned vehicle in workspace.PlayerModels
 local function findPlayerVehicle()
     local models = workspace:FindFirstChild("PlayerModels")
     if not models then return nil end
@@ -681,7 +515,7 @@ local function findPlayerVehicle()
         if model:IsA("Model") then
             local owner = model:FindFirstChild("Owner")
             if owner and tostring(owner.Value) == player.Name then
-                if model:FindFirstChild("DriveSeat") or model:FindFirstChild("VehicleSeat") then
+                if model:FindFirstChild("DriveSeat") or model:FindFirstChildWhichIsA("VehicleSeat") then
                     return model
                 end
             end
@@ -690,179 +524,204 @@ local function findPlayerVehicle()
     return nil
 end
 
--- ── Spawn button click handler ────────────────────────
--- When waitingForSpawnClick is true and the player clicks something in-world,
--- we walk up to find the vehicle model, then locate its ButtonRemote_SpawnButton
--- part. That part is what gets passed to RemoteProxy:FireServer() each cycle,
--- exactly matching the SimpleSpy output:
---   game:GetService("ReplicatedStorage").Interaction.RemoteProxy
---       :FireServer(workspace.PlayerModels.Pickup1.ButtonRemote_SpawnButton)
+-- Check if the spawned vehicle matches the target BrickColor.
+-- LT2 vehicles store color in PaintParts children.
+local function vehicleColorMatches(model, targetBrick)
+    local target = BrickColor.new(targetBrick)
+    local pp = model:FindFirstChild("PaintParts")
+    if pp then
+        for _, p in ipairs(pp:GetDescendants()) do
+            if p:IsA("BasePart") then
+                return p.BrickColor == target
+            end
+        end
+    end
+    -- Fallback: any BasePart in the model
+    for _, p in ipairs(model:GetDescendants()) do
+        if p:IsA("BasePart") then
+            return p.BrickColor == target
+        end
+    end
+    return false
+end
 
-local spawnButtonPart = nil  -- will be set to ButtonRemote_SpawnButton part
-
-local mouse = player:GetMouse()
-
+-- Spawn loop:
+-- Calls RemoteProxy:FireServer(spawnButtonPart) repeatedly — server-side only,
+-- no client CFrame changes — until the vehicle color matches the selection.
 local function beginSpawnLoop()
     if isSpawning then return end
     if not spawnButtonPart then
-        setSpawnStatus("No spawn button found!", false)
+        setVehicleStatus("No spawn button selected", false)
         return
     end
-    isSpawning = true
-    local targetEntry = COLOR_OPTIONS[selectedColorIndex]
-    setSpawnStatus("Spawning — targeting: " .. targetEntry.label, true)
 
-    local RS          = game:GetService("ReplicatedStorage")
+    local RS = game:GetService("ReplicatedStorage")
     local remoteProxy = RS:FindFirstChild("Interaction")
         and RS.Interaction:FindFirstChild("RemoteProxy")
-
     if not remoteProxy then
-        setSpawnStatus("RemoteProxy not found!", false)
-        isSpawning = false
+        setVehicleStatus("RemoteProxy not found", false)
         return
     end
 
+    isSpawning = true
+    local targetEntry = COLOR_OPTIONS[selectedColorIndex]
+    setVehicleStatus("Spawning for: " .. targetEntry.label, true)
+
     spawnThread = task.spawn(function()
-        local attempts    = 0
-        local maxAttempts = 300  -- safety cap (~5 min at 1s intervals)
+        local attempts = 0
+        local maxAttempts = 300
 
         while isSpawning and attempts < maxAttempts do
             attempts = attempts + 1
 
-            -- Fire the spawn button remote — identical to what SimpleSpy recorded
+            -- Fire exactly as SimpleSpy recorded:
+            -- game:GetService("ReplicatedStorage").Interaction.RemoteProxy
+            --     :FireServer(workspace.PlayerModels.Pickup1.ButtonRemote_SpawnButton)
             pcall(function()
                 remoteProxy:FireServer(spawnButtonPart)
             end)
 
-            -- Wait a moment for the server to spawn/respawn the vehicle
             task.wait(1)
 
-            -- Check if the newly spawned vehicle matches the target color.
-            -- LT2 stores the active vehicle color in its PaintParts children.
-            -- We search workspace.PlayerModels for a vehicle owned by us.
             local vmodel = findPlayerVehicle()
-            if vmodel then
-                -- Look for PaintParts folder — that holds the BrickColor
-                local pp = vmodel:FindFirstChild("PaintParts")
-                local matched = false
-                if pp then
-                    for _, part in ipairs(pp:GetDescendants()) do
-                        if part:IsA("BasePart") then
-                            if part.BrickColor == BrickColor.new(targetEntry.brick) then
-                                matched = true
-                                break
-                            end
-                        end
-                    end
-                end
-                -- Fallback: check the model's direct BasePart children
-                if not matched then
-                    for _, part in ipairs(vmodel:GetDescendants()) do
-                        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                            if part.BrickColor == BrickColor.new(targetEntry.brick) then
-                                matched = true
-                                break
-                            end
-                        end
-                    end
-                end
-
-                if matched then
-                    setSpawnStatus("✓ Got " .. targetEntry.label .. "! (" .. attempts .. " tries)", false)
-                    isSpawning    = false
-                    spawnThread   = nil
-                    return
-                end
+            if vmodel and vehicleColorMatches(vmodel, targetEntry.brick) then
+                setVehicleStatus("Done - got " .. targetEntry.label .. " (" .. attempts .. " tries)", false)
+                isSpawning = false
+                spawnThread = nil
+                return
             end
 
-            setSpawnStatus("Trying... attempt " .. attempts .. "/" .. maxAttempts, true)
+            setVehicleStatus("Attempt " .. attempts .. " / " .. maxAttempts, true)
         end
 
-        setSpawnStatus("Stopped — not found after " .. maxAttempts .. " tries", false)
-        isSpawning  = false
+        setVehicleStatus("Stopped after " .. maxAttempts .. " attempts", false)
+        isSpawning = false
         spawnThread = nil
     end)
 end
 
--- Capture the player's next world-click as the spawn button.
--- Walk up from the clicked Part to find ButtonRemote_SpawnButton inside
--- the vehicle model — that is the exact arg LT2 expects.
-mouse.Button1Down:Connect(function()
+-- Mouse click capture: when waiting, next world-click is treated as the spawn button.
+-- Walks up from the clicked part to find ButtonRemote_SpawnButton in the vehicle model.
+local vMouse = player:GetMouse()
+vMouse.Button1Down:Connect(function()
     if not waitingForSpawnClick then return end
-    local target = mouse.Target
+
+    local target = vMouse.Target
     if not target then return end
 
-    -- Walk up to the containing Model
-    local model = target:FindFirstAncestorOfClass("Model")
-    if not model then
-        -- target itself might be inside PlayerModels directly
-        model = target.Parent
+    -- If the player clicked exactly the button part, use it directly
+    if target.Name == "ButtonRemote_SpawnButton" then
+        spawnButtonPart = target
+        waitingForSpawnClick = false
+        setVehicleStatus("Spawn button set. Starting...", true)
+        task.delay(0.1, beginSpawnLoop)
+        return
     end
 
-    -- Search the model for ButtonRemote_SpawnButton
-    local foundBtn = nil
+    -- Walk up to find the model containing ButtonRemote_SpawnButton
+    local model = target:FindFirstAncestorOfClass("Model") or target.Parent
+    local found = nil
     if model then
         for _, desc in ipairs(model:GetDescendants()) do
             if desc:IsA("BasePart") and desc.Name == "ButtonRemote_SpawnButton" then
-                foundBtn = desc
+                found = desc
                 break
             end
         end
-        -- Fallback: any ButtonRemote_ prefixed spawn part
-        if not foundBtn then
-            for _, desc in ipairs(model:GetDescendants()) do
-                if desc:IsA("BasePart") and desc.Name:lower():find("spawnbutton") then
-                    foundBtn = desc
-                    break
-                end
-            end
-        end
     end
 
-    -- Last resort: use the clicked part itself (in case it IS the button)
-    if not foundBtn and target.Name == "ButtonRemote_SpawnButton" then
-        foundBtn = target
-    end
-
-    if not foundBtn then
-        setSpawnStatus("Couldn't find ButtonRemote_SpawnButton — try clicking the button directly", false)
+    if not found then
+        setVehicleStatus("Could not find ButtonRemote_SpawnButton - click the button directly", false)
         waitingForSpawnClick = false
         return
     end
 
-    spawnButtonPart      = foundBtn
+    spawnButtonPart = found
     waitingForSpawnClick = false
-    setSpawnStatus("Spawn button locked. Starting...", true)
-    task.delay(0.15, beginSpawnLoop)
+    setVehicleStatus("Spawn button set. Starting...", true)
+    task.delay(0.1, beginSpawnLoop)
 end)
 
--- ── Buttons ───────────────────────────────────────────
+-- Popup: shown before waiting for spawn button click
+local function showSpawnInstructions()
+    local gui = game.CoreGui:FindFirstChild("VanillaHub")
+    if not gui then return end
 
--- Start Spawn
-createVBtn("▶  Start Spawn", Color3.fromRGB(35,90,45), function()
+    local popup = Instance.new("Frame", gui)
+    popup.Size = UDim2.new(0,360,0,0)
+    popup.Position = UDim2.new(0.5,-180,0.5,-55)
+    popup.BackgroundColor3 = Color3.fromRGB(18,18,24)
+    popup.BackgroundTransparency = 0
+    popup.BorderSizePixel = 0
+    popup.ClipsDescendants = true
+    popup.ZIndex = 20
+    Instance.new("UICorner", popup).CornerRadius = UDim.new(0,12)
+    local pStroke = Instance.new("UIStroke", popup)
+    pStroke.Color = Color3.fromRGB(70,70,100)
+    pStroke.Thickness = 1
+    pStroke.Transparency = 0.45
+
+    local msgLbl = Instance.new("TextLabel", popup)
+    msgLbl.Size = UDim2.new(1,-24,0,56)
+    msgLbl.Position = UDim2.new(0,12,0,10)
+    msgLbl.BackgroundTransparency = 1
+    msgLbl.Font = Enum.Font.GothamSemibold
+    msgLbl.TextSize = 13
+    msgLbl.TextColor3 = Color3.fromRGB(210,210,225)
+    msgLbl.TextWrapped = true
+    msgLbl.TextXAlignment = Enum.TextXAlignment.Left
+    msgLbl.TextYAlignment = Enum.TextYAlignment.Top
+    msgLbl.Text = "Click the spawn button on the vehicle spawn pad. VanillaHub will then cycle spawns until the selected color is matched."
+    msgLbl.ZIndex = 21
+
+    local okBtn = Instance.new("TextButton", popup)
+    okBtn.Size = UDim2.new(1,-24,0,30)
+    okBtn.Position = UDim2.new(0,12,0,74)
+    okBtn.BackgroundColor3 = BTN_COLOR
+    okBtn.Text = "OK - I will click the spawn button"
+    okBtn.Font = Enum.Font.GothamSemibold
+    okBtn.TextSize = 12
+    okBtn.TextColor3 = Color3.fromRGB(200,200,215)
+    okBtn.BorderSizePixel = 0
+    okBtn.ZIndex = 21
+    Instance.new("UICorner", okBtn).CornerRadius = UDim.new(0,8)
+
+    TweenService:Create(popup, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = UDim2.new(0,360,0,116)
+    }):Play()
+
+    okBtn.MouseEnter:Connect(function()
+        TweenService:Create(okBtn, TweenInfo.new(0.12), {BackgroundColor3 = BTN_HOVER}):Play()
+    end)
+    okBtn.MouseLeave:Connect(function()
+        TweenService:Create(okBtn, TweenInfo.new(0.12), {BackgroundColor3 = BTN_COLOR}):Play()
+    end)
+    okBtn.MouseButton1Click:Connect(function()
+        local t = TweenService:Create(popup, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Size = UDim2.new(0,360,0,0)
+        })
+        t:Play()
+        t.Completed:Connect(function() popup:Destroy() end)
+        waitingForSpawnClick = true
+        setVehicleStatus("Click the spawn button in-world...", true)
+    end)
+end
+
+-- Buttons
+createVBtn("Start Spawn", function()
     if isSpawning then
-        setSpawnStatus("Already spawning!", true)
+        setVehicleStatus("Already spawning", true)
         return
     end
-    -- Show the instruction popup first; clicking OK arms the click listener
-    showVehiclePopup(
-        "Click the Spawn Button in-world to begin.\n\n" ..
-        "This is the spawn button for LT2 vehicles, trailers, and all other Lumber Tycoon 2 vehicles.\n\n" ..
-        "VanillaHub will then spam E to cycle colors until it matches your selection."
-    )
-    setSpawnStatus("Popup shown — read instructions", false)
+    showSpawnInstructions()
 end)
 
--- Cancel Spawning
-createVBtn("■  Cancel Spawning", Color3.fromRGB(90,30,30), function()
+createVBtn("Cancel Spawning", function()
     isSpawning = false
     waitingForSpawnClick = false
-    if spawnThread then
-        pcall(task.cancel, spawnThread)
-        spawnThread = nil
-    end
+    if spawnThread then pcall(task.cancel, spawnThread); spawnThread = nil end
     spawnButtonPart = nil
-    setSpawnStatus("Cancelled", false)
+    setVehicleStatus("Cancelled", false)
 end)
 
 -- ════════════════════════════════════════════════════
