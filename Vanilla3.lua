@@ -775,29 +775,84 @@ local function runAutoBuy(remoteTeleport)
     local RS         = game:GetService("ReplicatedStorage")
 
     -- ── Helper: find the unowned shelf box for the selected item ──────────────
+    -- Uses a multi-pass search so it can find items regardless of how LT2 names
+    -- or structures the shelf model (Model, Part, Tool, nested name values, etc.)
     local function findShelfItem()
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            -- Must be a Model (boxed items in LT2 are Models)
+        local targetName = string.lower(abSelectedItem)
+
+        -- Helper: check if an object's name/value matches the target item
+        local function nameMatches(obj)
+            if string.lower(obj.Name) == targetName then return true end
+            -- Check common LT2 name value children
+            for _, valName in ipairs({"ItemName", "Name", "item", "itemname", "displayname"}) do
+                local v = obj:FindFirstChild(valName)
+                if v and v.Value and string.lower(tostring(v.Value)) == targetName then
+                    return true
+                end
+            end
+            return false
+        end
+
+        -- Helper: check if an object is considered "owned" (skip player-owned items on plots)
+        local function isOwnedByAnyone(obj)
+            local own = obj:FindFirstChild("Owner")
+            if not own then return false end
+            if own:IsA("ObjectValue") and own.Value ~= nil then return true end
+            if own:IsA("StringValue") and own.Value ~= "" then return true end
+            return false
+        end
+
+        -- Helper: get the best representative part for teleporting to
+        local function getBestPart(obj)
+            if obj:IsA("BasePart") then return obj end
             if obj:IsA("Model") then
-                local nm  = obj:FindFirstChild("ItemName")
-                local own = obj:FindFirstChild("Owner")
-                -- Unowned display items have no Owner, or Owner.Value is nil/empty
-                local isOwned = own and (
-                    (own:IsA("ObjectValue") and own.Value ~= nil) or
-                    (own:IsA("StringValue") and own.Value ~= "")
-                )
-                if not isOwned then
-                    local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
-                        or string.lower(obj.Name) == string.lower(abSelectedItem)
-                    if nameMatch then
-                        -- Extra check: item should be inside the store (not someone's plot)
-                        -- We verify by checking it has a BasePart we can get position from
-                        local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                        if part then return obj, part end
-                    end
+                return obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
+            end
+            if obj:IsA("Tool") then
+                return obj:FindFirstChildWhichIsA("BasePart", true)
+            end
+            return nil
+        end
+
+        -- PASS 1: Models/Tools whose direct name or ItemName value matches, unowned
+        -- Prioritise objects near the store counter (within 500 studs)
+        local candidates = {}
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if (obj:IsA("Model") or obj:IsA("Tool")) and nameMatches(obj) and not isOwnedByAnyone(obj) then
+                local part = getBestPart(obj)
+                if part then
+                    local distToCounter = counterPos and (part.Position - counterPos).Magnitude or math.huge
+                    table.insert(candidates, { obj = obj, part = part, dist = distToCounter })
                 end
             end
         end
+
+        -- Sort by proximity to store counter so we grab the shelf copy, not a player's copy
+        if #candidates > 0 then
+            table.sort(candidates, function(a, b) return a.dist < b.dist end)
+            return candidates[1].obj, candidates[1].part
+        end
+
+        -- PASS 2: Relax — any BasePart/Model anywhere in workspace whose name matches
+        -- (catches items stored under odd parent containers)
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if nameMatches(obj) and not isOwnedByAnyone(obj) then
+                local part = getBestPart(obj)
+                if part then return obj, part end
+            end
+        end
+
+        -- PASS 3: Absolute fallback — even check owned items near the counter,
+        -- the Owner check may be wrong for this server's setup
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if nameMatches(obj) then
+                local part = getBestPart(obj)
+                if part and counterPos and (part.Position - counterPos).Magnitude < 200 then
+                    return obj, part
+                end
+            end
+        end
+
         return nil, nil
     end
 
@@ -906,7 +961,7 @@ local function runAutoBuy(remoteTeleport)
 
             else
                 -- Fallback: shelf item not found in workspace — fire buy remote with item name string
-                setABStatus("Shelf item not found, trying direct buy...", true)
+                setABStatus("Shelf item '" .. abSelectedItem .. "' not found in workspace, trying direct buy...", true)
                 if buyRemote then
                     -- Teleport to counter first
                     if counterPos then
