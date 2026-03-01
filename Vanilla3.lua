@@ -2,6 +2,13 @@
 -- VANILLA3 — AutoBuy Tab + Settings Tab + Search Tab + Input Handler
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
+
+-- Guard: if _G.VH is missing, Vanilla1 wasn't executed first (or was already cleaned up)
+if not _G.VH then
+    warn("[VanillaHub] Vanilla3: _G.VH not found. Execute Vanilla1 first.")
+    return
+end
+
 local TweenService     = _G.VH.TweenService
 local Players          = _G.VH.Players
 local UserInputService = _G.VH.UserInputService
@@ -16,23 +23,22 @@ local switchTab        = _G.VH.switchTab
 local toggleGUI        = _G.VH.toggleGUI
 local stopFly          = _G.VH.stopFly
 local startFly         = _G.VH.startFly
-
 local flyKeyBtn        = _G.VH.flyKeyBtn
 local keybindButtonGUI
 
-local function getWaitingForFlyKey() return _G.VH.waitingForFlyKey end
-local function setWaitingForFlyKey(v) _G.VH.waitingForFlyKey = v end
-local function getWaitingForKeyGUI() return _G.VH.waitingForKeyGUI end
-local function setWaitingForKeyGUI(v) _G.VH.waitingForKeyGUI = v end
-local function getCurrentFlyKey() return _G.VH.currentFlyKey end
-local function setCurrentFlyKey(v) _G.VH.currentFlyKey = v end
-local function getCurrentToggleKey() return _G.VH.currentToggleKey end
-local function setCurrentToggleKey(v) _G.VH.currentToggleKey = v end
-local function getFlyToggleEnabled() return _G.VH.flyToggleEnabled end
-local function getIsFlyEnabled() return _G.VH.isFlyEnabled end
+local function getWaitingForFlyKey() return _G.VH and _G.VH.waitingForFlyKey end
+local function setWaitingForFlyKey(v) if _G.VH then _G.VH.waitingForFlyKey = v end end
+local function getWaitingForKeyGUI() return _G.VH and _G.VH.waitingForKeyGUI end
+local function setWaitingForKeyGUI(v) if _G.VH then _G.VH.waitingForKeyGUI = v end end
+local function getCurrentFlyKey() return _G.VH and _G.VH.currentFlyKey or Enum.KeyCode.Q end
+local function setCurrentFlyKey(v) if _G.VH then _G.VH.currentFlyKey = v end end
+local function getCurrentToggleKey() return _G.VH and _G.VH.currentToggleKey or Enum.KeyCode.LeftAlt end
+local function setCurrentToggleKey(v) if _G.VH then _G.VH.currentToggleKey = v end end
+local function getFlyToggleEnabled() return _G.VH and _G.VH.flyToggleEnabled end
+local function getIsFlyEnabled() return _G.VH and _G.VH.isFlyEnabled end
 
 -- ════════════════════════════════════════════════════
--- AUTOBUY TAB (tab kept, content intentionally empty)
+-- AUTOBUY TAB (kept, content intentionally empty)
 -- ════════════════════════════════════════════════════
 local autoBuyPage = pages["AutoBuyTab"]
 
@@ -140,27 +146,34 @@ searchInput:GetPropertyChangedSignal("Text"):Connect(function() updateSearchResu
 task.delay(0.1, function() updateSearchResults("") end)
 
 -- ════════════════════════════════════════════════════
--- UNIFIED INPUT HANDLER (GUI toggle + Fly key + rebinds)
+-- UNIFIED INPUT HANDLER
+-- Stored as a connection so it can be fully disconnected on cleanup
 -- ════════════════════════════════════════════════════
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+local inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    -- If _G.VH is gone (script was cleaned up), silently stop handling
+    if not _G.VH then return end
 
     if getWaitingForKeyGUI() then
         setWaitingForKeyGUI(false)
         setCurrentToggleKey(input.KeyCode)
-        keybindButtonGUI.Text = "Toggle Key: " .. getCurrentToggleKey().Name
-        TweenService:Create(keybindButtonGUI, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut, 1, true), {
-            BackgroundColor3 = Color3.fromRGB(60,180,60)
-        }):Play()
+        if keybindButtonGUI and keybindButtonGUI.Parent then
+            keybindButtonGUI.Text = "Toggle Key: " .. getCurrentToggleKey().Name
+            TweenService:Create(keybindButtonGUI, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut, 1, true), {
+                BackgroundColor3 = Color3.fromRGB(60,180,60)
+            }):Play()
+        end
         return
     end
 
     if getWaitingForFlyKey() then
         setWaitingForFlyKey(false)
         setCurrentFlyKey(input.KeyCode)
-        flyKeyBtn.Text = input.KeyCode.Name
-        flyKeyBtn.BackgroundColor3 = BTN_COLOR
+        if flyKeyBtn and flyKeyBtn.Parent then
+            flyKeyBtn.Text = input.KeyCode.Name
+            flyKeyBtn.BackgroundColor3 = BTN_COLOR
+        end
         return
     end
 
@@ -176,6 +189,11 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             startFly()
         end
     end
+end)
+
+-- Disconnect the input handler when the hub is closed/re-executed
+table.insert(cleanupTasks, function()
+    if inputConn then inputConn:Disconnect(); inputConn = nil end
 end)
 
 _G.VH.keybindButtonGUI = keybindButtonGUI
