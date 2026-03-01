@@ -699,103 +699,136 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        local teleportedParts = {}
-        local ignoredParts    = {}
-        local DidTruckTeleport = false
+        -- ══════════════════════════════════════════
+        -- TRUCK SECTION
+        -- Key fixes:
+        --   1. Snapshot the truck model BEFORE sitting (owner changes on sit)
+        --   2. Teleport the truck explicitly even if it has no cargo (empty trucks)
+        --   3. After all trucks done, warp back to giver plot for leftover slot items
+        --   4. Gifts/items land 2.70 studs above the receiver-side truck
+        -- ══════════════════════════════════════════
+        local teleportedParts  = {}
+        local ignoredParts     = {}
+        local truckDestPositions = {}  -- receiver-side truck positions, for item placement
 
-        -- Tracks receiver-side truck positions for placing items above them later
-        local truckDestPositions = {}
-
-        local function TeleportTruck()
-            if DidTruckTeleport then return end
-            if not Char.Humanoid.SeatPart then return end
-            local TCF  = Char.Humanoid.SeatPart.Parent:FindFirstChild("Main").CFrame
-            local nPos = TCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-            Char.Humanoid.SeatPart.Parent:SetPrimaryPartCFrame(CFrame.new(nPos) * TCF.Rotation)
-            DidTruckTeleport = true
-        end
+        local ABOVE_TRUCK_Y = 2.70
 
         if getTrucks() and _G.VH.butter.running then
-            -- Count ALL trucks belonging to the giver (including empty ones)
-            local truckCount = 0
+
+            -- ── Snapshot all giver trucks BEFORE any sitting changes Owner ──
+            local giverTrucks = {}
             for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
-                if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("DriveSeat") then
-                    truckCount+=1
+                if v.Name == "Owner" and tostring(v.Value) == giverName then
+                    local model = v.Parent
+                    if model and model:FindFirstChild("DriveSeat") then
+                        table.insert(giverTrucks, model)
+                    end
                 end
             end
 
+            local truckCount = #giverTrucks
             if truckCount > 0 then
-                progTrucks.Visible=true; setProgTrucks(0,truckCount)
+                progTrucks.Visible = true; setProgTrucks(0, truckCount)
                 setDupeStatus("Sending trucks...", true)
-                local truckDone=0
+                local truckDone = 0
 
-                for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
+                for _, tModel in ipairs(giverTrucks) do
                     if not _G.VH.butter.running then break end
-                    if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("DriveSeat") then
-                        -- Sit in the truck to take net ownership
-                        v.Parent.DriveSeat:Sit(Char.Humanoid)
-                        repeat task.wait() v.Parent.DriveSeat:Sit(Char.Humanoid) until Char.Humanoid.SeatPart
-
-                        local tModel = Char.Humanoid.SeatPart.Parent
-                        local mCF, mSz = tModel:GetBoundingBox()
-
-                        for _, p in ipairs(tModel:GetDescendants()) do if p:IsA("BasePart") then ignoredParts[p]=true end end
-                        for _, p in ipairs(Char:GetDescendants()) do if p:IsA("BasePart") then ignoredParts[p]=true end end
-
-                        -- Collect and teleport cargo on this truck
-                        for _, part in ipairs(workspace:GetDescendants()) do
-                            if part:IsA("BasePart") and not ignoredParts[part] and (part.Name=="Main" or part.Name=="WoodSection") then
-                                if part:FindFirstChild("Weld") and part.Weld.Part1.Parent ~= part.Parent then continue end
-                                task.spawn(function()
-                                    if isPointInside(part.Position, mCF, mSz) then
-                                        TeleportTruck()
-                                        local PCF = part.CFrame
-                                        local nP  = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-                                        local tOff = CFrame.new(nP) * PCF.Rotation
-                                        part.CFrame = tOff
-                                        table.insert(teleportedParts, {Instance=part, OldPos=part.Position, TargetCFrame=tOff})
-                                    end
-                                end)
-                            end
-                        end
-
-                        -- Record where this truck will land for later item placement
-                        local truckDestPos = tModel:GetPrimaryPartCFrame().Position
-                            - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-                        table.insert(truckDestPositions, truckDestPos)
-
-                        local SitPart = Char.Humanoid.SeatPart
-                        local DoorHinge = SitPart.Parent:FindFirstChild("PaintParts")
-                            and SitPart.Parent.PaintParts:FindFirstChild("DoorLeft")
-                            and SitPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
-
-                        task.wait(0.5) -- 0.5s pacing
-                        Char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                        task.wait(0.1); SitPart:Destroy(); TeleportTruck(); DidTruckTeleport=false; task.wait(0.1)
-                        if DoorHinge then for i=1,10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end end
-
-                        truckDone+=1; setProgTrucks(truckDone, truckCount)
+                    -- Safety: model must still exist
+                    if not (tModel and tModel.Parent) then
+                        truckDone += 1; setProgTrucks(truckDone, truckCount); continue
                     end
+
+                    local driveSeat = tModel:FindFirstChild("DriveSeat")
+                    if not driveSeat then
+                        truckDone += 1; setProgTrucks(truckDone, truckCount); continue
+                    end
+
+                    -- Mark all truck parts as ignored before sitting
+                    for _, p in ipairs(tModel:GetDescendants()) do
+                        if p:IsA("BasePart") then ignoredParts[p] = true end
+                    end
+                    for _, p in ipairs(Char:GetDescendants()) do
+                        if p:IsA("BasePart") then ignoredParts[p] = true end
+                    end
+
+                    -- Sit to gain net ownership
+                    driveSeat:Sit(Char.Humanoid)
+                    local sitTimeout = 0
+                    repeat task.wait(0.05); sitTimeout += 0.05; driveSeat:Sit(Char.Humanoid)
+                    until Char.Humanoid.SeatPart or sitTimeout > 5
+
+                    if not Char.Humanoid.SeatPart then
+                        truckDone += 1; setProgTrucks(truckDone, truckCount); continue
+                    end
+
+                    -- Compute destination CFrame for this truck (giver→receiver offset)
+                    local mainPart = tModel:FindFirstChild("Main")
+                    local truckSrcCF = mainPart and mainPart.CFrame or tModel:GetPrimaryPartCFrame()
+                    local truckDestPos = truckSrcCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                    local truckDestCF  = CFrame.new(truckDestPos) * truckSrcCF.Rotation
+                    table.insert(truckDestPositions, truckDestPos)
+
+                    -- Scan cargo in the truck's bounding box
+                    local mCF, mSz = tModel:GetBoundingBox()
+                    for _, part in ipairs(workspace:GetDescendants()) do
+                        if part:IsA("BasePart") and not ignoredParts[part]
+                            and (part.Name == "Main" or part.Name == "WoodSection") then
+                            if part:FindFirstChild("Weld") and part.Weld.Part1
+                                and part.Weld.Part1.Parent ~= part.Parent then continue end
+                            task.spawn(function()
+                                if isPointInside(part.Position, mCF, mSz) then
+                                    local PCF  = part.CFrame
+                                    local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                                    local tOff = CFrame.new(nPos) * PCF.Rotation
+                                    part.CFrame = tOff
+                                    table.insert(teleportedParts, {Instance=part, OldPos=PCF.Position, TargetCFrame=tOff})
+                                end
+                            end)
+                        end
+                    end
+
+                    -- Teleport the truck itself explicitly (covers empty trucks too)
+                    tModel:SetPrimaryPartCFrame(truckDestCF)
+
+                    local SitPart = Char.Humanoid.SeatPart
+                    local DoorHinge = SitPart.Parent:FindFirstChild("PaintParts")
+                        and SitPart.Parent.PaintParts:FindFirstChild("DoorLeft")
+                        and SitPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
+
+                    task.wait(0.5)
+                    Char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    task.wait(0.1); SitPart:Destroy(); task.wait(0.1)
+                    if DoorHinge then
+                        for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
+                    end
+
+                    truckDone += 1; setProgTrucks(truckDone, truckCount)
                 end
 
                 -- Retry missed cargo
                 task.wait(5)
                 local retryList = {}
                 for _, data in ipairs(teleportedParts) do
-                    if (data.Instance.Position - data.OldPos).Magnitude < 5 then
-                        ignoredParts[data.Instance]=nil; table.insert(retryList, data)
+                    if data.Instance and data.Instance.Parent
+                        and (data.Instance.Position - data.OldPos).Magnitude < 5 then
+                        ignoredParts[data.Instance] = nil
+                        table.insert(retryList, data)
                     end
                 end
                 local cargoTotal = #teleportedParts
                 local cargoDone  = cargoTotal - #retryList
-                if cargoTotal > 0 then progTrucks.Visible=true; setProgTrucks(cargoDone, cargoTotal) end
+                if cargoTotal > 0 then setProgTrucks(cargoDone, cargoTotal) end
                 repeat
-                    task.wait(5); retryList={}
+                    task.wait(5); retryList = {}
                     for _, data in ipairs(teleportedParts) do
-                        if (data.Instance.Position - data.OldPos).Magnitude < 25 then table.insert(retryList, data) end
+                        if data.Instance and data.Instance.Parent
+                            and (data.Instance.Position - data.OldPos).Magnitude < 25 then
+                            table.insert(retryList, data)
+                        end
                     end
                     if #retryList > 0 then
-                        setDupeStatus("Retrying "..#retryList.." cargo...", true)
+                        setDupeStatus("Retrying " .. #retryList .. " cargo...", true)
                         for _, data in ipairs(retryList) do
                             if not _G.VH.butter.running then break end
                             local item = data.Instance
@@ -811,30 +844,22 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 until #retryList == 0 or not _G.VH.butter.running
                 setProgTrucks(cargoTotal, cargoTotal)
             end
-        end
 
-        -- ── Helper: teleport character back to the giver's base area ──
-        local function returnToGiver()
-            if Char and Char:FindFirstChild("HumanoidRootPart") then
-                Char.HumanoidRootPart.CFrame = CFrame.new(
-                    GiveBaseOrigin.Position + Vector3.new(0, 5, 0)
-                )
+            -- Return to giver's base so slot items are within reach
+            if _G.VH.butter.running and Char:FindFirstChild("HumanoidRootPart") then
+                setDupeStatus("Returning to giver slot...", true)
+                Char.HumanoidRootPart.CFrame = CFrame.new(GiveBaseOrigin.Position + Vector3.new(0, 5, 0))
                 task.wait(0.5)
             end
         end
 
-        -- ── Helper: compute "above truck" CFrame for an item ──
-        -- Uses the first recorded truck destination (or receiver origin as fallback)
-        local ABOVE_TRUCK_Y_OFFSET = 2.70
-        local function getAboveTruckCFrame(originalPCF)
+        -- ── Helpers ──────────────────────────────────────────────────────────
+        -- "above truck" destination: 2.70 studs above the first receiver truck
+        local function getAboveTruckCFrame(srcPCF)
             local basePos = (#truckDestPositions > 0)
                 and truckDestPositions[1]
-                or  ReceiverBaseOrigin.Position
-            return CFrame.new(
-                basePos.X,
-                basePos.Y + ABOVE_TRUCK_Y_OFFSET,
-                basePos.Z
-            ) * originalPCF.Rotation
+                or  (ReceiverBaseOrigin.Position)
+            return CFrame.new(basePos.X, basePos.Y + ABOVE_TRUCK_Y, basePos.Z) * srcPCF.Rotation
         end
 
         local function seekNetOwn(part)
@@ -842,7 +867,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
                 Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
             end
-            for i=1,50 do task.wait(0.05); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
+            for i = 1, 50 do task.wait(0.05); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
         end
 
         local function sendItem(part, Offset)
@@ -851,13 +876,8 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
             end
             seekNetOwn(part)
-            for i=1,200 do part.CFrame = Offset end
-            task.wait(0.5) -- 0.5s pacing
-        end
-
-        -- After trucks are done, return to giver to grab leftover slot items
-        if getTrucks() and _G.VH.butter.running then
-            returnToGiver()
+            for i = 1, 200 do part.CFrame = Offset end
+            task.wait(0.5)
         end
 
         if getDupeItems() and _G.VH.butter.running then
@@ -865,19 +885,20 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 return p:FindFirstChild("PurchasedBoxItemName") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
             end)
             if total > 0 then
-                progItems.Visible=true; setProgItems(0,total)
-                setDupeStatus("Sending purchased items (above truck)...", true); local done=0
+                progItems.Visible = true; setProgItems(0, total)
+                setDupeStatus("Sending purchased items (above truck)...", true)
+                local done = 0
                 pcall(function()
                     for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
                         if not _G.VH.butter.running then break end
-                        if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("PurchasedBoxItemName") then
+                        if v.Name == "Owner" and tostring(v.Value) == giverName
+                            and v.Parent:FindFirstChild("PurchasedBoxItemName") then
                             local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
                             if not part then continue end
-                            local PCF  = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame) or v.Parent:FindFirstChildOfClass("Part").CFrame
-                            -- Place 2.70 studs above the truck destination
-                            local destCFrame = getAboveTruckCFrame(PCF)
-                            sendItem(part, destCFrame)
-                            done+=1; setProgItems(done, total)
+                            local PCF = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
+                                or v.Parent:FindFirstChildOfClass("Part").CFrame
+                            sendItem(part, getAboveTruckCFrame(PCF))
+                            done += 1; setProgItems(done, total)
                         end
                     end
                 end)
@@ -891,20 +912,20 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                     and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
             end)
             if total > 0 then
-                progGifs.Visible=true; setProgGifs(0,total)
-                setDupeStatus("Sending gift items (above truck)...", true); local done=0
+                progGifs.Visible = true; setProgGifs(0, total)
+                setDupeStatus("Sending gift items (above truck)...", true)
+                local done = 0
                 pcall(function()
                     for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
                         if not _G.VH.butter.running then break end
-                        if v.Name=="Owner" and tostring(v.Value)==giverName
+                        if v.Name == "Owner" and tostring(v.Value) == giverName
                             and v.Parent:FindFirstChildOfClass("Script") and v.Parent:FindFirstChild("DraggableItem") then
                             local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
                             if not part then continue end
-                            local PCF  = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame) or v.Parent:FindFirstChildOfClass("Part").CFrame
-                            -- Place 2.70 studs above the truck destination
-                            local destCFrame = getAboveTruckCFrame(PCF)
-                            sendItem(part, destCFrame)
-                            done+=1; setProgGifs(done, total)
+                            local PCF = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
+                                or v.Parent:FindFirstChildOfClass("Part").CFrame
+                            sendItem(part, getAboveTruckCFrame(PCF))
+                            done += 1; setProgGifs(done, total)
                         end
                     end
                 end)
