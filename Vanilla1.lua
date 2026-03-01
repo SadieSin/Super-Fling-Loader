@@ -3,10 +3,28 @@ if type(_G.VanillaHubCleanup) == "function" then
     pcall(_G.VanillaHubCleanup)
     _G.VanillaHubCleanup = nil
 end
+
+-- Nuke leftover GUIs
 for _, name in pairs({"VanillaHub", "VanillaHubWarning"}) do
     if game.CoreGui:FindFirstChild(name) then
         game.CoreGui[name]:Destroy()
     end
+end
+
+-- Nuke leftover _G.VH table completely
+if _G.VH then
+    -- Cancel any running dupe thread
+    if _G.VH.butter and _G.VH.butter.running then
+        _G.VH.butter.running = false
+        if _G.VH.butter.thread then pcall(task.cancel, _G.VH.butter.thread) end
+        _G.VH.butter.thread = nil
+    end
+    _G.VH = nil
+end
+
+-- Nuke leftover workspace markers
+if workspace:FindFirstChild("VanillaHubTpCircle") then
+    workspace.VanillaHubTpCircle:Destroy()
 end
 
 -- Only Lumber Tycoon 2
@@ -88,11 +106,9 @@ local Stats            = game:GetService("Stats")
 local player           = Players.LocalPlayer
 
 -- ════════════════════════════════════════════════════
--- CLEANUP REGISTRY — everything that needs destroying on exit
+-- CLEANUP REGISTRY
 -- ════════════════════════════════════════════════════
-local cleanupTasks = {}  -- list of functions to call on exit
-
--- Forward-declare so dupe cleanup can reference butterRunning before it is set
+local cleanupTasks = {}
 local butterRunning = false
 local butterThread  = nil
 
@@ -101,12 +117,22 @@ local function onExit()
     butterRunning = false
     if butterThread then pcall(task.cancel, butterThread); butterThread = nil end
 
-    -- Run all registered cleanup functions (fly, noclip, infJump, stats, etc.)
+    -- Cancel butter via _G.VH if Vanilla2 set it
+    if _G.VH and _G.VH.butter then
+        _G.VH.butter.running = false
+        if _G.VH.butter.thread then
+            pcall(task.cancel, _G.VH.butter.thread)
+            _G.VH.butter.thread = nil
+        end
+    end
+
+    -- Run all registered cleanup functions
     for _, fn in ipairs(cleanupTasks) do
         pcall(fn)
     end
+    cleanupTasks = {}
 
-    -- Hard-restore humanoid state in case cleanup missed it
+    -- Hard-restore humanoid state
     pcall(function()
         local lp = game:GetService("Players").LocalPlayer
         local char = lp and lp.Character
@@ -118,7 +144,6 @@ local function onExit()
             hum.WalkSpeed     = 16
             hum.JumpPower     = 50
         end
-        -- Destroy any leftover fly physics objects
         if hrp then
             for _, obj in ipairs(hrp:GetChildren()) do
                 if obj:IsA("BodyVelocity") or obj:IsA("BodyGyro") then
@@ -126,12 +151,27 @@ local function onExit()
                 end
             end
         end
-        -- Restore collision on all character parts
         for _, p in ipairs(char:GetDescendants()) do
             if p:IsA("BasePart") then pcall(function() p.CanCollide = true end) end
         end
     end)
 
+    -- Destroy teleport circle marker if it survived
+    pcall(function()
+        if workspace:FindFirstChild("VanillaHubTpCircle") then
+            workspace.VanillaHubTpCircle:Destroy()
+        end
+    end)
+
+    -- Nuke walk-on-water planes left by Vanilla2
+    pcall(function()
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if obj.Name == "WalkWaterPlane" then obj:Destroy() end
+        end
+    end)
+
+    -- Nuke the shared globals table so Vanilla2/3 can't fire stale references
+    _G.VH = nil
     _G.VanillaHubCleanup = nil
 end
 
@@ -142,9 +182,11 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "VanillaHub"
 gui.Parent = game.CoreGui
 gui.ResetOnSpawn = false
-table.insert(cleanupTasks, function() if gui and gui.Parent then gui:Destroy() end end)
+table.insert(cleanupTasks, function()
+    if gui and gui.Parent then gui:Destroy() end
+end)
 
--- Store cleanup in _G so re-executing the script can kill everything
+-- Register cleanup in _G immediately so a second execute can kill this run
 _G.VanillaHubCleanup = onExit
 
 local main = Instance.new("Frame", gui)
@@ -167,7 +209,6 @@ topBar.Size = UDim2.new(1, 0, 0, 38)
 topBar.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
 topBar.BorderSizePixel = 0
 
--- Hub icon (anime girl — loaded from uploaded decal asset)
 local hubIcon = Instance.new("ImageLabel", topBar)
 hubIcon.Size               = UDim2.new(0, 30, 0, 30)
 hubIcon.Position           = UDim2.new(0, 6, 0.5, -15)
@@ -273,8 +314,9 @@ local function showConfirmClose()
     cancelBtn2.MouseButton1Click:Connect(function() overlay:Destroy(); dialog:Destroy() end)
     confirmBtn2.MouseButton1Click:Connect(function()
         overlay:Destroy(); dialog:Destroy()
-        -- Run all cleanup first (stops fly, noclip, etc.)
+        -- Full cleanup first (stops fly, noclip, dupe, clears _G.VH, etc.)
         onExit()
+        -- Animate GUI out then destroy it
         local t = TweenService:Create(main, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0),
             BackgroundTransparency = 1
@@ -332,6 +374,7 @@ content.BorderSizePixel = 0
 -- WELCOME POPUP
 task.spawn(function()
     task.wait(0.8)
+    if not (gui and gui.Parent) then return end
     local wf = Instance.new("Frame", gui)
     wf.Size = UDim2.new(0, 380, 0, 90)
     wf.Position = UDim2.new(0.5, -190, 1, -110)
@@ -559,7 +602,9 @@ local pingConn = RunService.Heartbeat:Connect(function()
     local ok, ping = pcall(function() return math.round(Stats.Network.ServerStatsItem["Data Ping"]:GetValue()) end)
     pingLabel.Text = ok and ("Ping: " .. ping .. " ms") or "Ping: N/A"
 end)
-table.insert(cleanupTasks, function() if pingConn then pingConn:Disconnect() end end)
+table.insert(cleanupTasks, function()
+    if pingConn then pingConn:Disconnect(); pingConn = nil end
+end)
 
 -- ════════════════════════════════════════════════════
 -- TELEPORT TAB
@@ -612,7 +657,6 @@ local itemPage = pages["ItemTab"]
 local itemList = itemPage:FindFirstChildOfClass("UIListLayout")
 if itemList then itemList.Padding = UDim.new(0, 6) end
 
--- Standard button color matching Cancel/Clear
 local BTN_COLOR = Color3.fromRGB(45, 45, 50)
 local BTN_HOVER = Color3.fromRGB(70, 70, 80)
 
@@ -684,14 +728,12 @@ local function createItemToggle(text, defaultState, callback)
     return frame
 end
 
--- SELECTION MODE
 createSectionLabel("Selection Mode")
 createItemToggle("Click Selection", false, function(val) clickSelection = val; if val then lassoTool = false end end)
 createItemToggle("Lasso Tool", false, function(val) lassoTool = val; if val then clickSelection = false end end)
 createItemToggle("Group Selection", false, function(val) groupSelection = val end)
 createSep()
 
--- ITEM HELPERS
 local function getOwner(model)
     local ov = model:FindFirstChild("Owner")
     if ov then
@@ -708,40 +750,22 @@ local function getItemCategory(model)
 end
 
 local function isMoveableItem(model)
-    -- Must have at least one BasePart
     local mp = model.PrimaryPart or model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
     if not mp then return false end
-    -- Exclude workspace root and known static containers
     if model == workspace then return false end
-
-    -- Exclude known static world/map object names
     local staticNames = {
-        Map = true, Terrain = true, Camera = true,
-        Baseplate = true, Base = true, Ground = true,
-        -- LT2 land/terrain chunks
-        Land = true, Island = true, Water = true,
-        -- LT2 trees and natural scenery
-        Tree = true, Palm = true, Bush = true, Rock = true,
-        Stump = true, Branch = true, Log = true,
-        PalmTree = true, CypressTree = true, SpruceTree = true,
-        ElmTree = true, ChestnutTree = true, CherryTree = true,
-        OakTree = true, BirchTree = true,
-        -- Generic environment
-        Fence = true, Road = true, Path = true,
-        River = true, Cliff = true, Hill = true,
-        Bridge = true,
+        Map=true,Terrain=true,Camera=true,Baseplate=true,Base=true,Ground=true,
+        Land=true,Island=true,Water=true,Tree=true,Palm=true,Bush=true,Rock=true,
+        Stump=true,Branch=true,Log=true,PalmTree=true,CypressTree=true,SpruceTree=true,
+        ElmTree=true,ChestnutTree=true,CherryTree=true,OakTree=true,BirchTree=true,
+        Fence=true,Road=true,Path=true,River=true,Cliff=true,Hill=true,Bridge=true,
     }
     if staticNames[model.Name] then return false end
-
-    -- Exclude any model that has no Owner value and whose name starts with
-    -- a known LT2 world-object prefix (additional safety net)
     local hasOwner = model:FindFirstChild("Owner") ~= nil
     if not hasOwner then
-        -- If it has no owner and no ItemName it's likely world geometry
         local hasItemName = model:FindFirstChild("ItemName") ~= nil
         if not hasItemName then return false end
     end
-
     return true
 end
 
@@ -768,25 +792,19 @@ local function handleSelection(target, forceSelect)
     if not target then return end
     local model = target:FindFirstAncestorOfClass("Model")
     if not (model and isMoveableItem(model)) then return end
-
     if groupSelection then
         local ownerVal = getOwner(model)
         local cat = getItemCategory(model)
-        -- Select all workspace items with the same category (ItemName or model name)
-        -- and same owner if both have one
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("Model") and isMoveableItem(obj) then
                 local objCat = getItemCategory(obj)
                 if objCat == cat then
                     local objOwner = getOwner(obj)
-                    -- If both have owners, they must match; if either lacks one, match by category alone
                     local ownerMatch = true
                     if ownerVal ~= nil and objOwner ~= nil then
                         ownerMatch = tostring(ownerVal) == tostring(objOwner)
                     end
-                    if ownerMatch then
-                        highlightModel(obj)
-                    end
+                    if ownerMatch then highlightModel(obj) end
                 end
             end
         end
@@ -799,7 +817,6 @@ local function handleSelection(target, forceSelect)
     end
 end
 
--- DESTINATION SECTION
 createSectionLabel("Item Teleport Destination")
 
 local tpRow = Instance.new("Frame", itemPage)
@@ -843,89 +860,52 @@ tpRemove.MouseButton1Click:Connect(function()
 end)
 
 table.insert(cleanupTasks, function()
-    if tpCircle and tpCircle.Parent then tpCircle:Destroy() end
+    if tpCircle and tpCircle.Parent then tpCircle:Destroy(); tpCircle = nil end
+    unhighlightAll()
 end)
 
 createSep()
-
--- ACTIONS
 createSectionLabel("Actions")
 
--- TELEPORT SELECTED: teleport player TO item, wait for it to register, tp item, verify,
--- retry failures after all others. Speed 0.5s per item. No overlapping.
 createItemButton("Teleport Selected Items", function()
     if not tpCircle then return end
     if isItemTeleporting then return end
     isItemTeleporting = true
 
     task.spawn(function()
-        -- Build queue
         local queue = {}
         for model in pairs(selectedItems) do
-            if model and model.Parent then
-                table.insert(queue, model)
-            end
+            if model and model.Parent then table.insert(queue, model) end
         end
-
         local total = #queue
         local done = 0
-
-        -- Show progress bar
         if tpProgressContainer then
             tpProgressContainer.Visible = true
             tpProgressFill.Size = UDim2.new(0, 0, 1, 0)
             tpProgressLabel.Text = "Teleporting... 0 / " .. total
         end
-
-        -- Single pass — no retry loop
         for _, model in ipairs(queue) do
             if not isItemTeleporting then break end
-            if not (model and model.Parent) then
-                done = done + 1
-                continue
-            end
-
+            if not (model and model.Parent) then done = done + 1; continue end
             local mainPart = model.PrimaryPart or model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
-            if not mainPart then
-                done = done + 1
-                continue
-            end
-
+            if not mainPart then done = done + 1; continue end
             local char = player.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then
-                done = done + 1
-                continue
-            end
-
-            -- Step 1: tp player to item
+            if not hrp then done = done + 1; continue end
             hrp.CFrame = mainPart.CFrame * CFrame.new(0, 4, 2)
             task.wait(0.12)
-
-            -- Step 2: fire drag start
             local dragger = game.ReplicatedStorage:FindFirstChild("Interaction")
                 and game.ReplicatedStorage.Interaction:FindFirstChild("ClientIsDragging")
             if dragger then dragger:FireServer(model) end
             task.wait(0.08)
-
-            -- Step 3: move item to destination
-            if mainPart and mainPart.Parent then
-                mainPart.CFrame = tpCircle.CFrame
-            end
+            if mainPart and mainPart.Parent then mainPart.CFrame = tpCircle.CFrame end
             task.wait(0.08)
-
-            -- Step 4: fire drag end
             if dragger then dragger:FireServer(model) end
             task.wait(0.22)
-
-            -- Deselect
             local hl = selectedItems[model]
             if hl and hl.Parent then hl:Destroy() end
             selectedItems[model] = nil
-
             done = done + 1
-
-            -- Update progress bar
             if tpProgressContainer and tpProgressContainer.Visible then
                 local pct = done / math.max(total, 1)
                 TweenService:Create(tpProgressFill, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {
@@ -934,10 +914,7 @@ createItemButton("Teleport Selected Items", function()
                 tpProgressLabel.Text = "Teleporting... " .. done .. " / " .. total
             end
         end
-
         isItemTeleporting = false
-
-        -- Complete progress bar then fade out
         if tpProgressContainer and tpProgressContainer.Visible then
             TweenService:Create(tpProgressFill, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 1, 0)}):Play()
             tpProgressLabel.Text = "Done! " .. done .. " / " .. total .. " teleported"
@@ -961,10 +938,8 @@ createItemButton("Teleport Selected Items", function()
 end)
 
 createItemButton("Cancel Teleport", function() isItemTeleporting = false end)
-
 createItemButton("Clear Selection", function() unhighlightAll() end)
 
--- TELEPORT PROGRESS BAR
 do
     local pbWrapper = Instance.new("Frame", itemPage)
     pbWrapper.Size = UDim2.new(1,-12,0,44)
@@ -974,7 +949,6 @@ do
     Instance.new("UICorner", pbWrapper).CornerRadius = UDim.new(0, 8)
     local pbStroke = Instance.new("UIStroke", pbWrapper)
     pbStroke.Color = Color3.fromRGB(60,60,80); pbStroke.Thickness = 1; pbStroke.Transparency = 0.5
-
     local pbLabel = Instance.new("TextLabel", pbWrapper)
     pbLabel.Size = UDim2.new(1,-12,0,16)
     pbLabel.Position = UDim2.new(0,6,0,4)
@@ -983,26 +957,22 @@ do
     pbLabel.TextColor3 = Color3.fromRGB(170,170,200)
     pbLabel.TextXAlignment = Enum.TextXAlignment.Left
     pbLabel.Text = "Teleporting..."
-
     local pbTrack = Instance.new("Frame", pbWrapper)
     pbTrack.Size = UDim2.new(1,-12,0,12)
     pbTrack.Position = UDim2.new(0,6,0,24)
     pbTrack.BackgroundColor3 = Color3.fromRGB(30,30,40)
     pbTrack.BorderSizePixel = 0
     Instance.new("UICorner", pbTrack).CornerRadius = UDim.new(1,0)
-
     local pbFill = Instance.new("Frame", pbTrack)
     pbFill.Size = UDim2.new(0,0,1,0)
     pbFill.BackgroundColor3 = Color3.fromRGB(80,180,255)
     pbFill.BorderSizePixel = 0
     Instance.new("UICorner", pbFill).CornerRadius = UDim.new(1,0)
-
     tpProgressContainer = pbWrapper
     tpProgressFill = pbFill
     tpProgressLabel = pbLabel
 end
 
--- LASSO UI
 local lassoFrame = Instance.new("Frame", gui)
 lassoFrame.Name = "LassoRect"
 lassoFrame.BackgroundColor3 = Color3.fromRGB(60,120,200)
@@ -1020,14 +990,12 @@ local function updateLassoFrame(s, c)
     lassoFrame.Size = UDim2.new(0, math.abs(c.X-s.X), 0, math.abs(c.Y-s.Y))
 end
 
--- Lasso: select everything whose screen-projected position falls inside the drawn box
 local camera = workspace.CurrentCamera
 local function selectItemsInLasso()
     if not lassoStartPos then return end
     local cur = Vector2.new(player:GetMouse().X, player:GetMouse().Y)
     local minX = math.min(lassoStartPos.X, cur.X); local maxX = math.max(lassoStartPos.X, cur.X)
     local minY = math.min(lassoStartPos.Y, cur.Y); local maxY = math.max(lassoStartPos.Y, cur.Y)
-
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and isMoveableItem(obj) then
             local mp = obj.PrimaryPart or obj:FindFirstChild("Main") or obj:FindFirstChildWhichIsA("BasePart")
@@ -1041,7 +1009,6 @@ local function selectItemsInLasso()
     end
 end
 
--- MOUSE HOOKS
 local mouse = player:GetMouse()
 local mouseIsDragging = false
 
@@ -1090,7 +1057,6 @@ local function createPSep()
     s.Size = UDim2.new(1,-12,0,1); s.BackgroundColor3 = Color3.fromRGB(40,40,55); s.BorderSizePixel = 0
 end
 
--- Persistent walkspeed/jumppower — applied every frame so game can't reset them
 local savedWalkSpeed = 16
 local savedJumpPower = 50
 
@@ -1104,14 +1070,10 @@ local statsConn2 = RunService.Heartbeat:Connect(function()
 end)
 table.insert(cleanupTasks, function()
     if statsConn2 then statsConn2:Disconnect(); statsConn2 = nil end
-    -- Restore default movement values
     local char = player.Character
     if char then
         local hum = char:FindFirstChild("Humanoid")
-        if hum then
-            hum.WalkSpeed = 16
-            hum.JumpPower = 50
-        end
+        if hum then hum.WalkSpeed = 16; hum.JumpPower = 50 end
     end
 end)
 
@@ -1188,7 +1150,6 @@ local function createPToggle(text, defaultState, callback)
     Instance.new("UICorner", circle).CornerRadius = UDim.new(1,0)
     local toggled = defaultState
     if callback then callback(toggled) end
-    -- Return a setter so external code can flip it
     local function setToggled(val)
         toggled = val
         TweenService:Create(tb, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
@@ -1206,7 +1167,6 @@ local function createPToggle(text, defaultState, callback)
     return frame, setToggled, function() return toggled end
 end
 
--- ── MOVEMENT SECTION ──────────────────────────
 createPSection("Movement")
 
 createPSlider("Walkspeed", 16, 150, 16, function(val)
@@ -1224,7 +1184,6 @@ end)
 local flySpeed = 100
 createPSlider("Fly Speed", 100, 500, 100, function(val) flySpeed = val end)
 
--- Fly Key row
 local flyKeyFrame = Instance.new("Frame", playerPage)
 flyKeyFrame.Size = UDim2.new(1,-12,0,32); flyKeyFrame.BackgroundColor3 = Color3.fromRGB(24,24,30)
 Instance.new("UICorner", flyKeyFrame).CornerRadius = UDim.new(0,6)
@@ -1249,9 +1208,8 @@ flyKeyBtn.MouseButton1Click:Connect(function()
     flyKeyBtn.BackgroundColor3 = Color3.fromRGB(60,100,60)
 end)
 
--- FLY SYSTEM
 local isFlyEnabled = false
-local flyToggleEnabled = true  -- The "Fly" toggle — on by default
+local flyToggleEnabled = true
 local flyBV, flyBG, flyConn
 
 local function stopFly()
@@ -1267,7 +1225,7 @@ local function stopFly()
 end
 
 local function startFly()
-    stopFly()  -- clean up any existing
+    stopFly()
     isFlyEnabled = true
     if _G.VH then _G.VH.isFlyEnabled = true end
     local char = player.Character
@@ -1288,41 +1246,25 @@ local function startFly()
         local hum = char and char:FindFirstChild("Humanoid")
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not (hum and root) then return end
-
         local cam = workspace.CurrentCamera
         local cf = cam.CFrame
         local UIS = UserInputService
         local dir = Vector3.zero
-
         if UIS:IsKeyDown(Enum.KeyCode.W) then dir = dir + cf.LookVector end
         if UIS:IsKeyDown(Enum.KeyCode.S) then dir = dir - cf.LookVector end
         if UIS:IsKeyDown(Enum.KeyCode.A) then dir = dir - cf.RightVector end
         if UIS:IsKeyDown(Enum.KeyCode.D) then dir = dir + cf.RightVector end
         if UIS:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0,1,0) end
         if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0,1,0) end
-
-        if dir.Magnitude > 0 then
-            -- Actively flying: PlatformStand on, full BodyVelocity control
-            hum.PlatformStand = true
-            flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-            flyBV.Velocity = dir.Unit * flySpeed
-            flyBG.CFrame = cf
-        else
-            -- No keys: hover smoothly in place — keep PlatformStand true so
-            -- there's no ice sliding or fall animation, BodyVelocity holds position
-            hum.PlatformStand = true
-            flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-            flyBV.Velocity = Vector3.new(0, 0, 0)
-            flyBG.CFrame = cf
-        end
+        hum.PlatformStand = true
+        flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        flyBV.Velocity = dir.Magnitude > 0 and dir.Unit * flySpeed or Vector3.zero
+        flyBG.CFrame = cf
     end)
 end
 
 table.insert(cleanupTasks, stopFly)
 
--- Fly toggle (the switch in the UI)
--- When enabled: hotkey works AND fly is active
--- When disabled: hotkey does NOT work
 local _, setFlyToggle = createPToggle("Fly", true, function(val)
     flyToggleEnabled = val
     if val then
@@ -1341,11 +1283,8 @@ local _, setFlyToggle = createPToggle("Fly", true, function(val)
 end)
 
 createPSep()
-
--- ── CHARACTER SECTION ──────────────────────────
 createPSection("Character")
 
--- Noclip
 local noclipEnabled = false
 local noclipConn
 createPToggle("Noclip", false, function(val)
@@ -1374,7 +1313,6 @@ table.insert(cleanupTasks, function()
     if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
 end)
 
--- InfJump
 local infJumpEnabled = false
 local infJumpConn
 createPToggle("InfJump", false, function(val)
@@ -1395,7 +1333,6 @@ table.insert(cleanupTasks, function()
     infJumpEnabled = false
     if infJumpConn then infJumpConn:Disconnect(); infJumpConn = nil end
 end)
-
 
 -- ════════════════════════════════════════════════════
 -- SHARED GLOBALS — exported for Vanilla2 and Vanilla3
@@ -1425,20 +1362,11 @@ _G.VH = {
     flyKeyBtn        = flyKeyBtn,
     currentToggleKey = currentToggleKey,
     waitingForKeyGUI = waitingForKeyGUI,
-    keybindButtonGUI = nil, -- set by Vanilla3
+    keybindButtonGUI = nil,
 }
 
--- Make butterRunning/butterThread accessible via _G.VH.butter table
--- (Vanilla2 writes to _G.VH.butter.running and _G.VH.butter.thread)
--- onExit also cancels butter via this table
-local _origOnExit = onExit
-_G.VanillaHubCleanup = function()
-    -- Cancel butter dupe if running in Vanilla2
-    if _G.VH and _G.VH.butter then
-        _G.VH.butter.running = false
-        if _G.VH.butter.thread then pcall(task.cancel, _G.VH.butter.thread); _G.VH.butter.thread = nil end
-    end
-    _origOnExit()
-end
+-- Point _G.VanillaHubCleanup at onExit so any future execute or re-execute
+-- will fully tear down this instance before starting fresh.
+_G.VanillaHubCleanup = onExit
 
 print("[VanillaHub] Vanilla1 loaded")
