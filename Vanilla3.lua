@@ -17,13 +17,9 @@ local toggleGUI        = _G.VH.toggleGUI
 local stopFly          = _G.VH.stopFly
 local startFly         = _G.VH.startFly
 
--- Fly/keybind state — mutable values accessed via _G.VH so Vanilla1 and Vanilla3 share state
--- Read-only snapshot for flyKeyBtn (GUI object reference, safe as local)
 local flyKeyBtn        = _G.VH.flyKeyBtn
--- All mutable flags are read/written through _G.VH directly (see input handler below)
-local keybindButtonGUI -- set below in Settings tab, then written to _G.VH
+local keybindButtonGUI
 
--- Helpers to read/write shared mutable state cleanly
 local function getWaitingForFlyKey() return _G.VH.waitingForFlyKey end
 local function setWaitingForFlyKey(v) _G.VH.waitingForFlyKey = v end
 local function getWaitingForKeyGUI() return _G.VH.waitingForKeyGUI end
@@ -40,7 +36,6 @@ local function getIsFlyEnabled() return _G.VH.isFlyEnabled end
 -- ════════════════════════════════════════════════════
 local autoBuyPage = pages["AutoBuyTab"]
 
--- ── Helpers ───────────────────────────────────────────────────────────────────
 local function createABSection(text)
     local lbl = Instance.new("TextLabel", autoBuyPage)
     lbl.Size = UDim2.new(1,-12,0,22); lbl.BackgroundTransparency = 1
@@ -67,39 +62,129 @@ local function createABBtn(text, callback)
     return btn
 end
 
--- ── Item catalogue (every purchaseable non-limited item from LT2 stores) ─────
-local AB_ITEMS = {
-    -- Wood R Us
-    "Basic Hatchet", "Plain Axe", "Steel Axe", "Silver Axe", "Golden Axe",
-    "Rukiryaxe", "Beesaxe", "Alpha Axe of Testing",
-    -- Fancy Furnishings
-    "Door", "Window", "Chair", "Table", "Couch", "Bed", "Bookshelf",
-    "Cupboard", "Lamp", "Fan", "Candle", "Clock", "Picture Frame",
-    "Rug", "Vase", "Flower Pot", "Mirror", "Shelf", "Cabinet",
-    "Fireplace", "Desk", "Piano", "Washing Machine", "Toilet", "Bathtub",
-    "Shower", "Sink", "Fridge", "Oven", "Stove", "Microwave",
-    "Television", "Computer Desk", "Office Chair", "Sofa", "Hammock",
-    "End Table", "Coffee Table", "Dining Table", "Bench", "Bar Stool",
-    -- Land Store
-    "Small Plot", "Medium Plot", "Large Plot",
-    -- Link's Logic
-    "Button", "Pressure Plate", "Switch", "Wire", "Basic Gate", "NOT Gate",
-    "AND Gate", "OR Gate", "NAND Gate", "NOR Gate", "XOR Gate",
-    "Signal Light", "Alarm", "Door Sensor", "Counter", "Timer", "Delay",
-    "Conveyor", "Display", "Speaker", "Detector",
-    -- Fine Art Shop (non-limited paintings/statues)
-    "Canvas", "Sculpture Block", "Painting: Landscape", "Painting: Abstract",
-    "Painting: Portrait", "Statue Base", "Picture",
-    -- Bob's Shack / Swamp Shack
-    "Dynamite", "Fire Extinguisher",
-    -- Vehicles / Lumber Yard Store
-    "Truck", "Trailer", "Flatbed",
-    -- Miscellaneous purchaseable items
-    "End Times Chest", "Blueprint", "Fertilizer", "Plank", "Sawmill",
-    "Painting Easel", "Wooden Crate", "Storage Box", "Sign",
-    "Streetlight", "Lantern", "Campfire",
+-- ── Store counter locations ───────────────────────────────────────────────────
+local STORE_COUNTERS = {
+    ["Wood RUs"]           = Vector3.new(267.70,  5.20,   67.36),
+    ["Fancy Furnishings"]  = Vector3.new(477.68,  5.60, -1720.56),
+    ["Boxed Cars"]         = Vector3.new(528.07,  5.60, -1460.46),
+    ["Bob's Shack"]        = Vector3.new(260.39, 10.40, -2550.87),
+    ["Link's Logic"]       = Vector3.new(4595,    9.40,  -784.71),
+    ["Fine Art Shop"]      = Vector3.new(5237.45,-164.00,  739.92),
 }
-table.sort(AB_ITEMS)
+
+-- ── Item catalogue — NON-LIMITED items only, each mapped to their store ───────
+-- Format: { itemName, storeName, price }
+-- Prices are approximate LT2 in-game values. Update as needed.
+local AB_ITEMS_RAW = {
+    -- ── Wood R Us ────────────────────────────────────────────────────────────
+    { "Basic Hatchet",          "Wood RUs",          10   },
+    { "Plain Axe",              "Wood RUs",          30   },
+    { "Steel Axe",              "Wood RUs",          100  },
+    { "Silver Axe",             "Wood RUs",          340  },
+    { "Golden Axe",             "Wood RUs",          1200 },
+    { "Rukiryaxe",              "Wood RUs",          1200 },
+    { "Beesaxe",                "Wood RUs",          800  },
+    { "Alpha Axe of Testing",   "Wood RUs",          500  },
+
+    -- ── Fancy Furnishings ────────────────────────────────────────────────────
+    { "Door",                   "Fancy Furnishings", 120  },
+    { "Window",                 "Fancy Furnishings", 80   },
+    { "Chair",                  "Fancy Furnishings", 200  },
+    { "Table",                  "Fancy Furnishings", 250  },
+    { "Couch",                  "Fancy Furnishings", 350  },
+    { "Bed",                    "Fancy Furnishings", 450  },
+    { "Bookshelf",              "Fancy Furnishings", 300  },
+    { "Cupboard",               "Fancy Furnishings", 280  },
+    { "Lamp",                   "Fancy Furnishings", 90   },
+    { "Fan",                    "Fancy Furnishings", 95   },
+    { "Candle",                 "Fancy Furnishings", 30   },
+    { "Clock",                  "Fancy Furnishings", 150  },
+    { "Picture Frame",          "Fancy Furnishings", 60   },
+    { "Rug",                    "Fancy Furnishings", 110  },
+    { "Vase",                   "Fancy Furnishings", 75   },
+    { "Flower Pot",             "Fancy Furnishings", 55   },
+    { "Mirror",                 "Fancy Furnishings", 130  },
+    { "Shelf",                  "Fancy Furnishings", 140  },
+    { "Cabinet",                "Fancy Furnishings", 220  },
+    { "Fireplace",              "Fancy Furnishings", 400  },
+    { "Desk",                   "Fancy Furnishings", 260  },
+    { "Piano",                  "Fancy Furnishings", 900  },
+    { "Washing Machine",        "Fancy Furnishings", 320  },
+    { "Toilet",                 "Fancy Furnishings", 180  },
+    { "Bathtub",                "Fancy Furnishings", 280  },
+    { "Shower",                 "Fancy Furnishings", 270  },
+    { "Sink",                   "Fancy Furnishings", 160  },
+    { "Fridge",                 "Fancy Furnishings", 340  },
+    { "Oven",                   "Fancy Furnishings", 310  },
+    { "Stove",                  "Fancy Furnishings", 290  },
+    { "Microwave",              "Fancy Furnishings", 150  },
+    { "Television",             "Fancy Furnishings", 420  },
+    { "Computer Desk",          "Fancy Furnishings", 380  },
+    { "Office Chair",           "Fancy Furnishings", 230  },
+    { "Sofa",                   "Fancy Furnishings", 370  },
+    { "Hammock",                "Fancy Furnishings", 200  },
+    { "End Table",              "Fancy Furnishings", 150  },
+    { "Coffee Table",           "Fancy Furnishings", 190  },
+    { "Dining Table",           "Fancy Furnishings", 300  },
+    { "Bench",                  "Fancy Furnishings", 170  },
+    { "Bar Stool",              "Fancy Furnishings", 140  },
+
+    -- ── Boxed Cars ────────────────────────────────────────────────────────────
+    { "Truck",                  "Boxed Cars",        6800 },
+    { "Trailer",                "Boxed Cars",        3400 },
+    { "Flatbed",                "Boxed Cars",        4200 },
+
+    -- ── Bob's Shack ───────────────────────────────────────────────────────────
+    { "Dynamite",               "Bob's Shack",       150  },
+    { "Fire Extinguisher",      "Bob's Shack",       90   },
+    { "Blueprint",              "Bob's Shack",       200  },
+    { "Fertilizer",             "Bob's Shack",       80   },
+
+    -- ── Link's Logic ──────────────────────────────────────────────────────────
+    { "Button",                 "Link's Logic",      40   },
+    { "Pressure Plate",         "Link's Logic",      50   },
+    { "Switch",                 "Link's Logic",      35   },
+    { "Wire",                   "Link's Logic",      10   },
+    { "Basic Gate",             "Link's Logic",      60   },
+    { "NOT Gate",               "Link's Logic",      65   },
+    { "AND Gate",               "Link's Logic",      70   },
+    { "OR Gate",                "Link's Logic",      70   },
+    { "NAND Gate",              "Link's Logic",      80   },
+    { "NOR Gate",               "Link's Logic",      80   },
+    { "XOR Gate",               "Link's Logic",      85   },
+    { "Signal Light",           "Link's Logic",      55   },
+    { "Alarm",                  "Link's Logic",      90   },
+    { "Door Sensor",            "Link's Logic",      75   },
+    { "Counter",                "Link's Logic",      110  },
+    { "Timer",                  "Link's Logic",      120  },
+    { "Delay",                  "Link's Logic",      100  },
+    { "Conveyor",               "Link's Logic",      200  },
+    { "Display",                "Link's Logic",      160  },
+    { "Speaker",                "Link's Logic",      140  },
+    { "Detector",               "Link's Logic",      95   },
+
+    -- ── Fine Art Shop ─────────────────────────────────────────────────────────
+    { "Canvas",                 "Fine Art Shop",     80   },
+    { "Sculpture Block",        "Fine Art Shop",     120  },
+    { "Painting: Landscape",    "Fine Art Shop",     250  },
+    { "Painting: Abstract",     "Fine Art Shop",     220  },
+    { "Painting: Portrait",     "Fine Art Shop",     280  },
+    { "Statue Base",            "Fine Art Shop",     180  },
+    { "Picture",                "Fine Art Shop",     90   },
+}
+
+-- Build a lookup table by item name
+local AB_ITEM_LOOKUP = {}
+for _, entry in ipairs(AB_ITEMS_RAW) do
+    AB_ITEM_LOOKUP[entry[1]] = { store = entry[2], price = entry[3] }
+end
+
+-- Sorted list of item names for display
+local AB_ITEMS_SORTED = {}
+for _, entry in ipairs(AB_ITEMS_RAW) do
+    table.insert(AB_ITEMS_SORTED, entry[1])
+end
+table.sort(AB_ITEMS_SORTED)
 
 -- ── State ─────────────────────────────────────────────────────────────────────
 local abSelectedItem  = ""
@@ -109,13 +194,94 @@ local abThread        = nil
 local abCircle        = nil
 local abIsMoving      = false
 
+-- ── Popup helper (shows a message and auto-dismisses after a delay) ───────────
+local function showABPopup(message, color)
+    color = color or Color3.fromRGB(200, 60, 60)
+    -- Remove old popup if any
+    local gui = game.CoreGui:FindFirstChild("VanillaHub")
+    if not gui then return end
+    local old = gui:FindFirstChild("ABPopup")
+    if old then old:Destroy() end
+
+    local popup = Instance.new("Frame")
+    popup.Name = "ABPopup"
+    popup.Size = UDim2.new(0, 340, 0, 68)
+    popup.Position = UDim2.new(0.5, -170, 0, 60)
+    popup.BackgroundColor3 = Color3.fromRGB(14,14,20)
+    popup.BorderSizePixel = 0
+    popup.ZIndex = 20
+    Instance.new("UICorner", popup).CornerRadius = UDim.new(0,12)
+    local stroke = Instance.new("UIStroke", popup)
+    stroke.Color = color; stroke.Thickness = 1.5; stroke.Transparency = 0.3
+
+    local icon = Instance.new("TextLabel", popup)
+    icon.Size = UDim2.new(0,34,0,34); icon.Position = UDim2.new(0,12,0.5,-17)
+    icon.BackgroundTransparency = 1; icon.Text = "⚠"; icon.Font = Enum.Font.GothamBold
+    icon.TextSize = 24; icon.TextColor3 = color; icon.ZIndex = 21
+
+    local msg = Instance.new("TextLabel", popup)
+    msg.Size = UDim2.new(1,-58,1,0); msg.Position = UDim2.new(0,52,0,0)
+    msg.BackgroundTransparency = 1; msg.Text = message
+    msg.Font = Enum.Font.GothamSemibold; msg.TextSize = 13
+    msg.TextColor3 = Color3.fromRGB(225,225,235); msg.TextXAlignment = Enum.TextXAlignment.Left
+    msg.TextWrapped = true; msg.ZIndex = 21
+    Instance.new("UIPadding", msg).PaddingRight = UDim.new(0,8)
+
+    popup.BackgroundTransparency = 1; msg.TextTransparency = 1; icon.TextTransparency = 1
+    popup.Parent = gui
+
+    TweenService:Create(popup, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {BackgroundTransparency = 0}):Play()
+    TweenService:Create(msg,   TweenInfo.new(0.35, Enum.EasingStyle.Quint), {TextTransparency = 0}):Play()
+    TweenService:Create(icon,  TweenInfo.new(0.35, Enum.EasingStyle.Quint), {TextTransparency = 0}):Play()
+
+    task.delay(3, function()
+        if popup and popup.Parent then
+            TweenService:Create(popup, TweenInfo.new(0.4), {BackgroundTransparency=1}):Play()
+            TweenService:Create(msg,   TweenInfo.new(0.4), {TextTransparency=1}):Play()
+            TweenService:Create(icon,  TweenInfo.new(0.4), {TextTransparency=1}):Play()
+            task.delay(0.45, function() if popup and popup.Parent then popup:Destroy() end end)
+        end
+    end)
+end
+
+-- ── Get player's current cash ─────────────────────────────────────────────────
+local function getPlayerCash()
+    local stats = player:FindFirstChild("leaderstats") or player:FindFirstChild("stats")
+    if stats then
+        local money = stats:FindFirstChild("Money") or stats:FindFirstChild("Cash")
+            or stats:FindFirstChild("Dollars") or stats:FindFirstChild("Coins")
+        if money then return tonumber(money.Value) or 0 end
+    end
+    -- Try to find money in PlayerGui or other locations
+    for _, child in ipairs(player:GetChildren()) do
+        if child.Name == "leaderstats" then
+            for _, val in ipairs(child:GetChildren()) do
+                if val:IsA("IntValue") or val:IsA("NumberValue") then
+                    return tonumber(val.Value) or 0
+                end
+            end
+        end
+    end
+    return math.huge -- fallback: assume enough if we can't read it
+end
+
 -- ══════════════════════════════════════════════════════
--- SECTION 1 — ITEM DROPDOWN  (with search bar, inline expand)
+-- SECTION 1 — ITEM DROPDOWN (with store names + search)
 -- ══════════════════════════════════════════════════════
 createABSection("Item to Purchase")
 
+-- Store color map for store labels in dropdown
+local STORE_COLORS = {
+    ["Wood RUs"]          = Color3.fromRGB(120, 200, 120),
+    ["Fancy Furnishings"] = Color3.fromRGB(200, 160, 90),
+    ["Boxed Cars"]        = Color3.fromRGB(110, 170, 230),
+    ["Bob's Shack"]       = Color3.fromRGB(190, 120, 90),
+    ["Link's Logic"]      = Color3.fromRGB(150, 130, 220),
+    ["Fine Art Shop"]     = Color3.fromRGB(220, 140, 170),
+}
+
 do
-    local ITEM_H   = 32
+    local ITEM_H   = 36
     local MAX_SHOW = 6
     local HEADER_H = 40
     local SEARCH_H = 36
@@ -197,27 +363,70 @@ do
 
     local isOpen = false
 
+    -- Track which store header was last inserted so we avoid duplicates
     local function buildList(filter)
         for _, c in ipairs(listScroll:GetChildren()) do
-            if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
+            if c:IsA("TextButton") or c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
         end
         local lf = string.lower(filter or "")
         local filtered = {}
-        for _, name in ipairs(AB_ITEMS) do
+        for _, name in ipairs(AB_ITEMS_SORTED) do
             if lf == "" or string.find(string.lower(name), lf, 1, true) then
                 table.insert(filtered, name)
             end
         end
-        for i, name in ipairs(filtered) do
+
+        local rowIndex = 0
+        local lastStore = nil
+
+        for _, name in ipairs(filtered) do
+            local info = AB_ITEM_LOOKUP[name]
+            local storeName = info and info.store or "Unknown"
+            local storeColor = STORE_COLORS[storeName] or Color3.fromRGB(160,160,180)
+
+            -- Insert a store section header when the store changes
+            if storeName ~= lastStore then
+                lastStore = storeName
+                rowIndex = rowIndex + 1
+                local storeHeader = Instance.new("TextLabel", listScroll)
+                storeHeader.Size = UDim2.new(1,0,0,22)
+                storeHeader.LayoutOrder = rowIndex
+                storeHeader.BackgroundColor3 = Color3.fromRGB(18,18,28)
+                storeHeader.BorderSizePixel = 0
+                storeHeader.Font = Enum.Font.GothamBold
+                storeHeader.TextSize = 10
+                storeHeader.TextColor3 = storeColor
+                storeHeader.TextXAlignment = Enum.TextXAlignment.Left
+                storeHeader.Text = "  🏪 " .. string.upper(storeName)
+                Instance.new("UICorner", storeHeader).CornerRadius = UDim.new(0,4)
+            end
+
+            rowIndex = rowIndex + 1
             local row = Instance.new("TextButton", listScroll)
-            row.Size = UDim2.new(1,0,0,ITEM_H); row.LayoutOrder = i
+            row.Size = UDim2.new(1,0,0,ITEM_H); row.LayoutOrder = rowIndex
             row.BackgroundColor3 = (name == abSelectedItem) and Color3.fromRGB(45,45,75) or Color3.fromRGB(28,28,40)
-            row.BorderSizePixel = 0; row.Text = name
-            row.Font = Enum.Font.GothamSemibold; row.TextSize = 12
-            row.TextColor3 = (name == abSelectedItem) and Color3.fromRGB(210,215,255) or Color3.fromRGB(200,200,215)
-            row.TextXAlignment = Enum.TextXAlignment.Left
+            row.BorderSizePixel = 0; row.Text = ""
             Instance.new("UICorner", row).CornerRadius = UDim.new(0,6)
-            Instance.new("UIPadding", row).PaddingLeft = UDim.new(0,10)
+
+            -- Item name label
+            local itemLbl = Instance.new("TextLabel", row)
+            itemLbl.Size = UDim2.new(1,-70,1,0); itemLbl.Position = UDim2.new(0,10,0,0)
+            itemLbl.BackgroundTransparency = 1
+            itemLbl.Font = Enum.Font.GothamSemibold; itemLbl.TextSize = 12
+            itemLbl.TextColor3 = (name == abSelectedItem) and Color3.fromRGB(210,215,255) or Color3.fromRGB(200,200,215)
+            itemLbl.TextXAlignment = Enum.TextXAlignment.Left; itemLbl.Text = name
+            itemLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+            -- Price label
+            local priceLbl = Instance.new("TextLabel", row)
+            priceLbl.Size = UDim2.new(0,60,1,0); priceLbl.Position = UDim2.new(1,-66,0,0)
+            priceLbl.BackgroundTransparency = 1
+            priceLbl.Font = Enum.Font.Gotham; priceLbl.TextSize = 11
+            priceLbl.TextColor3 = Color3.fromRGB(120,200,140)
+            priceLbl.TextXAlignment = Enum.TextXAlignment.Right
+            priceLbl.Text = "$" .. tostring(info and info.price or 0)
+            Instance.new("UIPadding", priceLbl).PaddingRight = UDim.new(0,6)
+
             row.MouseEnter:Connect(function()
                 if name ~= abSelectedItem then
                     TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(38,38,58)}):Play()
@@ -230,7 +439,13 @@ do
             end)
             row.MouseButton1Click:Connect(function()
                 abSelectedItem = (abSelectedItem == name) and "" or name
-                selLbl.Text = abSelectedItem ~= "" and abSelectedItem or "Select an item..."
+                if abSelectedItem ~= "" then
+                    local iInfo = AB_ITEM_LOOKUP[abSelectedItem]
+                    local storeTag = iInfo and (" [" .. iInfo.store .. "]") or ""
+                    selLbl.Text = abSelectedItem .. storeTag
+                else
+                    selLbl.Text = "Select an item..."
+                end
                 selLbl.TextColor3 = abSelectedItem ~= "" and Color3.fromRGB(220,225,255) or Color3.fromRGB(110,110,140)
                 outerStroke.Color = abSelectedItem ~= "" and Color3.fromRGB(90,90,160) or Color3.fromRGB(60,60,90)
                 buildList(searchBox.Text)
@@ -242,7 +457,7 @@ do
                 end)
             end)
         end
-        return #filtered
+        return rowIndex
     end
 
     local function openList()
@@ -280,26 +495,41 @@ end
 createABSep()
 
 -- ══════════════════════════════════════════════════════
--- SECTION 2 — AMOUNT SLIDER (1–250)
+-- SECTION 2 — AMOUNT SLIDER (1–250) with live cost display
 -- ══════════════════════════════════════════════════════
 createABSection("Amount")
+
+local abCostLabel -- declared here so runAutoBuy can access it
 
 do
     local minVal, maxVal, defaultVal = 1, 250, 1
     local frame = Instance.new("Frame", autoBuyPage)
-    frame.Size = UDim2.new(1,-12,0,52); frame.BackgroundColor3 = Color3.fromRGB(24,24,30)
+    frame.Size = UDim2.new(1,-12,0,68); frame.BackgroundColor3 = Color3.fromRGB(24,24,30)
     frame.BorderSizePixel = 0; Instance.new("UICorner", frame).CornerRadius = UDim.new(0,6)
+
     local topRow = Instance.new("Frame", frame)
     topRow.Size = UDim2.new(1,-16,0,22); topRow.Position = UDim2.new(0,8,0,6); topRow.BackgroundTransparency = 1
+
     local lbl = Instance.new("TextLabel", topRow)
-    lbl.Size = UDim2.new(0.7,0,1,0); lbl.BackgroundTransparency = 1
+    lbl.Size = UDim2.new(0.55,0,1,0); lbl.BackgroundTransparency = 1
     lbl.Font = Enum.Font.GothamSemibold; lbl.TextSize = 13
     lbl.TextColor3 = Color3.fromRGB(220,220,220); lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Text = "Buy Amount"
+
     local valLbl = Instance.new("TextLabel", topRow)
-    valLbl.Size = UDim2.new(0.3,0,1,0); valLbl.Position = UDim2.new(0.7,0,0,0); valLbl.BackgroundTransparency = 1
+    valLbl.Size = UDim2.new(0.2,0,1,0); valLbl.Position = UDim2.new(0.55,0,0,0); valLbl.BackgroundTransparency = 1
     valLbl.Font = Enum.Font.GothamBold; valLbl.TextSize = 13
-    valLbl.TextColor3 = Color3.fromRGB(200,200,255); valLbl.TextXAlignment = Enum.TextXAlignment.Right
+    valLbl.TextColor3 = Color3.fromRGB(200,200,255); valLbl.TextXAlignment = Enum.TextXAlignment.Center
     valLbl.Text = tostring(defaultVal)
+
+    -- Cost label (right side of topRow)
+    local costLbl = Instance.new("TextLabel", topRow)
+    costLbl.Size = UDim2.new(0.25,0,1,0); costLbl.Position = UDim2.new(0.75,0,0,0)
+    costLbl.BackgroundTransparency = 1
+    costLbl.Font = Enum.Font.Gotham; costLbl.TextSize = 11
+    costLbl.TextColor3 = Color3.fromRGB(120,200,140); costLbl.TextXAlignment = Enum.TextXAlignment.Right
+    costLbl.Text = "Cost: $0"
+    abCostLabel = costLbl
+
     local track = Instance.new("Frame", frame)
     track.Size = UDim2.new(1,-16,0,6); track.Position = UDim2.new(0,8,0,36)
     track.BackgroundColor3 = Color3.fromRGB(40,40,55); track.BorderSizePixel = 0
@@ -313,18 +543,62 @@ do
     knob.Position = UDim2.new((defaultVal-minVal)/(maxVal-minVal),0,0.5,0)
     knob.BackgroundColor3 = Color3.fromRGB(210,210,225); knob.Text = ""; knob.BorderSizePixel = 0
     Instance.new("UICorner", knob).CornerRadius = UDim.new(1,0)
+
+    -- Tooltip popup frame for cost while dragging
+    local dragTooltip = Instance.new("Frame", frame)
+    dragTooltip.Size = UDim2.new(0,110,0,28)
+    dragTooltip.AnchorPoint = Vector2.new(0.5,1)
+    dragTooltip.Position = UDim2.new(0,0,0,34)
+    dragTooltip.BackgroundColor3 = Color3.fromRGB(30,30,44)
+    dragTooltip.BorderSizePixel = 0; dragTooltip.Visible = false; dragTooltip.ZIndex = 10
+    Instance.new("UICorner", dragTooltip).CornerRadius = UDim.new(0,6)
+    local ttStroke = Instance.new("UIStroke", dragTooltip)
+    ttStroke.Color = Color3.fromRGB(80,80,130); ttStroke.Thickness = 1; ttStroke.Transparency = 0.4
+    local dragTooltipLbl = Instance.new("TextLabel", dragTooltip)
+    dragTooltipLbl.Size = UDim2.new(1,0,1,0); dragTooltipLbl.BackgroundTransparency = 1
+    dragTooltipLbl.Font = Enum.Font.GothamBold; dragTooltipLbl.TextSize = 12
+    dragTooltipLbl.TextColor3 = Color3.fromRGB(130,220,160); dragTooltipLbl.ZIndex = 11
+    dragTooltipLbl.Text = "Cost: $0"
+
     local draggingABSlider = false
+
+    local function getItemPrice()
+        if abSelectedItem ~= "" then
+            local info = AB_ITEM_LOOKUP[abSelectedItem]
+            return info and info.price or 0
+        end
+        return 0
+    end
+
+    local function updateCostDisplay(val)
+        local price = getItemPrice()
+        local total = price * val
+        local totalStr = "$" .. tostring(total)
+        abCostLabel.Text = "Cost: " .. totalStr
+        dragTooltipLbl.Text = totalStr .. " total"
+    end
+
     local function updateABSlider(absX)
         local ratio = math.clamp((absX - track.AbsolutePosition.X)/track.AbsoluteSize.X, 0, 1)
         local val = math.max(1, math.round(minVal + ratio*(maxVal-minVal)))
         abBuyAmount = val
         fill.Size = UDim2.new(ratio,0,1,0); knob.Position = UDim2.new(ratio,0,0.5,0)
         valLbl.Text = tostring(val)
+        -- Position tooltip above knob
+        dragTooltip.Position = UDim2.new(ratio, 0, 0, 30)
+        updateCostDisplay(val)
     end
-    knob.MouseButton1Down:Connect(function() draggingABSlider = true end)
+
+    knob.MouseButton1Down:Connect(function()
+        draggingABSlider = true
+        dragTooltip.Visible = true
+        updateCostDisplay(abBuyAmount)
+    end)
     track.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            draggingABSlider = true; updateABSlider(input.Position.X)
+            draggingABSlider = true
+            dragTooltip.Visible = true
+            updateABSlider(input.Position.X)
         end
     end)
     UserInputService.InputChanged:Connect(function(input)
@@ -333,14 +607,27 @@ do
         end
     end)
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingABSlider = false end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingABSlider = false
+            dragTooltip.Visible = false
+        end
+    end)
+
+    -- Update cost label when item selection changes
+    -- (we hook via a RunService heartbeat check since there's no direct event)
+    local lastItemForCost = ""
+    RunService.Heartbeat:Connect(function()
+        if abSelectedItem ~= lastItemForCost then
+            lastItemForCost = abSelectedItem
+            updateCostDisplay(abBuyAmount)
+        end
     end)
 end
 
 createABSep()
 
 -- ══════════════════════════════════════════════════════
--- SECTION 3 — DESTINATION  (same system as Item tab)
+-- SECTION 3 — DESTINATION
 -- ══════════════════════════════════════════════════════
 createABSection("Delivery Destination")
 
@@ -393,7 +680,7 @@ end
 createABSep()
 
 -- ══════════════════════════════════════════════════════
--- SECTION 4 — ACTIONS (Teleport To / Remote Teleport To / Cancel)
+-- SECTION 4 — ACTIONS
 -- ══════════════════════════════════════════════════════
 createABSection("Actions")
 
@@ -441,97 +728,175 @@ do
     abProgressContainer = container; abProgressFill = pbFill; abProgressLabel = pbLabel
 end
 
--- ── Core buy function (teleports player to store, buys N items, tps them to dest)
+-- ── Core buy function ─────────────────────────────────────────────────────────
+-- Teleports player to store counter → clicks item on shelf → item comes to counter
+-- → clicks it at counter → item goes to destination. Repeats for amount.
 local function runAutoBuy(remoteTeleport)
     if abSelectedItem == "" then setABStatus("No item selected!", false); return end
     if abRunning then return end
-    abRunning = true; abIsMoving = false
 
-    task.spawn(function()
+    -- Get item info
+    local itemInfo = AB_ITEM_LOOKUP[abSelectedItem]
+    if not itemInfo then
+        setABStatus("Item data not found!", false)
+        return
+    end
+
+    -- ── Cash check ────────────────────────────────────────────────────────────
+    local totalCost = itemInfo.price * abBuyAmount
+    local playerCash = getPlayerCash()
+    if playerCash < totalCost then
+        setABStatus("Not enough cash!", false)
+        showABPopup(
+            string.format("Not enough cash!\nNeed $%d  |  Have $%d", totalCost, playerCash),
+            Color3.fromRGB(220, 60, 60)
+        )
+        return
+    end
+
+    abRunning = true; abIsMoving = false
+    local storeName   = itemInfo.store
+    local counterPos  = STORE_COUNTERS[storeName]
+
+    abThread = task.spawn(function()
         setABStatus("Running...", true)
         abProgressContainer.Visible = true
         abProgressFill.Size = UDim2.new(0,0,1,0)
         abProgressLabel.Text = "Buying 0 / " .. abBuyAmount
 
-        -- Find the store item in workspace/game
-        local function findStoreItem()
+        -- Find the clickable shelf/display item inside the store for the selected name
+        local function findShelfItem()
             for _, obj in ipairs(workspace:GetDescendants()) do
                 if obj:IsA("Model") or obj:IsA("Part") then
                     local nm = obj:FindFirstChild("ItemName")
-                    if nm and string.lower(nm.Value) == string.lower(abSelectedItem) then return obj end
-                    if string.lower(obj.Name) == string.lower(abSelectedItem) then return obj end
+                    if nm and string.lower(nm.Value) == string.lower(abSelectedItem) then
+                        -- Make sure it's a shop display (not a purchased copy)
+                        -- Shop items typically do NOT have an Owner value
+                        local own = obj:FindFirstChild("Owner")
+                        if not own then return obj end
+                    end
+                    -- Also check by model name directly (some items stored as e.g. "Basic Hatchet" model)
+                    if string.lower(obj.Name) == string.lower(abSelectedItem) then
+                        local own = obj:FindFirstChild("Owner")
+                        if not own then return obj end
+                    end
                 end
             end
             return nil
         end
 
+        local RS = game:GetService("ReplicatedStorage")
         local bought = 0
+
         for i = 1, abBuyAmount do
             if not abRunning then break end
 
             local char = player.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             if not hrp then task.wait(0.5); continue end
 
-            -- Find a buyable store item matching the selected name
-            local storeItem = findStoreItem()
-            if storeItem then
-                -- Teleport player near it and interact
-                local mp = storeItem.PrimaryPart or storeItem:FindFirstChildWhichIsA("BasePart") or storeItem
-                if mp:IsA("BasePart") then
-                    hrp.CFrame = mp.CFrame * CFrame.new(0, 4, 3)
-                    task.wait(0.15)
-                end
-                -- Fire purchase remote
-                local buyRemote = game.ReplicatedStorage:FindFirstChild("Interaction")
-                    and game.ReplicatedStorage.Interaction:FindFirstChild("BuyItem")
-                if buyRemote then
-                    pcall(function() buyRemote:FireServer(storeItem) end)
-                end
-                task.wait(0.3)
-
-                -- If destination set and remote teleport enabled, move last purchased item there
-                if abCircle and remoteTeleport then
-                    -- Find the item in the player's plot / workspace (recently spawned)
-                    task.wait(0.2)
-                    -- Try to find a newly-owned instance of this item
-                    local newItem = nil
-                    for _, obj in ipairs(workspace:GetDescendants()) do
-                        if obj:IsA("Model") then
-                            local nm = obj:FindFirstChild("ItemName")
-                            local own = obj:FindFirstChild("Owner")
-                            local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
-                                or string.lower(obj.Name) == string.lower(abSelectedItem)
-                            local ownedByMe = own and (
-                                (own:IsA("ObjectValue") and own.Value == player) or
-                                (own:IsA("StringValue") and own.Value == player.Name)
-                            )
-                            if nameMatch and ownedByMe then newItem = obj; break end
-                        end
-                    end
-                    if newItem then
-                        local mainPart = newItem.PrimaryPart or newItem:FindFirstChildWhichIsA("BasePart")
-                        if mainPart then
-                            local dragger = game.ReplicatedStorage:FindFirstChild("Interaction")
-                                and game.ReplicatedStorage.Interaction:FindFirstChild("ClientIsDragging")
-                            hrp.CFrame = mainPart.CFrame * CFrame.new(0,4,2)
-                            task.wait(0.12)
-                            if dragger then dragger:FireServer(newItem) end
-                            task.wait(0.08)
-                            mainPart.CFrame = abCircle.CFrame
-                            task.wait(0.08)
-                            if dragger then dragger:FireServer(newItem) end
-                            task.wait(0.15)
-                        end
-                    end
-                end
-
-                bought = bought + 1
-            else
-                task.wait(0.3)
+            -- Step 1: Teleport to the store counter
+            if counterPos then
+                hrp.CFrame = CFrame.new(counterPos + Vector3.new(0, 3, 0))
+                task.wait(0.25)
             end
 
-            -- Progress update
+            -- Step 2: Find the shelf display item
+            local shelfItem = findShelfItem()
+            if shelfItem then
+                local shelfPart = shelfItem.PrimaryPart
+                    or (shelfItem:IsA("Model") and shelfItem:FindFirstChildWhichIsA("BasePart"))
+                    or (shelfItem:IsA("BasePart") and shelfItem)
+
+                if shelfPart and shelfPart:IsA("BasePart") then
+                    -- Step 3: Teleport near the shelf item and click it
+                    hrp.CFrame = shelfPart.CFrame * CFrame.new(0, 3, 3)
+                    task.wait(0.18)
+
+                    -- Fire ClientIsDragging to simulate picking up / interacting
+                    local dragRemote = RS:FindFirstChild("Interaction")
+                        and RS.Interaction:FindFirstChild("ClientIsDragging")
+                    if dragRemote then
+                        pcall(function() dragRemote:FireServer(
+                            shelfItem:IsA("Model") and shelfItem or shelfItem.Parent
+                        ) end)
+                    end
+                    task.wait(0.12)
+
+                    -- Step 4: Move item to counter position (simulating dragging to purchase point)
+                    if counterPos then
+                        pcall(function()
+                            shelfPart.CFrame = CFrame.new(counterPos + Vector3.new(0, 2, 0))
+                        end)
+                        task.wait(0.12)
+                    end
+
+                    -- Step 5: Fire the buy remote
+                    local buyRemote = RS:FindFirstChild("Interaction")
+                        and RS.Interaction:FindFirstChild("BuyItem")
+                    if buyRemote then
+                        pcall(function() buyRemote:FireServer(shelfItem) end)
+                    end
+                    task.wait(0.35)
+
+                    -- Step 6: Move purchased item to destination if set
+                    if abCircle and remoteTeleport then
+                        task.wait(0.2)
+                        -- Find the newly purchased copy (has Owner = player)
+                        local newItem = nil
+                        for _, obj in ipairs(workspace:GetDescendants()) do
+                            if obj:IsA("Model") then
+                                local nm  = obj:FindFirstChild("ItemName")
+                                local own = obj:FindFirstChild("Owner")
+                                local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
+                                    or string.lower(obj.Name) == string.lower(abSelectedItem)
+                                local ownedByMe = own and (
+                                    (own:IsA("ObjectValue") and own.Value == player) or
+                                    (own:IsA("StringValue") and own.Value == player.Name)
+                                )
+                                if nameMatch and ownedByMe then newItem = obj; break end
+                            end
+                        end
+
+                        if newItem then
+                            local mainPart = newItem.PrimaryPart or newItem:FindFirstChildWhichIsA("BasePart")
+                            if mainPart then
+                                local dragger = RS:FindFirstChild("Interaction")
+                                    and RS.Interaction:FindFirstChild("ClientIsDragging")
+                                -- TP near the purchased item
+                                hrp.CFrame = mainPart.CFrame * CFrame.new(0,4,2)
+                                task.wait(0.12)
+                                -- Grab it
+                                if dragger then pcall(function() dragger:FireServer(newItem) end) end
+                                task.wait(0.08)
+                                -- Snap to destination
+                                mainPart.CFrame = abCircle.CFrame
+                                task.wait(0.08)
+                                -- Release
+                                if dragger then pcall(function() dragger:FireServer(newItem) end) end
+                                task.wait(0.15)
+                            end
+                        end
+                    end
+
+                    bought = bought + 1
+                else
+                    task.wait(0.3)
+                end
+            else
+                -- Fallback: no shelf item found, try the BuyItem remote directly
+                local buyRemote = RS:FindFirstChild("Interaction")
+                    and RS.Interaction:FindFirstChild("BuyItem")
+                if buyRemote then
+                    pcall(function() buyRemote:FireServer(abSelectedItem) end)
+                    task.wait(0.4)
+                    bought = bought + 1
+                else
+                    task.wait(0.3)
+                end
+            end
+
+            -- Progress bar update
             local pct = bought / math.max(abBuyAmount, 1)
             TweenService:Create(abProgressFill, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {
                 Size = UDim2.new(pct, 0, 1, 0)
@@ -539,7 +904,7 @@ local function runAutoBuy(remoteTeleport)
             abProgressLabel.Text = "Buying " .. bought .. " / " .. abBuyAmount
         end
 
-        abRunning = false
+        abRunning = false; abThread = nil
         TweenService:Create(abProgressFill, TweenInfo.new(0.2), {Size=UDim2.new(1,0,1,0)}):Play()
         abProgressLabel.Text = "Done! " .. bought .. " / " .. abBuyAmount .. " bought"
         setABStatus("Done! " .. bought .. " bought", false)
@@ -585,28 +950,39 @@ do
         b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3=base}):Play() end)
     end
 
-    -- "Teleport To" — teleports player to where the store item is
+    -- "Teleport To" — TP player to the store counter of the selected item
     tpBtn.MouseButton1Click:Connect(function()
         if abSelectedItem == "" then setABStatus("No item selected!", false); return end
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            local nm = obj:FindFirstChild("ItemName")
-            local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
-                or string.lower(obj.Name) == string.lower(abSelectedItem)
-            if nameMatch then
-                local mp = (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
-                    or (obj:IsA("BasePart") and obj)
-                if mp then
-                    local char = player.Character
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                    if hrp then hrp.CFrame = mp.CFrame * CFrame.new(0,4,3) end
-                    return
+        local info = AB_ITEM_LOOKUP[abSelectedItem]
+        if info and STORE_COUNTERS[info.store] then
+            local char = player.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.CFrame = CFrame.new(STORE_COUNTERS[info.store] + Vector3.new(0,3,0))
+                setABStatus("Teleported to " .. info.store, false)
+            end
+        else
+            -- fallback: search workspace for the item
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                local nm = obj:FindFirstChild("ItemName")
+                local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
+                    or string.lower(obj.Name) == string.lower(abSelectedItem)
+                if nameMatch then
+                    local mp = (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
+                        or (obj:IsA("BasePart") and obj)
+                    if mp then
+                        local char = player.Character
+                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                        if hrp then hrp.CFrame = mp.CFrame * CFrame.new(0,4,3) end
+                        return
+                    end
                 end
             end
+            setABStatus("Item not found in world", false)
         end
-        setABStatus("Item not found in world", false)
     end)
 
-    -- "Remote Teleport To" — buy and send items to destination
+    -- "Remote Teleport To" — buy and send items to destination with cash check
     remoteTpBtn.MouseButton1Click:Connect(function()
         if not abCircle then setABStatus("Set a destination first!", false); return end
         runAutoBuy(true)
@@ -676,7 +1052,6 @@ local function updateSearchResults(query)
     end
     local lq = string.lower(query or "")
 
-    -- Searchable functions: {display name, target tab}
     local functions = {
         {"Fly", "PlayerTab"}, {"Noclip", "PlayerTab"}, {"InfJump", "PlayerTab"},
         {"Walkspeed", "PlayerTab"}, {"Jump Power", "PlayerTab"}, {"Fly Speed", "PlayerTab"},
@@ -691,7 +1066,6 @@ local function updateSearchResults(query)
     }
 
     local seen = {}
-    -- Match tab names
     for _, name in ipairs(tabs) do
         if lq == "" or string.find(string.lower(name), lq) then
             if not seen[name.."Tab"] then
@@ -708,7 +1082,6 @@ local function updateSearchResults(query)
             end
         end
     end
-    -- Match functions
     if lq ~= "" then
         for _, entry in ipairs(functions) do
             local fname, ftab = entry[1], entry[2]
@@ -742,7 +1115,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 
-    -- GUI keybind rebind
     if getWaitingForKeyGUI() then
         setWaitingForKeyGUI(false)
         setCurrentToggleKey(input.KeyCode)
@@ -753,7 +1125,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         return
     end
 
-    -- Fly key rebind
     if getWaitingForFlyKey() then
         setWaitingForFlyKey(false)
         setCurrentFlyKey(input.KeyCode)
@@ -762,13 +1133,11 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         return
     end
 
-    -- GUI toggle
     if input.KeyCode == getCurrentToggleKey() then
         toggleGUI()
         return
     end
 
-    -- Fly hotkey — ONLY works when flyToggleEnabled is true
     if input.KeyCode == getCurrentFlyKey() and getFlyToggleEnabled() then
         if getIsFlyEnabled() then
             stopFly()
@@ -778,9 +1147,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
-
-
--- Export keybindButtonGUI so cleanup in Vanilla1 can access if needed
 _G.VH.keybindButtonGUI = keybindButtonGUI
 
 print("[VanillaHub] Vanilla3 loaded")
