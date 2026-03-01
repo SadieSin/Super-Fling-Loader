@@ -100,11 +100,6 @@ local function onExit()
     -- Stop dupe if running
     butterRunning = false
     if butterThread then pcall(task.cancel, butterThread); butterThread = nil end
-    -- Also kill dupe if running in Vanilla2 (writes to _G.VH_butter)
-    if _G.VH_butter then
-        _G.VH_butter.running = false
-        if _G.VH_butter.thread then pcall(task.cancel, _G.VH_butter.thread); _G.VH_butter.thread = nil end
-    end
 
     -- Run all registered cleanup functions (fly, noclip, infJump, stats, etc.)
     for _, fn in ipairs(cleanupTasks) do
@@ -1248,8 +1243,8 @@ flyKeyBtn.BorderSizePixel = 0; Instance.new("UICorner", flyKeyBtn).CornerRadius 
 flyKeyBtn.MouseEnter:Connect(function() TweenService:Create(flyKeyBtn, TweenInfo.new(0.15), {BackgroundColor3 = BTN_HOVER}):Play() end)
 flyKeyBtn.MouseLeave:Connect(function() TweenService:Create(flyKeyBtn, TweenInfo.new(0.15), {BackgroundColor3 = BTN_COLOR}):Play() end)
 flyKeyBtn.MouseButton1Click:Connect(function()
-    if waitingForFlyKey then return end
-    waitingForFlyKey = true
+    if _G.VH and _G.VH.waitingForFlyKey then return end
+    if _G.VH then _G.VH.waitingForFlyKey = true end
     flyKeyBtn.Text = "..."
     flyKeyBtn.BackgroundColor3 = Color3.fromRGB(60,100,60)
 end)
@@ -1261,6 +1256,7 @@ local flyBV, flyBG, flyConn
 
 local function stopFly()
     isFlyEnabled = false
+    if _G.VH then _G.VH.isFlyEnabled = false end
     if flyConn then flyConn:Disconnect(); flyConn = nil end
     if flyBV and flyBV.Parent then flyBV:Destroy(); flyBV = nil end
     if flyBG and flyBG.Parent then flyBG:Destroy(); flyBG = nil end
@@ -1273,6 +1269,7 @@ end
 local function startFly()
     stopFly()  -- clean up any existing
     isFlyEnabled = true
+    if _G.VH then _G.VH.isFlyEnabled = true end
     local char = player.Character
     if not char then isFlyEnabled = false; return end
     local root = char:FindFirstChild("HumanoidRootPart")
@@ -1401,20 +1398,47 @@ end)
 
 
 -- ════════════════════════════════════════════════════
--- EXPORT SHARED GLOBALS FOR Vanilla2 + Vanilla3
+-- SHARED GLOBALS — exported for Vanilla2 and Vanilla3
 -- ════════════════════════════════════════════════════
-_G.VH_TweenService     = TweenService
-_G.VH_Players          = Players
-_G.VH_UserInputService = UserInputService
-_G.VH_RunService       = RunService
-_G.VH_player           = player
-_G.VH_cleanupTasks     = cleanupTasks
-_G.VH_pages            = pages
-_G.VH_switchTab        = switchTab
-_G.VH_toggleGUI        = toggleGUI
-_G.VH_stopFly          = stopFly
-_G.VH_startFly         = startFly
--- butterRunning and butterThread are tables so they can be shared by reference
-_G.VH_butter = { running = butterRunning, thread = butterThread }
+_G.VH = {
+    TweenService     = TweenService,
+    Players          = Players,
+    UserInputService = UserInputService,
+    RunService       = RunService,
+    TeleportService  = TeleportService,
+    Stats            = Stats,
+    player           = player,
+    cleanupTasks     = cleanupTasks,
+    pages            = pages,
+    tabs             = tabs,
+    BTN_COLOR        = BTN_COLOR,
+    BTN_HOVER        = BTN_HOVER,
+    switchTab        = switchTab,
+    toggleGUI        = toggleGUI,
+    stopFly          = stopFly,
+    startFly         = startFly,
+    butter           = { running = false, thread = nil },
+    flyToggleEnabled = true,
+    isFlyEnabled     = false,
+    currentFlyKey    = Enum.KeyCode.Q,
+    waitingForFlyKey = false,
+    flyKeyBtn        = flyKeyBtn,
+    currentToggleKey = currentToggleKey,
+    waitingForKeyGUI = waitingForKeyGUI,
+    keybindButtonGUI = nil, -- set by Vanilla3
+}
 
-print("VanillaHub Vanilla1 loaded")
+-- Make butterRunning/butterThread accessible via _G.VH.butter table
+-- (Vanilla2 writes to _G.VH.butter.running and _G.VH.butter.thread)
+-- onExit also cancels butter via this table
+local _origOnExit = onExit
+_G.VanillaHubCleanup = function()
+    -- Cancel butter dupe if running in Vanilla2
+    if _G.VH and _G.VH.butter then
+        _G.VH.butter.running = false
+        if _G.VH.butter.thread then pcall(task.cancel, _G.VH.butter.thread); _G.VH.butter.thread = nil end
+    end
+    _origOnExit()
+end
+
+print("[VanillaHub] Vanilla1 loaded")
