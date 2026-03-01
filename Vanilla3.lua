@@ -743,18 +743,19 @@ do
 end
 
 -- ── Core buy function ─────────────────────────────────────────────────────────
--- Teleports player to store counter → clicks item on shelf → item comes to counter
--- → clicks it at counter → item goes to destination. Repeats for amount.
+-- How LT2 buying actually works:
+--   1. Find the boxed item on the store shelf (no Owner value = unowned shelf display)
+--   2. Teleport character next to the shelf item
+--   3. Fire ClientIsDragging with the item → character "picks it up" (item follows player)
+--   4. Teleport character (with held item) to the store counter
+--   5. Fire RemoteBuy (the NPC counter remote) to complete the purchase
+--   6. If destination set: teleport purchased item to abCircle position
 local function runAutoBuy(remoteTeleport)
     if abSelectedItem == "" then setABStatus("No item selected!", false); return end
     if abRunning then return end
 
-    -- Get item info
     local itemInfo = AB_ITEM_LOOKUP[abSelectedItem]
-    if not itemInfo then
-        setABStatus("Item data not found!", false)
-        return
-    end
+    if not itemInfo then setABStatus("Item data not found!", false); return end
 
     -- ── Cash check ────────────────────────────────────────────────────────────
     local totalCost = itemInfo.price * abBuyAmount
@@ -769,8 +770,57 @@ local function runAutoBuy(remoteTeleport)
     end
 
     abRunning = true; abIsMoving = false
-    local storeName   = itemInfo.store
-    local counterPos  = STORE_COUNTERS[storeName]
+    local storeName  = itemInfo.store
+    local counterPos = STORE_COUNTERS[storeName]
+    local RS         = game:GetService("ReplicatedStorage")
+
+    -- ── Helper: find the unowned shelf box for the selected item ──────────────
+    local function findShelfItem()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            -- Must be a Model (boxed items in LT2 are Models)
+            if obj:IsA("Model") then
+                local nm  = obj:FindFirstChild("ItemName")
+                local own = obj:FindFirstChild("Owner")
+                -- Unowned display items have no Owner, or Owner.Value is nil/empty
+                local isOwned = own and (
+                    (own:IsA("ObjectValue") and own.Value ~= nil) or
+                    (own:IsA("StringValue") and own.Value ~= "")
+                )
+                if not isOwned then
+                    local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
+                        or string.lower(obj.Name) == string.lower(abSelectedItem)
+                    if nameMatch then
+                        -- Extra check: item should be inside the store (not someone's plot)
+                        -- We verify by checking it has a BasePart we can get position from
+                        local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                        if part then return obj, part end
+                    end
+                end
+            end
+        end
+        return nil, nil
+    end
+
+    -- ── Helper: find the owned copy after purchase ────────────────────────────
+    local function findOwnedItem()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") then
+                local nm  = obj:FindFirstChild("ItemName")
+                local own = obj:FindFirstChild("Owner")
+                local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
+                    or string.lower(obj.Name) == string.lower(abSelectedItem)
+                local ownedByMe = own and (
+                    (own:IsA("ObjectValue") and own.Value == player) or
+                    (own:IsA("StringValue") and own.Value == player.Name)
+                )
+                if nameMatch and ownedByMe then
+                    local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                    if part then return obj, part end
+                end
+            end
+        end
+        return nil, nil
+    end
 
     abThread = task.spawn(function()
         setABStatus("Running...", true)
@@ -778,28 +828,17 @@ local function runAutoBuy(remoteTeleport)
         abProgressFill.Size = UDim2.new(0,0,1,0)
         abProgressLabel.Text = "Buying 0 / " .. abBuyAmount
 
-        -- Find the clickable shelf/display item inside the store for the selected name
-        local function findShelfItem()
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Model") or obj:IsA("Part") then
-                    local nm = obj:FindFirstChild("ItemName")
-                    if nm and string.lower(nm.Value) == string.lower(abSelectedItem) then
-                        -- Make sure it's a shop display (not a purchased copy)
-                        -- Shop items typically do NOT have an Owner value
-                        local own = obj:FindFirstChild("Owner")
-                        if not own then return obj end
-                    end
-                    -- Also check by model name directly (some items stored as e.g. "Basic Hatchet" model)
-                    if string.lower(obj.Name) == string.lower(abSelectedItem) then
-                        local own = obj:FindFirstChild("Owner")
-                        if not own then return obj end
-                    end
-                end
-            end
-            return nil
+        -- Get remotes once
+        local dragRemote = RS:FindFirstChild("Interaction")
+            and RS.Interaction:FindFirstChild("ClientIsDragging")
+        local buyRemote  = RS:FindFirstChild("Interaction")
+            and RS.Interaction:FindFirstChild("RemoteBuy")
+        -- Fallback remote name used in some server versions
+        if not buyRemote then
+            buyRemote = RS:FindFirstChild("Interaction")
+                and RS.Interaction:FindFirstChild("BuyItem")
         end
 
-        local RS = game:GetService("ReplicatedStorage")
         local bought = 0
 
         for i = 1, abBuyAmount do
@@ -809,104 +848,72 @@ local function runAutoBuy(remoteTeleport)
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             if not hrp then task.wait(0.5); continue end
 
-            -- Step 1: Teleport to the store counter
-            if counterPos then
-                hrp.CFrame = CFrame.new(counterPos + Vector3.new(0, 3, 0))
-                task.wait(0.25)
-            end
+            -- Step 1: Find the shelf display item
+            local shelfItem, shelfPart = findShelfItem()
 
-            -- Step 2: Find the shelf display item
-            local shelfItem = findShelfItem()
-            if shelfItem then
-                local shelfPart = shelfItem.PrimaryPart
-                    or (shelfItem:IsA("Model") and shelfItem:FindFirstChildWhichIsA("BasePart"))
-                    or (shelfItem:IsA("BasePart") and shelfItem)
+            if shelfItem and shelfPart then
+                -- Step 2: Teleport character right next to the shelf item
+                hrp.CFrame = shelfPart.CFrame * CFrame.new(0, 3, 3)
+                task.wait(0.2)
 
-                if shelfPart and shelfPart:IsA("BasePart") then
-                    -- Step 3: Teleport near the shelf item and click it
-                    hrp.CFrame = shelfPart.CFrame * CFrame.new(0, 3, 3)
-                    task.wait(0.18)
-
-                    -- Fire ClientIsDragging to simulate picking up / interacting
-                    local dragRemote = RS:FindFirstChild("Interaction")
-                        and RS.Interaction:FindFirstChild("ClientIsDragging")
-                    if dragRemote then
-                        pcall(function() dragRemote:FireServer(
-                            shelfItem:IsA("Model") and shelfItem or shelfItem.Parent
-                        ) end)
-                    end
-                    task.wait(0.12)
-
-                    -- Step 4: Move item to counter position (simulating dragging to purchase point)
-                    if counterPos then
-                        pcall(function()
-                            shelfPart.CFrame = CFrame.new(counterPos + Vector3.new(0, 2, 0))
-                        end)
-                        task.wait(0.12)
-                    end
-
-                    -- Step 5: Fire the buy remote
-                    local buyRemote = RS:FindFirstChild("Interaction")
-                        and RS.Interaction:FindFirstChild("BuyItem")
-                    if buyRemote then
-                        pcall(function() buyRemote:FireServer(shelfItem) end)
-                    end
-                    task.wait(0.35)
-
-                    -- Step 6: Move purchased item to destination if set
-                    if abCircle and remoteTeleport then
-                        task.wait(0.2)
-                        -- Find the newly purchased copy (has Owner = player)
-                        local newItem = nil
-                        for _, obj in ipairs(workspace:GetDescendants()) do
-                            if obj:IsA("Model") then
-                                local nm  = obj:FindFirstChild("ItemName")
-                                local own = obj:FindFirstChild("Owner")
-                                local nameMatch = (nm and string.lower(nm.Value) == string.lower(abSelectedItem))
-                                    or string.lower(obj.Name) == string.lower(abSelectedItem)
-                                local ownedByMe = own and (
-                                    (own:IsA("ObjectValue") and own.Value == player) or
-                                    (own:IsA("StringValue") and own.Value == player.Name)
-                                )
-                                if nameMatch and ownedByMe then newItem = obj; break end
-                            end
-                        end
-
-                        if newItem then
-                            local mainPart = newItem.PrimaryPart or newItem:FindFirstChildWhichIsA("BasePart")
-                            if mainPart then
-                                local dragger = RS:FindFirstChild("Interaction")
-                                    and RS.Interaction:FindFirstChild("ClientIsDragging")
-                                -- TP near the purchased item
-                                hrp.CFrame = mainPart.CFrame * CFrame.new(0,4,2)
-                                task.wait(0.12)
-                                -- Grab it
-                                if dragger then pcall(function() dragger:FireServer(newItem) end) end
-                                task.wait(0.08)
-                                -- Snap to destination
-                                mainPart.CFrame = abCircle.CFrame
-                                task.wait(0.08)
-                                -- Release
-                                if dragger then pcall(function() dragger:FireServer(newItem) end) end
-                                task.wait(0.15)
-                            end
-                        end
-                    end
-
-                    bought = bought + 1
-                else
-                    task.wait(0.3)
+                -- Step 3: Pick up the item (fire ClientIsDragging → item attaches to player)
+                if dragRemote then
+                    pcall(function() dragRemote:FireServer(shelfItem) end)
                 end
-            else
-                -- Fallback: no shelf item found, try the BuyItem remote directly
-                local buyRemote = RS:FindFirstChild("Interaction")
-                    and RS.Interaction:FindFirstChild("BuyItem")
+                task.wait(0.15)
+
+                -- Step 4: While holding item, teleport character to the store counter
+                -- The held item will follow the player's position automatically
+                if counterPos then
+                    hrp.CFrame = CFrame.new(counterPos + Vector3.new(0, 3, 0))
+                    task.wait(0.2)
+
+                    -- Also force the item to be at counter position in case it didn't follow
+                    pcall(function()
+                        shelfPart.CFrame = CFrame.new(counterPos + Vector3.new(0, 2, 0))
+                    end)
+                    task.wait(0.1)
+                end
+
+                -- Step 5: Fire the buy remote (NPC processes the sale)
                 if buyRemote then
+                    pcall(function() buyRemote:FireServer(shelfItem) end)
+                end
+                task.wait(0.5) -- wait for server to process purchase
+
+                -- Step 6: If destination is set, move the now-owned item there
+                if abCircle then
+                    task.wait(0.15)
+                    local newItem, newPart = findOwnedItem()
+                    if newItem and newPart then
+                        -- Teleport near it, grab it, move to destination, drop
+                        hrp.CFrame = newPart.CFrame * CFrame.new(0, 3, 3)
+                        task.wait(0.12)
+                        if dragRemote then pcall(function() dragRemote:FireServer(newItem) end) end
+                        task.wait(0.1)
+                        newPart.CFrame = abCircle.CFrame
+                        task.wait(0.1)
+                        if dragRemote then pcall(function() dragRemote:FireServer(newItem) end) end
+                        task.wait(0.15)
+                    end
+                end
+
+                bought = bought + 1
+
+            else
+                -- Fallback: shelf item not found in workspace — fire buy remote with item name string
+                setABStatus("Shelf item not found, trying direct buy...", true)
+                if buyRemote then
+                    -- Teleport to counter first
+                    if counterPos then
+                        hrp.CFrame = CFrame.new(counterPos + Vector3.new(0, 3, 0))
+                        task.wait(0.25)
+                    end
                     pcall(function() buyRemote:FireServer(abSelectedItem) end)
-                    task.wait(0.4)
+                    task.wait(0.5)
                     bought = bought + 1
                 else
-                    task.wait(0.3)
+                    task.wait(0.4)
                 end
             end
 
