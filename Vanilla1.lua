@@ -1032,9 +1032,6 @@ mouse.Button1Down:Connect(function()
     elseif clickSelection or groupSelection then
         handleSelection(mouse.Target, false)
     end
-            end
-        end
-    end
 end)
 
 mouse.Button1Up:Connect(function()
