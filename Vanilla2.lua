@@ -1007,4 +1007,185 @@ createDBtn("Cancel Dupe", BTN_COLOR, function()
     resetAllDupeProgress()
 end)
 
+-- ════════════════════════════════════════════════════
+-- SINGLE TRUCK TELEPORT
+-- How it works:
+--   1. Select a Receiver player from dropdown
+--   2. Sit in a truck yourself (any truck on your base)
+--   3. Press "Teleport My Truck" — it teleports the truck
+--      you're currently sitting in to the receiver's base,
+--      using the same offset-based system as full truck dupe.
+-- ════════════════════════════════════════════════════
+createDSep()
+createDSection("Single Truck Teleport")
+
+-- Receiver-only dropdown for single truck
+local singleTruckPage = pages["DupeTab"]  -- same page, just more elements
+local _, getSingleReceiver = makeDupeDropdown("Receiver")
+
+-- Status label
+local stFrame = Instance.new("Frame", dupePage)
+stFrame.Size = UDim2.new(1,-12,0,28); stFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
+stFrame.BorderSizePixel = 0
+Instance.new("UICorner", stFrame).CornerRadius = UDim.new(0,6)
+local stDot = Instance.new("Frame", stFrame)
+stDot.Size = UDim2.new(0,7,0,7); stDot.Position = UDim2.new(0,10,0.5,-3)
+stDot.BackgroundColor3 = Color3.fromRGB(80,80,100); stDot.BorderSizePixel = 0
+Instance.new("UICorner", stDot).CornerRadius = UDim.new(1,0)
+local stLbl = Instance.new("TextLabel", stFrame)
+stLbl.Size = UDim2.new(1,-28,1,0); stLbl.Position = UDim2.new(0,24,0,0)
+stLbl.BackgroundTransparency = 1; stLbl.Font = Enum.Font.Gotham; stLbl.TextSize = 12
+stLbl.TextColor3 = THEME_TEXT; stLbl.TextXAlignment = Enum.TextXAlignment.Left
+stLbl.Text = "Sit in your truck, then press Teleport"
+
+local function setSTStatus(msg, active)
+    stLbl.Text = msg
+    stDot.BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
+end
+
+-- Teleport button
+createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
+    local receiverName = getSingleReceiver()
+    if receiverName == "" then
+        setSTStatus("Select a receiver first!", false); return
+    end
+
+    local RS   = game:GetService("ReplicatedStorage")
+    local LP   = Players.LocalPlayer
+    local Char = LP.Character or LP.CharacterAdded:Wait()
+    local hum  = Char:FindFirstChild("Humanoid")
+
+    -- Must be seated in a truck (SeatPart with DriveSeat)
+    local seatPart = hum and hum.SeatPart
+    if not seatPart or seatPart.Name ~= "DriveSeat" then
+        setSTStatus("You must be sitting in a truck!", false); return
+    end
+
+    local tModel = seatPart.Parent
+    if not tModel then
+        setSTStatus("Couldn't find truck model!", false); return
+    end
+
+    -- Find giver and receiver base origins
+    local myName = LP.Name
+    local GiveBaseOrigin, ReceiverBaseOrigin
+
+    for _, v in pairs(workspace.Properties:GetDescendants()) do
+        if v.Name == "Owner" then
+            local val = tostring(v.Value)
+            if val == myName       then GiveBaseOrigin    = v.Parent:FindFirstChild("OriginSquare") end
+            if val == receiverName then ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare") end
+        end
+    end
+
+    if not GiveBaseOrigin then
+        setSTStatus("Couldn't find your base!", false); return
+    end
+    if not ReceiverBaseOrigin then
+        setSTStatus("Couldn't find receiver's base!", false); return
+    end
+
+    setSTStatus("Teleporting truck...", true)
+
+    task.spawn(function()
+        local ignoredParts   = {}
+        local teleportedParts = {}
+
+        -- Mark truck + char parts as ignored for cargo sweep
+        for _, p in ipairs(tModel:GetDescendants()) do
+            if p:IsA("BasePart") then ignoredParts[p] = true end
+        end
+        for _, p in ipairs(Char:GetDescendants()) do
+            if p:IsA("BasePart") then ignoredParts[p] = true end
+        end
+
+        -- Compute destination CFrame (same offset logic as full dupe)
+        local mainPart = tModel:FindFirstChild("Main")
+        local truckSrcCF  = mainPart and mainPart.CFrame or tModel:GetPrimaryPartCFrame()
+        local truckDestPos = truckSrcCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+        local truckDestCF  = CFrame.new(truckDestPos) * truckSrcCF.Rotation
+
+        -- Sweep cargo that's on/in the truck bounding box
+        local mCF, mSz = tModel:GetBoundingBox()
+        local function isPointInside(point, boxCFrame, boxSize)
+            local r = boxCFrame:PointToObjectSpace(point)
+            return math.abs(r.X)<=boxSize.X/2 and math.abs(r.Y)<=boxSize.Y/2+2 and math.abs(r.Z)<=boxSize.Z/2
+        end
+
+        for _, part in ipairs(workspace:GetDescendants()) do
+            if part:IsA("BasePart") and not ignoredParts[part]
+                and (part.Name == "Main" or part.Name == "WoodSection") then
+                if part:FindFirstChild("Weld") and part.Weld.Part1
+                    and part.Weld.Part1.Parent ~= part.Parent then continue end
+                task.spawn(function()
+                    if isPointInside(part.Position, mCF, mSz) then
+                        local PCF  = part.CFrame
+                        local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                        local tOff = CFrame.new(nPos) * PCF.Rotation
+                        part.CFrame = tOff
+                        table.insert(teleportedParts, {Instance=part, OldPos=PCF.Position, TargetCFrame=tOff})
+                    end
+                end)
+            end
+        end
+
+        -- Teleport the truck itself (while we're still seated — same as full dupe)
+        tModel:SetPrimaryPartCFrame(truckDestCF)
+
+        -- Get door hinge for exit (same as full dupe)
+        local DoorHinge = seatPart.Parent:FindFirstChild("PaintParts")
+            and seatPart.Parent.PaintParts:FindFirstChild("DoorLeft")
+            and seatPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
+
+        task.wait(0.5)
+        Char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        task.wait(0.1); seatPart:Destroy(); task.wait(0.1)
+        if DoorHinge then
+            for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
+        end
+
+        -- Return player to their own base
+        task.wait(0.3)
+        pcall(function()
+            Char.HumanoidRootPart.CFrame = CFrame.new(GiveBaseOrigin.Position + Vector3.new(0, 5, 0))
+        end)
+
+        -- Retry any cargo that didn't move (same retry system as full dupe)
+        task.wait(5)
+        local retryList = {}
+        for _, data in ipairs(teleportedParts) do
+            if data.Instance and data.Instance.Parent
+                and (data.Instance.Position - data.OldPos).Magnitude < 5 then
+                table.insert(retryList, data)
+            end
+        end
+
+        local attempts = 0
+        while #retryList > 0 and attempts < 4 do
+            attempts += 1
+            setSTStatus("Retrying " .. #retryList .. " cargo...", true)
+            for _, data in ipairs(retryList) do
+                local item = data.Instance
+                if not (item and item.Parent) then continue end
+                while (Char.HumanoidRootPart.Position - item.Position).Magnitude > 25 do
+                    Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
+                end
+                RS.Interaction.ClientIsDragging:FireServer(item.Parent)
+                task.wait(0.6)
+                item.CFrame = data.TargetCFrame
+            end
+            task.wait(5)
+            retryList = {}
+            for _, data in ipairs(teleportedParts) do
+                if data.Instance and data.Instance.Parent
+                    and (data.Instance.Position - data.OldPos).Magnitude < 25 then
+                    table.insert(retryList, data)
+                end
+            end
+        end
+
+        setSTStatus("Truck teleported!", false)
+    end)
+end)
+
 print("[VanillaHub] Vanilla2 loaded")
