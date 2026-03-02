@@ -1,9 +1,8 @@
 -- ════════════════════════════════════════════════════
--- VANILLA2 — World Tab + Dupe Tab
+-- VANILLA2 — World Tab + Wood Tab + Dupe Tab
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
 
--- Guard: if _G.VH is missing, Vanilla1 wasn't executed first (or was already cleaned up)
 if not _G.VH then
     warn("[VanillaHub] Vanilla2: _G.VH not found. Execute Vanilla1 first.")
     return
@@ -78,6 +77,10 @@ local alwaysNightActive = false
 local walkOnWaterConn = nil
 local walkOnWaterParts = {}
 
+-- Track whether water was hidden so onExit can restore it
+local waterRemoved = false
+_G.VH.setRemovedWater = function(v) waterRemoved = v end
+
 table.insert(cleanupTasks, function()
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
     if walkOnWaterConn then walkOnWaterConn:Disconnect(); walkOnWaterConn = nil end
@@ -87,6 +90,18 @@ table.insert(cleanupTasks, function()
     walkOnWaterParts = {}
     alwaysDayActive = false
     alwaysNightActive = false
+    -- Restore water if it was removed
+    if waterRemoved then
+        pcall(function()
+            for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
+                if p:IsA("Part") and p.Name == "Water" then
+                    p.Transparency = 0.5
+                    p.CanCollide   = false
+                end
+            end
+        end)
+        waterRemoved = false
+    end
 end)
 
 createWSectionLabel("Environment")
@@ -160,7 +175,7 @@ createWorldToggle("Walk On Water", false, function(v)
 end)
 
 createWorldToggle("Remove Water", false, function(v)
-    -- Track state so onExit can restore water if gui is closed while active
+    waterRemoved = v
     if _G.VH and _G.VH.setRemovedWater then _G.VH.setRemovedWater(v) end
     for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
         if p:IsA("Part") and p.Name == "Water" then
@@ -168,6 +183,370 @@ createWorldToggle("Remove Water", false, function(v)
             p.CanCollide   = false
         end
     end
+end)
+
+-- ════════════════════════════════════════════════════
+-- WOOD TAB
+-- ════════════════════════════════════════════════════
+local woodPage = pages["WoodTab"]
+
+-- Wood sell dropoff coordinates
+local SELL_X, SELL_Y, SELL_Z = 315.22, -0.40, 85.54
+
+local function createWoodSectionLabel(text)
+    local lbl = Instance.new("TextLabel", woodPage)
+    lbl.Size = UDim2.new(1,-12,0,22); lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 11
+    lbl.TextColor3 = Color3.fromRGB(120,120,150); lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = string.upper(text)
+    Instance.new("UIPadding", lbl).PaddingLeft = UDim.new(0, 4)
+end
+
+local function createWoodSep()
+    local sep = Instance.new("Frame", woodPage)
+    sep.Size = UDim2.new(1,-12,0,1); sep.BackgroundColor3 = Color3.fromRGB(40,40,55); sep.BorderSizePixel = 0
+end
+
+local function createWoodToggle(text, defaultState, callback)
+    local frame = Instance.new("Frame", woodPage)
+    frame.Size = UDim2.new(1,-12,0,32); frame.BackgroundColor3 = Color3.fromRGB(24,24,30)
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+    local lbl = Instance.new("TextLabel", frame)
+    lbl.Size = UDim2.new(1,-50,1,0); lbl.Position = UDim2.new(0,10,0,0)
+    lbl.BackgroundTransparency = 1; lbl.Text = text; lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 13; lbl.TextColor3 = Color3.fromRGB(220,220,220); lbl.TextXAlignment = Enum.TextXAlignment.Left
+    local tb = Instance.new("TextButton", frame)
+    tb.Size = UDim2.new(0,34,0,18); tb.Position = UDim2.new(1,-44,0.5,-9)
+    tb.BackgroundColor3 = defaultState and Color3.fromRGB(60,180,60) or BTN_COLOR
+    tb.Text = ""; Instance.new("UICorner", tb).CornerRadius = UDim.new(1,0)
+    local circle = Instance.new("Frame", tb)
+    circle.Size = UDim2.new(0,14,0,14)
+    circle.Position = UDim2.new(0, defaultState and 18 or 2, 0.5, -7)
+    circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    Instance.new("UICorner", circle).CornerRadius = UDim.new(1,0)
+    local toggled = defaultState
+    local function setToggled(val)
+        toggled = val
+        TweenService:Create(tb, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
+            BackgroundColor3 = toggled and Color3.fromRGB(60,180,60) or BTN_COLOR
+        }):Play()
+        TweenService:Create(circle, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
+            Position = UDim2.new(0, toggled and 18 or 2, 0.5, -7)
+        }):Play()
+    end
+    tb.MouseButton1Click:Connect(function()
+        toggled = not toggled
+        setToggled(toggled)
+        if callback then callback(toggled) end
+    end)
+    return frame, setToggled, function() return toggled end
+end
+
+local function createWoodBtn(text, color, callback)
+    color = color or BTN_COLOR
+    local btn = Instance.new("TextButton", woodPage)
+    btn.Size = UDim2.new(1,-12,0,32); btn.BackgroundColor3 = color
+    btn.Text = text; btn.Font = Enum.Font.GothamSemibold; btn.TextSize = 13
+    btn.TextColor3 = Color3.fromRGB(210,210,220); btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+    local hov = Color3.fromRGB(
+        math.min(color.R*255+20,255)/255,
+        math.min(color.G*255+8,255)/255,
+        math.min(color.B*255+20,255)/255
+    )
+    btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3=hov}):Play() end)
+    btn.MouseLeave:Connect(function() TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3=color}):Play() end)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+-- ── Wood selection state ──
+local woodSelectedItems  = {}   -- model -> SelectionBox
+local woodClickSellOn    = false
+local woodGroupSellOn    = false
+local woodAutoSellRunning = false
+local woodAutoSellThread  = nil
+
+-- Status label
+local woodStatusFrame = Instance.new("Frame", woodPage)
+woodStatusFrame.Size = UDim2.new(1,-12,0,28); woodStatusFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
+woodStatusFrame.BorderSizePixel = 0
+Instance.new("UICorner", woodStatusFrame).CornerRadius = UDim.new(0,6)
+local woodDot = Instance.new("Frame", woodStatusFrame)
+woodDot.Size = UDim2.new(0,7,0,7); woodDot.Position = UDim2.new(0,10,0.5,-3)
+woodDot.BackgroundColor3 = Color3.fromRGB(80,80,100); woodDot.BorderSizePixel = 0
+Instance.new("UICorner", woodDot).CornerRadius = UDim.new(1,0)
+local woodStatusLbl = Instance.new("TextLabel", woodStatusFrame)
+woodStatusLbl.Size = UDim2.new(1,-28,1,0); woodStatusLbl.Position = UDim2.new(0,24,0,0)
+woodStatusLbl.BackgroundTransparency = 1; woodStatusLbl.Font = Enum.Font.Gotham; woodStatusLbl.TextSize = 12
+woodStatusLbl.TextColor3 = Color3.fromRGB(150,150,170); woodStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+woodStatusLbl.Text = "Ready"
+
+local function setWoodStatus(msg, active)
+    woodStatusLbl.Text = msg
+    woodDot.BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
+end
+
+-- Selected count label
+local woodCountFrame = Instance.new("Frame", woodPage)
+woodCountFrame.Size = UDim2.new(1,-12,0,24); woodCountFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
+woodCountFrame.BorderSizePixel = 0
+Instance.new("UICorner", woodCountFrame).CornerRadius = UDim.new(0,6)
+local woodCountLbl = Instance.new("TextLabel", woodCountFrame)
+woodCountLbl.Size = UDim2.new(1,-12,1,0); woodCountLbl.Position = UDim2.new(0,10,0,0)
+woodCountLbl.BackgroundTransparency = 1; woodCountLbl.Font = Enum.Font.Gotham; woodCountLbl.TextSize = 12
+woodCountLbl.TextColor3 = Color3.fromRGB(150,150,170); woodCountLbl.TextXAlignment = Enum.TextXAlignment.Left
+woodCountLbl.Text = "Selected: 0 pieces"
+
+local function updateWoodCount()
+    local count = 0
+    for _ in pairs(woodSelectedItems) do count = count + 1 end
+    woodCountLbl.Text = "Selected: " .. count .. " piece" .. (count == 1 and "" or "s")
+end
+
+-- ── Helper: is this model a wood log? (must have TreeClass and owner) ──
+local function isWoodLog(model)
+    if not model then return false end
+    if model == workspace then return false end
+    -- Must have a TreeClass value (indicates cut wood/log in LT2)
+    if not model:FindFirstChild("TreeClass") then return false end
+    -- Must have an Owner to filter by player ownership
+    if not model:FindFirstChild("Owner") then return false end
+    -- Must have a physical part
+    local mp = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+    if not mp then return false end
+    return true
+end
+
+local function getWoodOwner(model)
+    local ov = model:FindFirstChild("Owner")
+    if not ov then return nil end
+    if ov:IsA("ObjectValue") then return ov.Value
+    elseif ov:IsA("StringValue") then return ov.Value end
+    return nil
+end
+
+local function highlightWood(model)
+    if woodSelectedItems[model] then return end
+    local hl = Instance.new("SelectionBox")
+    hl.Color3 = Color3.fromRGB(0,220,100); hl.LineThickness = 0.05
+    hl.Adornee = model; hl.Parent = model
+    woodSelectedItems[model] = hl
+    updateWoodCount()
+end
+
+local function unhighlightWood(model)
+    if woodSelectedItems[model] then
+        woodSelectedItems[model]:Destroy()
+        woodSelectedItems[model] = nil
+        updateWoodCount()
+    end
+end
+
+local function unhighlightAllWood()
+    for model, hl in pairs(woodSelectedItems) do
+        if hl and hl.Parent then hl:Destroy() end
+    end
+    woodSelectedItems = {}
+    updateWoodCount()
+end
+
+-- ── Click-to-select a single wood log (owner-checked: only own logs) ──
+local woodMouse = player:GetMouse()
+local woodMouseConn
+
+local function connectWoodMouse()
+    if woodMouseConn then woodMouseConn:Disconnect(); woodMouseConn = nil end
+    woodMouseConn = woodMouse.Button1Down:Connect(function()
+        if not woodClickSellOn then return end
+        local target = woodMouse.Target
+        if not target then return end
+        local model = target:FindFirstAncestorOfClass("Model")
+        if not model then return end
+        if not isWoodLog(model) then return end
+        -- Owner check: only select logs owned by local player
+        local owner = getWoodOwner(model)
+        local ownerName = (typeof(owner) == "Instance") and owner.Name or tostring(owner)
+        if ownerName ~= player.Name then return end
+        -- Toggle selection
+        if woodSelectedItems[model] then
+            unhighlightWood(model)
+        else
+            highlightWood(model)
+        end
+    end)
+end
+connectWoodMouse()
+
+table.insert(cleanupTasks, function()
+    if woodMouseConn then woodMouseConn:Disconnect(); woodMouseConn = nil end
+    unhighlightAllWood()
+    if woodAutoSellThread then pcall(task.cancel, woodAutoSellThread); woodAutoSellThread = nil end
+    woodAutoSellRunning = false
+end)
+
+-- ── Sections ──
+createWoodSectionLabel("Selection")
+
+-- Click Sell toggle — click on a wood piece to select/deselect it
+createWoodToggle("Click Sell", false, function(val)
+    woodClickSellOn = val
+    setWoodStatus(val and "Click wood to select pieces" or "Ready", false)
+end)
+
+-- Group Selection Auto Sell — selects all wood of the same TreeClass you own, then auto-sells in a loop
+createWoodSectionLabel("Auto Sell")
+
+-- Group select by TreeClass (same wood type, same owner)
+createWoodToggle("Group Selection (Auto Sell)", false, function(val)
+    woodGroupSellOn = val
+    if val then
+        setWoodStatus("Click a wood piece to group-select & auto-sell", false)
+    else
+        setWoodStatus("Ready", false)
+    end
+end)
+
+createWoodSep()
+createWoodSectionLabel("Actions")
+
+-- Manual: sell currently selected wood
+createWoodBtn("Sell Selected Wood", Color3.fromRGB(35,90,45), function()
+    if woodAutoSellRunning then setWoodStatus("Auto sell already running!", true) return end
+    local queue = {}
+    for model in pairs(woodSelectedItems) do
+        if model and model.Parent then table.insert(queue, model) end
+    end
+    if #queue == 0 then setWoodStatus("No wood selected!", false) return end
+    woodAutoSellRunning = true
+    setWoodStatus("Selling " .. #queue .. " pieces...", true)
+    woodAutoSellThread = task.spawn(function()
+        local RS = game:GetService("ReplicatedStorage")
+        local Char = player.Character or player.CharacterAdded:Wait()
+        local HRP = Char:WaitForChild("HumanoidRootPart")
+        local sellCF = CFrame.new(SELL_X, SELL_Y + 3, SELL_Z)
+        local dragger = RS:FindFirstChild("Interaction")
+            and RS.Interaction:FindFirstChild("ClientIsDragging")
+        local done = 0
+        local total = #queue
+        for _, model in ipairs(queue) do
+            if not woodAutoSellRunning then break end
+            if not (model and model.Parent) then done+=1; continue end
+            local part = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+            if not part then done+=1; continue end
+            -- Teleport player near the wood
+            if (HRP.Position - part.Position).Magnitude > 20 then
+                HRP.CFrame = part.CFrame * CFrame.new(0,4,2)
+                task.wait(0.1)
+            end
+            -- Grab ownership
+            if dragger then
+                for _ = 1, 50 do task.wait(0.05); dragger:FireServer(model) end
+            end
+            -- Move to dropoff
+            for _ = 1, 200 do part.CFrame = sellCF end
+            -- Teleport player to dropoff so server registers it
+            HRP.CFrame = sellCF * CFrame.new(0,4,2)
+            task.wait(0.5)
+            done += 1
+            -- Deselect after selling
+            unhighlightWood(model)
+            setWoodStatus("Selling... " .. done .. " / " .. total, true)
+        end
+        woodAutoSellRunning = false
+        woodAutoSellThread  = nil
+        setWoodStatus("Done! Sold " .. done .. " / " .. total, false)
+    end)
+end)
+
+-- Auto Sell loop — group-selects all matching wood and keeps selling until toggled off
+local autoSellLoopRunning = false
+local autoSellLoopThread  = nil
+
+local _, setAutoSellLoopToggle = createWoodToggle("Auto Sell Loop", false, function(val)
+    if val then
+        if autoSellLoopRunning then return end
+        autoSellLoopRunning = true
+        setWoodStatus("Auto sell loop running...", true)
+        autoSellLoopThread = task.spawn(function()
+            local RS    = game:GetService("ReplicatedStorage")
+            local Char  = player.Character or player.CharacterAdded:Wait()
+            local HRP   = Char:WaitForChild("HumanoidRootPart")
+            local sellCF = CFrame.new(SELL_X, SELL_Y + 3, SELL_Z)
+            local dragger = RS:FindFirstChild("Interaction")
+                and RS.Interaction:FindFirstChild("ClientIsDragging")
+
+            while autoSellLoopRunning do
+                -- Scan workspace for all wood owned by the local player
+                local toSell = {}
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if obj:IsA("Model") and isWoodLog(obj) then
+                        local owner = getWoodOwner(obj)
+                        local ownerName = (typeof(owner) == "Instance") and owner.Name or tostring(owner)
+                        if ownerName == player.Name then
+                            table.insert(toSell, obj)
+                        end
+                    end
+                end
+
+                if #toSell == 0 then
+                    setWoodStatus("No wood found, waiting...", true)
+                    task.wait(3)
+                else
+                    setWoodStatus("Auto selling " .. #toSell .. " pieces...", true)
+                    -- Group by TreeClass for visual clarity but sell all
+                    for _, model in ipairs(toSell) do
+                        if not autoSellLoopRunning then break end
+                        if not (model and model.Parent) then continue end
+                        local part = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+                        if not part then continue end
+                        -- Move near wood if needed
+                        if (HRP.Position - part.Position).Magnitude > 20 then
+                            HRP.CFrame = part.CFrame * CFrame.new(0,4,2)
+                            task.wait(0.1)
+                        end
+                        -- Net-own the log
+                        if dragger then
+                            for _ = 1, 50 do task.wait(0.05); dragger:FireServer(model) end
+                        end
+                        -- Fling to sell point
+                        for _ = 1, 200 do part.CFrame = sellCF end
+                        HRP.CFrame = sellCF * CFrame.new(0,4,2)
+                        task.wait(0.5)
+                    end
+                    task.wait(1) -- brief pause before next scan
+                end
+            end
+
+            autoSellLoopRunning = false
+            autoSellLoopThread  = nil
+            setWoodStatus("Auto sell loop stopped", false)
+        end)
+    else
+        autoSellLoopRunning = false
+        if autoSellLoopThread then pcall(task.cancel, autoSellLoopThread); autoSellLoopThread = nil end
+        setWoodStatus("Auto sell loop stopped", false)
+    end
+end)
+
+table.insert(cleanupTasks, function()
+    autoSellLoopRunning = false
+    if autoSellLoopThread then pcall(task.cancel, autoSellLoopThread); autoSellLoopThread = nil end
+end)
+
+-- Clear wood selection
+createWoodBtn("Clear Selection", BTN_COLOR, function()
+    unhighlightAllWood()
+    setWoodStatus("Selection cleared", false)
+end)
+
+-- Cancel any running sell
+createWoodBtn("Cancel Sell", BTN_COLOR, function()
+    woodAutoSellRunning = false
+    if woodAutoSellThread then pcall(task.cancel, woodAutoSellThread); woodAutoSellThread = nil end
+    autoSellLoopRunning = false
+    if autoSellLoopThread then pcall(task.cancel, autoSellLoopThread); autoSellLoopThread = nil end
+    setWoodStatus("Cancelled", false)
 end)
 
 -- ════════════════════════════════════════════════════
@@ -791,7 +1170,6 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                     truckDone += 1; setProgTrucks(truckDone, truckCount)
                 end
 
-                -- First retry pass after initial wait
                 task.wait(5)
                 local retryList = {}
                 for _, data in ipairs(teleportedParts) do
@@ -821,7 +1199,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                                 Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
                             end
                             RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                            task.wait(0.6) -- ← updated from 0.1
+                            task.wait(0.6)
                             item.CFrame = data.TargetCFrame
                             cargoDone = cargoTotal - #retryList
                             setProgTrucks(cargoDone, cargoTotal)
