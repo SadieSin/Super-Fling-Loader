@@ -184,9 +184,7 @@ end)
 
 _G.VanillaHubCleanup = onExit
 
--- ── OUTER WRAPPER: holds UICorner + glow UIStroke, no ClipsDescendants
---    This is required so rounded corners are visible and the stroke doesn't
---    bleed as a white line inside the clipped content area.
+-- ── OUTER WRAPPER: holds UICorner, no ClipsDescendants, no stroke/outline
 local wrapper = Instance.new("Frame", gui)
 wrapper.Size = UDim2.new(0, 0, 0, 0)
 wrapper.Position = UDim2.new(0.5, -260, 0.5, -170)
@@ -196,29 +194,6 @@ wrapper.BorderSizePixel = 0
 wrapper.ClipsDescendants = false
 Instance.new("UICorner", wrapper).CornerRadius = UDim.new(0, 12)
 
--- Glowing outline lives on the WRAPPER (not main) so it renders outside the clip boundary
-local glowStroke = Instance.new("UIStroke", wrapper)
-glowStroke.Color = Color3.fromRGB(210, 210, 220)
-glowStroke.Thickness = 2.2
-glowStroke.Transparency = 0.35
-
--- Pulsing glow effect
-task.spawn(function()
-    while gui and gui.Parent do
-        TweenService:Create(glowStroke, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-            Transparency = 0.15,
-            Thickness = 2.8
-        }):Play()
-        task.wait(2.0)
-        if not (gui and gui.Parent) then break end
-        TweenService:Create(glowStroke, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-            Transparency = 0.45,
-            Thickness = 1.8
-        }):Play()
-        task.wait(2.0)
-    end
-end)
-
 -- ── MAIN: inner frame that clips content, parented to wrapper
 local main = Instance.new("Frame", wrapper)
 main.Size = UDim2.new(1, 0, 1, 0)
@@ -227,7 +202,6 @@ main.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 main.BackgroundTransparency = 1
 main.BorderSizePixel = 0
 main.ClipsDescendants = true
--- UICorner on main too so the background itself is rounded (matches wrapper)
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 
 -- Animate the wrapper (not main) for open/close
@@ -490,11 +464,6 @@ local function switchTab(targetName)
             BackgroundColor3 = Color3.fromRGB(18,18,18),
             TextColor3 = Color3.fromRGB(160,160,160)
         }):Play()
-        -- Remove active indicator
-        local indicator = activeTabButton:FindFirstChild("ActiveIndicator")
-        if indicator then
-            TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundTransparency = 1}):Play()
-        end
     end
     local btn = side:FindFirstChild(targetName:gsub("Tab",""))
     if btn then
@@ -503,11 +472,6 @@ local function switchTab(targetName)
             BackgroundColor3 = Color3.fromRGB(40,40,40),
             TextColor3 = THEME_TEXT
         }):Play()
-        -- Show active indicator
-        local indicator = btn:FindFirstChild("ActiveIndicator")
-        if indicator then
-            TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
-        end
     end
 end
 
@@ -525,17 +489,6 @@ for _, name in ipairs(tabs) do
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     local pad = Instance.new("UIPadding", btn)
     pad.PaddingLeft = UDim.new(0, 16)
-
-    -- Active indicator bar (left accent line)
-    local indicator = Instance.new("Frame", btn)
-    indicator.Name = "ActiveIndicator"
-    indicator.Size = UDim2.new(0, 3, 0.7, 0)
-    indicator.Position = UDim2.new(0, 4, 0.15, 0)
-    indicator.BackgroundColor3 = THEME_TEXT
-    indicator.BorderSizePixel = 0
-    indicator.BackgroundTransparency = 1
-    indicator.ZIndex = 3
-    Instance.new("UICorner", indicator).CornerRadius = UDim.new(1, 0)
 
     -- Ripple effect container
     local rippleContainer = Instance.new("Frame", btn)
@@ -565,7 +518,6 @@ for _, name in ipairs(tabs) do
 
     -- Click ripple effect
     btn.MouseButton1Click:Connect(function()
-        -- Spawn a ripple circle that expands and fades
         task.spawn(function()
             local ripple = Instance.new("Frame", rippleContainer)
             ripple.Size = UDim2.new(0, 8, 0, 8)
@@ -1187,7 +1139,7 @@ mouse.Move:Connect(function()
 end)
 
 -- ════════════════════════════════════════════════════
--- PLAYER TAB  (Fly toggle REMOVED — fly still works via Q key)
+-- PLAYER TAB
 -- ════════════════════════════════════════════════════
 local playerPage = pages["PlayerTab"]
 
@@ -1332,7 +1284,7 @@ end)
 local flySpeed = 100
 createPSlider("Fly Speed", 100, 500, 100, function(val) flySpeed = val end)
 
--- Fly key button (kept — no toggle above it)
+-- Fly key button
 local flyKeyFrame = Instance.new("Frame", playerPage)
 flyKeyFrame.Size = UDim2.new(1,-12,0,32); flyKeyFrame.BackgroundColor3 = Color3.fromRGB(24,24,30)
 Instance.new("UICorner", flyKeyFrame).CornerRadius = UDim.new(0,6)
@@ -1370,7 +1322,7 @@ Instance.new("UICorner", flyHint).CornerRadius = UDim.new(0,6)
 Instance.new("UIPadding", flyHint).PaddingLeft = UDim.new(0,6)
 
 local isFlyEnabled = false
-local flyToggleEnabled = true   -- always true now (no toggle to disable it)
+local flyToggleEnabled = true
 local flyBV, flyBG, flyConn
 
 local function stopFly()
@@ -1500,7 +1452,7 @@ _G.VH = {
     stopFly          = stopFly,
     startFly         = startFly,
     butter           = { running = false, thread = nil },
-    flyToggleEnabled = true,   -- always true, Q toggles fly directly
+    flyToggleEnabled = true,
     isFlyEnabled     = false,
     currentFlyKey    = Enum.KeyCode.Q,
     waitingForFlyKey = false,
