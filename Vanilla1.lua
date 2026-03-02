@@ -274,7 +274,7 @@ local function showConfirmClose()
     dmsg.BackgroundTransparency = 1
     dmsg.Font = Enum.Font.Gotham
     dmsg.TextSize = 15
-    dmsg.TextColor3 = Color3.fromRGB(200, 200, 210)
+    dmsg.TextColor3 = Color3.fromRGB(253, 200, 255)
     dmsg.Text = "Are you sure you want to close VanillaHub?\n\nYou will need to re-execute the script to use it again."
     dmsg.TextWrapped = true
     dmsg.TextYAlignment = Enum.TextYAlignment.Center
@@ -550,12 +550,12 @@ greeting.Text = "Hey " .. player.DisplayName .. "!"
 local usernameLabel = Instance.new("TextLabel", textArea)
 usernameLabel.Size = UDim2.new(1,0,0,20); usernameLabel.Position = UDim2.new(0,0,0,42)
 usernameLabel.BackgroundTransparency = 1; usernameLabel.Font = Enum.Font.Gotham; usernameLabel.TextSize = 14
-usernameLabel.TextColor3 = Color3.fromRGB(160,160,180); usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+usernameLabel.TextColor3 = Color3.fromRGB(253, 200, 255); usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
 usernameLabel.Text = "@" .. player.Name
 local message = Instance.new("TextLabel", textArea)
 message.Size = UDim2.new(1,0,0,36); message.Position = UDim2.new(0,0,0,64)
 message.BackgroundTransparency = 1; message.Font = Enum.Font.Gotham; message.TextSize = 13
-message.TextColor3 = Color3.fromRGB(190,190,210); message.TextXAlignment = Enum.TextXAlignment.Left
+message.TextColor3 = Color3.fromRGB(253, 200, 255); message.TextXAlignment = Enum.TextXAlignment.Left
 message.TextYAlignment = Enum.TextYAlignment.Top; message.TextWrapped = true
 message.Text = "Welcome back to VanillaHub!\nEnjoy your time here 🌸"
 
@@ -575,7 +575,7 @@ local function createStatusBox(text, color)
     local lbl = Instance.new("TextLabel", box)
     lbl.Size = UDim2.new(1,-8,1,-4); lbl.Position = UDim2.new(0,4,0,2)
     lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 13
-    lbl.TextColor3 = color or Color3.fromRGB(180,180,200)
+    lbl.TextColor3 = color or Color3.fromRGB(253, 200, 255)
     lbl.Text = text; lbl.TextWrapped = true; lbl.TextXAlignment = Enum.TextXAlignment.Center
     return lbl
 end
@@ -589,13 +589,13 @@ local rejoinBtn = Instance.new("TextButton", statsContainer)
 rejoinBtn.Size = UDim2.new(0,148,0,42)
 rejoinBtn.BackgroundColor3 = Color3.fromRGB(22,22,28); rejoinBtn.BorderSizePixel = 0
 rejoinBtn.Font = Enum.Font.Gotham; rejoinBtn.TextSize = 14
-rejoinBtn.TextColor3 = Color3.fromRGB(180,180,200); rejoinBtn.Text = "Rejoin"
+rejoinBtn.TextColor3 = Color3.fromRGB(253, 200, 255); rejoinBtn.Text = "Rejoin"
 Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 8)
 rejoinBtn.MouseEnter:Connect(function()
-    TweenService:Create(rejoinBtn, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(35,35,45), TextColor3 = Color3.fromRGB(210,210,230)}):Play()
+    TweenService:Create(rejoinBtn, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(35,35,45), TextColor3 = Color3.fromRGB(253, 200, 255)}):Play()
 end)
 rejoinBtn.MouseLeave:Connect(function()
-    TweenService:Create(rejoinBtn, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(22,22,28), TextColor3 = Color3.fromRGB(180,180,200)}):Play()
+    TweenService:Create(rejoinBtn, TweenInfo.new(0.18), {BackgroundColor3 = Color3.fromRGB(22,22,28), TextColor3 = Color3.fromRGB(253, 200, 255)}):Play()
 end)
 rejoinBtn.MouseButton1Click:Connect(function() pcall(function() TeleportService:Teleport(game.PlaceId, player) end) end)
 
@@ -614,7 +614,7 @@ local teleportPage = pages["TeleportTab"]
 local tpHeader = Instance.new("TextLabel", teleportPage)
 tpHeader.Size = UDim2.new(1,-12,0,28); tpHeader.BackgroundTransparency = 1
 tpHeader.Font = Enum.Font.GothamBold; tpHeader.TextSize = 14
-tpHeader.TextColor3 = Color3.fromRGB(180,180,200); tpHeader.TextXAlignment = Enum.TextXAlignment.Left
+tpHeader.TextColor3 = Color3.fromRGB(253, 200, 255); tpHeader.TextXAlignment = Enum.TextXAlignment.Left
 tpHeader.Text = "Quick Teleport Locations"
 
 local locations = {
@@ -955,7 +955,7 @@ do
     pbLabel.Position = UDim2.new(0,6,0,4)
     pbLabel.BackgroundTransparency = 1
     pbLabel.Font = Enum.Font.GothamSemibold; pbLabel.TextSize = 11
-    pbLabel.TextColor3 = Color3.fromRGB(170,170,200)
+    pbLabel.TextColor3 = Color3.fromRGB(253, 200, 255)
     pbLabel.TextXAlignment = Enum.TextXAlignment.Left
     pbLabel.Text = "Teleporting..."
     local pbTrack = Instance.new("Frame", pbWrapper)
@@ -1091,7 +1091,7 @@ local function createPSlider(labelText, minVal, maxVal, defaultVal, onChanged)
     local valLbl = Instance.new("TextLabel", topRow)
     valLbl.Size = UDim2.new(0.3,0,1,0); valLbl.Position = UDim2.new(0.7,0,0,0); valLbl.BackgroundTransparency = 1
     valLbl.Font = Enum.Font.GothamBold; valLbl.TextSize = 13
-    valLbl.TextColor3 = Color3.fromRGB(200,200,255); valLbl.TextXAlignment = Enum.TextXAlignment.Right
+    valLbl.TextColor3 = Color3.fromRGB(253, 200, 255); valLbl.TextXAlignment = Enum.TextXAlignment.Right
     valLbl.Text = tostring(defaultVal)
     local track = Instance.new("Frame", frame)
     track.Size = UDim2.new(1,-16,0,6); track.Position = UDim2.new(0,8,0,36)
