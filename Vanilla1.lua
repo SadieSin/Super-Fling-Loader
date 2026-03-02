@@ -213,7 +213,7 @@ hubIcon.BackgroundTransparency = 1
 hubIcon.BorderSizePixel    = 0
 hubIcon.ScaleType          = Enum.ScaleType.Fit
 hubIcon.ZIndex             = 6
-hubIcon.Image              = "rbxassetid://97128823316544"  -- valid generic Roblox icon
+hubIcon.Image              = "rbxassetid://97128823316544"
 Instance.new("UICorner", hubIcon).CornerRadius = UDim.new(0, 5)
 
 local titleLbl = Instance.new("TextLabel", topBar)
