@@ -13,7 +13,6 @@ end
 
 -- Nuke leftover _G.VH table completely
 if _G.VH then
-    -- Cancel any running dupe thread
     if _G.VH.butter and _G.VH.butter.running then
         _G.VH.butter.running = false
         if _G.VH.butter.thread then pcall(task.cancel, _G.VH.butter.thread) end
@@ -184,7 +183,6 @@ end)
 
 _G.VanillaHubCleanup = onExit
 
--- ── OUTER WRAPPER: holds UICorner, no ClipsDescendants, no stroke/outline
 local wrapper = Instance.new("Frame", gui)
 wrapper.Size = UDim2.new(0, 0, 0, 0)
 wrapper.Position = UDim2.new(0.5, -260, 0.5, -170)
@@ -194,7 +192,6 @@ wrapper.BorderSizePixel = 0
 wrapper.ClipsDescendants = false
 Instance.new("UICorner", wrapper).CornerRadius = UDim.new(0, 12)
 
--- ── MAIN: inner frame that clips content, parented to wrapper
 local main = Instance.new("Frame", wrapper)
 main.Size = UDim2.new(1, 0, 1, 0)
 main.Position = UDim2.new(0, 0, 0, 0)
@@ -204,7 +201,6 @@ main.BorderSizePixel = 0
 main.ClipsDescendants = true
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 
--- Animate the wrapper (not main) for open/close
 TweenService:Create(wrapper, TweenInfo.new(0.65, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
     Size = UDim2.new(0, 520, 0, 340),
     BackgroundTransparency = 0
@@ -245,7 +241,7 @@ local closeBtn = Instance.new("TextButton", topBar)
 closeBtn.Size = UDim2.new(0, 32, 0, 32)
 closeBtn.Position = UDim2.new(1, -38, 0, 3)
 closeBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-closeBtn.Text = "×"
+closeBtn.Text = "x"
 closeBtn.Font = Enum.Font.Gotham
 closeBtn.TextSize = 20
 closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -490,7 +486,6 @@ for _, name in ipairs(tabs) do
     local pad = Instance.new("UIPadding", btn)
     pad.PaddingLeft = UDim.new(0, 16)
 
-    -- Ripple effect container
     local rippleContainer = Instance.new("Frame", btn)
     rippleContainer.Size = UDim2.new(1, 0, 1, 0)
     rippleContainer.BackgroundTransparency = 1
@@ -516,7 +511,6 @@ for _, name in ipairs(tabs) do
         end
     end)
 
-    -- Click ripple effect
     btn.MouseButton1Click:Connect(function()
         task.spawn(function()
             local ripple = Instance.new("Frame", rippleContainer)
@@ -526,7 +520,6 @@ for _, name in ipairs(tabs) do
             ripple.BackgroundTransparency = 0.75
             ripple.BorderSizePixel = 0
             Instance.new("UICorner", ripple).CornerRadius = UDim.new(1, 0)
-
             TweenService:Create(ripple, TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
                 Size = UDim2.new(0, 140, 0, 140),
                 Position = UDim2.new(0.5, -70, 0.5, -70),
@@ -577,7 +570,6 @@ end
 -- ════════════════════════════════════════════════════
 local homePage = pages["HomeTab"]
 
--- ── CHAT BUBBLE WELCOME CARD ──────────────────────────────────────────────────
 local bubbleRow = Instance.new("Frame", homePage)
 bubbleRow.Size = UDim2.new(1, 0, 0, 100)
 bubbleRow.BackgroundTransparency = 1
@@ -641,7 +633,7 @@ bubbleGreeting.Font               = Enum.Font.GothamBold
 bubbleGreeting.TextSize           = 17
 bubbleGreeting.TextColor3         = THEME_TEXT
 bubbleGreeting.TextXAlignment     = Enum.TextXAlignment.Left
-bubbleGreeting.Text               = "Hey " .. player.DisplayName .. "! 🌸"
+bubbleGreeting.Text               = "Hey " .. player.DisplayName .. "!"
 bubbleGreeting.ZIndex             = 3
 
 local bubbleMsg = Instance.new("TextLabel", bubbleBody)
@@ -654,10 +646,9 @@ bubbleMsg.TextColor3         = Color3.fromRGB(200, 180, 200)
 bubbleMsg.TextXAlignment     = Enum.TextXAlignment.Left
 bubbleMsg.TextYAlignment     = Enum.TextYAlignment.Top
 bubbleMsg.TextWrapped        = true
-bubbleMsg.Text               = "Welcome back to VanillaHub!\nEnjoy your time here ✨"
+bubbleMsg.Text               = "Welcome back to VanillaHub!\nEnjoy your time here."
 bubbleMsg.ZIndex             = 3
 
--- ── STATS GRID ────────────────────────────────────────────────────────────────
 local statsContainer = Instance.new("Frame", homePage)
 statsContainer.Size = UDim2.new(1, 0, 0, 160)
 statsContainer.BackgroundTransparency = 1
@@ -849,24 +840,67 @@ local function getItemCategory(model)
     return model.Name
 end
 
+-- ════════════════════════════════════════════════════
+-- FIX: isMoveableItem — excludes land plots, trees, stumps, terrain objects
+-- Only allows player-owned items and wood logs (not trees)
+-- ════════════════════════════════════════════════════
+local EXCLUDED_NAMES = {
+    Map=true,Terrain=true,Camera=true,Baseplate=true,Base=true,Ground=true,
+    Land=true,Island=true,Water=true,
+    -- Trees (chopped logs are NOT excluded — they have TreeClass but no DraggableItem and are small)
+    PalmTree=true,CypressTree=true,SpruceTree=true,ElmTree=true,ChestnutTree=true,
+    CherryTree=true,OakTree=true,BirchTree=true,PineTree=true,FirTree=true,
+    GoldTree=true,SnowyPineTree=true,VolcanicAshTree=true,
+    -- Stumps/branches
+    Stump=true,Branch=true,PalmBranch=true,
+    -- World geometry
+    Fence=true,Road=true,Path=true,River=true,Cliff=true,Hill=true,Bridge=true,
+    Rock=true,Bush=true,Grass=true,Dirt=true,
+    -- Land plots
+    Property=true,Plot=true,LandPlot=true,
+}
+
 local function isMoveableItem(model)
+    if not model or not model:IsA("Model") then return false end
+    if model == workspace then return false end
+
+    -- Exclude by name
+    if EXCLUDED_NAMES[model.Name] then return false end
+
+    -- Exclude if it's a land plot (has OriginSquare or is in Properties)
+    if model:FindFirstChild("OriginSquare") then return false end
+    if model.Parent and model.Parent.Name == "Properties" then return false end
+
+    -- Exclude trees that haven't been chopped (large, have multiple parts, no Owner)
+    -- Trees that ARE chopped into logs have TreeClass AND are small
+    local hasTreeClass = model:FindFirstChild("TreeClass") ~= nil
+    if hasTreeClass then
+        -- This is a wood log (already cut) - allow it
+        -- But check it has a main part (cut logs do)
+        local mp = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+        if not mp then return false end
+        -- Exclude if it's clearly still a standing tree (has many parts)
+        local partCount = 0
+        for _, v in ipairs(model:GetChildren()) do
+            if v:IsA("BasePart") or v:IsA("UnionOperation") or v:IsA("MeshPart") then
+                partCount += 1
+            end
+        end
+        if partCount > 20 then return false end -- standing trees have lots of parts
+        return true
+    end
+
+    -- Must have a valid primary part
     local mp = model.PrimaryPart or model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
     if not mp then return false end
-    if model == workspace then return false end
-    local staticNames = {
-        Map=true,Terrain=true,Camera=true,Baseplate=true,Base=true,Ground=true,
-        Land=true,Island=true,Water=true,Tree=true,Palm=true,Bush=true,Rock=true,
-        Stump=true,Branch=true,Log=true,PalmTree=true,CypressTree=true,SpruceTree=true,
-        ElmTree=true,ChestnutTree=true,CherryTree=true,OakTree=true,BirchTree=true,
-        Fence=true,Road=true,Path=true,River=true,Cliff=true,Hill=true,Bridge=true,
-    }
-    if staticNames[model.Name] then return false end
+
+    -- Must have some indicator of being a player-placed/owned item
     local hasOwner = model:FindFirstChild("Owner") ~= nil
-    if not hasOwner then
-        local hasItemName = model:FindFirstChild("ItemName") ~= nil
-        if not hasItemName then return false end
-    end
-    return true
+    local hasItemName = model:FindFirstChild("ItemName") ~= nil
+    local hasPurchased = model:FindFirstChild("PurchasedBoxItemName") ~= nil
+    local hasDraggable = model:FindFirstChild("DraggableItem") ~= nil
+
+    return hasOwner or hasItemName or hasPurchased or hasDraggable
 end
 
 local function highlightModel(model)
@@ -992,16 +1026,24 @@ createItemButton("Teleport Selected Items", function()
             local char = player.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
             if not hrp then done = done + 1; continue end
+
+            -- Move character to item first
             hrp.CFrame = mainPart.CFrame * CFrame.new(0, 4, 2)
             task.wait(0.12)
+
             local dragger = game.ReplicatedStorage:FindFirstChild("Interaction")
                 and game.ReplicatedStorage.Interaction:FindFirstChild("ClientIsDragging")
             if dragger then dragger:FireServer(model) end
             task.wait(0.08)
+
+            -- Teleport item to destination
             if mainPart and mainPart.Parent then mainPart.CFrame = tpCircle.CFrame end
             task.wait(0.08)
+
+            -- Fire dragger again at destination to register ownership
             if dragger then dragger:FireServer(model) end
             task.wait(0.22)
+
             local hl = selectedItems[model]
             if hl and hl.Parent then hl:Destroy() end
             selectedItems[model] = nil
@@ -1284,7 +1326,6 @@ end)
 local flySpeed = 100
 createPSlider("Fly Speed", 100, 500, 100, function(val) flySpeed = val end)
 
--- Fly key button
 local flyKeyFrame = Instance.new("Frame", playerPage)
 flyKeyFrame.Size = UDim2.new(1,-12,0,32); flyKeyFrame.BackgroundColor3 = Color3.fromRGB(24,24,30)
 Instance.new("UICorner", flyKeyFrame).CornerRadius = UDim.new(0,6)
@@ -1309,7 +1350,6 @@ flyKeyBtn.MouseButton1Click:Connect(function()
     flyKeyBtn.BackgroundColor3 = Color3.fromRGB(60,100,60)
 end)
 
--- Fly hint label
 local flyHint = Instance.new("TextLabel", playerPage)
 flyHint.Size = UDim2.new(1,-12,0,22)
 flyHint.BackgroundColor3 = Color3.fromRGB(18,18,24)
@@ -1431,7 +1471,7 @@ table.insert(cleanupTasks, function()
 end)
 
 -- ════════════════════════════════════════════════════
--- SHARED GLOBALS — exported for Vanilla2 and Vanilla3
+-- SHARED GLOBALS
 -- ════════════════════════════════════════════════════
 _G.VH = {
     TweenService     = TweenService,
@@ -1460,6 +1500,7 @@ _G.VH = {
     currentToggleKey = currentToggleKey,
     waitingForKeyGUI = waitingForKeyGUI,
     keybindButtonGUI = nil,
+    isMoveableItem   = isMoveableItem,  -- export for use in Vanilla4
 }
 
 _G.VanillaHubCleanup = onExit
