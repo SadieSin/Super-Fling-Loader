@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════
--- VANILLA3 — AutoBuy Tab + Settings Tab + Search Tab + Input Handler
+-- VANILLA3 — AutoBuy Tab + Settings Tab + Search Tab + Input Handler + Wood Tab
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
 
@@ -100,6 +100,10 @@ local function updateSearchResults(query)
         {"Clear Selection", "ItemTab"}, {"Set Destination", "ItemTab"},
         {"GUI Keybind", "SettingsTab"},
         {"Home", "HomeTab"}, {"Ping", "HomeTab"}, {"Rejoin", "HomeTab"},
+        -- Wood tab entries
+        {"Click Sell", "WoodTab"}, {"Group Select", "WoodTab"},
+        {"Sell Selected Logs", "WoodTab"}, {"Sell Wood", "WoodTab"},
+        {"Clear Wood Selection", "WoodTab"},
     }
 
     local seen = {}
@@ -146,6 +150,449 @@ searchInput:GetPropertyChangedSignal("Text"):Connect(function() updateSearchResu
 task.delay(0.1, function() updateSearchResults("") end)
 
 -- ════════════════════════════════════════════════════
+-- WOOD TAB
+-- ════════════════════════════════════════════════════
+
+-- Sell destination: Wood Dropoff conveyor entry point
+local SELL_POS = Vector3.new(315.14, -0.40, 86.32)
+
+-- All obtainable wood TreeClass values (from LT2 wiki)
+-- Logs in LT2 carry a StringValue child named "TreeClass".
+-- Gift items carry a "DraggableItem" child — used to exclude them.
+local WOOD_TREE_CLASSES = {
+    "Generic", "Elm", "Cherry", "Birch",
+    "Oak", "Palm",
+    "Fir", "SnowGlow",
+    "Lava",
+    "Cavecrawler", "Sinister",
+    "Walnut", "Koa", "Spook", "Phantom",
+    "GreenLog", "Gold", "Pink",
+}
+local WOOD_CLASS_SET = {}
+for _, v in ipairs(WOOD_TREE_CLASSES) do
+    WOOD_CLASS_SET[v:lower()] = true
+end
+
+-- Is this model a valid, sellable log?
+local function isWoodLog(model)
+    if not model or not model:IsA("Model") then return false end
+    local tc = model:FindFirstChild("TreeClass")
+    if not tc then return false end
+    -- Block gift items (they carry DraggableItem)
+    if model:FindFirstChild("DraggableItem") then return false end
+    -- Must have a physical part
+    if not (model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")) then return false end
+    return true
+end
+
+-- Wood tab state
+local clickSellEnabled   = false
+local groupSelectEnabled = false
+local woodSelected       = {}
+local isSellRunning      = false
+
+local woodPage = pages["WoodTab"]
+
+-- ── UI helpers ────────────────────────────────────────────────────────────────
+
+local function createWSectionLabel(text)
+    local lbl = Instance.new("TextLabel", woodPage)
+    lbl.Size = UDim2.new(1,-12,0,22)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 11
+    lbl.TextColor3 = Color3.fromRGB(120,120,150)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = string.upper(text)
+    Instance.new("UIPadding", lbl).PaddingLeft = UDim.new(0, 4)
+end
+
+local function createWSep()
+    local sep = Instance.new("Frame", woodPage)
+    sep.Size = UDim2.new(1,-12,0,1)
+    sep.BackgroundColor3 = Color3.fromRGB(40,40,55)
+    sep.BorderSizePixel = 0
+end
+
+local function createWToggle(text, defaultState, callback)
+    local frame = Instance.new("Frame", woodPage)
+    frame.Size = UDim2.new(1,-12,0,32)
+    frame.BackgroundColor3 = Color3.fromRGB(24,24,30)
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+
+    local lbl = Instance.new("TextLabel", frame)
+    lbl.Size = UDim2.new(1,-50,1,0); lbl.Position = UDim2.new(0,10,0,0)
+    lbl.BackgroundTransparency = 1; lbl.Text = text
+    lbl.Font = Enum.Font.GothamSemibold; lbl.TextSize = 13
+    lbl.TextColor3 = THEME_TEXT; lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local tb = Instance.new("TextButton", frame)
+    tb.Size = UDim2.new(0,34,0,18); tb.Position = UDim2.new(1,-44,0.5,-9)
+    tb.BackgroundColor3 = defaultState and Color3.fromRGB(60,180,60) or BTN_COLOR
+    tb.Text = ""; Instance.new("UICorner", tb).CornerRadius = UDim.new(1,0)
+
+    local circle = Instance.new("Frame", tb)
+    circle.Size = UDim2.new(0,14,0,14)
+    circle.Position = UDim2.new(0, defaultState and 18 or 2, 0.5, -7)
+    circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    Instance.new("UICorner", circle).CornerRadius = UDim.new(1,0)
+
+    local toggled = defaultState
+    if callback then callback(toggled) end
+
+    tb.MouseButton1Click:Connect(function()
+        toggled = not toggled
+        TweenService:Create(tb, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
+            BackgroundColor3 = toggled and Color3.fromRGB(60,180,60) or BTN_COLOR
+        }):Play()
+        TweenService:Create(circle, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
+            Position = UDim2.new(0, toggled and 18 or 2, 0.5, -7)
+        }):Play()
+        if callback then callback(toggled) end
+    end)
+    return frame
+end
+
+local function createWButton(text, color, callback)
+    color = color or BTN_COLOR
+    local btn = Instance.new("TextButton", woodPage)
+    btn.Size = UDim2.new(1,-12,0,32)
+    btn.BackgroundColor3 = color
+    btn.Text = text; btn.Font = Enum.Font.GothamSemibold; btn.TextSize = 13
+    btn.TextColor3 = THEME_TEXT; btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    local hov = Color3.fromRGB(
+        math.min(color.R*255+20,255)/255,
+        math.min(color.G*255+8, 255)/255,
+        math.min(color.B*255+20,255)/255
+    )
+    btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3=hov}):Play() end)
+    btn.MouseLeave:Connect(function() TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3=color}):Play() end)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+-- ── Progress bar ──────────────────────────────────────────────────────────────
+local sellProgressContainer, sellProgressFill, sellProgressLabel
+
+do
+    local pbWrapper = Instance.new("Frame", woodPage)
+    pbWrapper.Size = UDim2.new(1,-12,0,44)
+    pbWrapper.BackgroundColor3 = Color3.fromRGB(18,18,24)
+    pbWrapper.BorderSizePixel = 0
+    pbWrapper.Visible = false
+    Instance.new("UICorner", pbWrapper).CornerRadius = UDim.new(0,8)
+    local pbStroke = Instance.new("UIStroke", pbWrapper)
+    pbStroke.Color = Color3.fromRGB(60,60,80); pbStroke.Thickness = 1; pbStroke.Transparency = 0.5
+
+    local pbLabel = Instance.new("TextLabel", pbWrapper)
+    pbLabel.Size = UDim2.new(1,-12,0,16); pbLabel.Position = UDim2.new(0,6,0,4)
+    pbLabel.BackgroundTransparency = 1; pbLabel.Font = Enum.Font.GothamSemibold; pbLabel.TextSize = 11
+    pbLabel.TextColor3 = THEME_TEXT; pbLabel.TextXAlignment = Enum.TextXAlignment.Left
+    pbLabel.Text = "Selling..."
+
+    local pbTrack = Instance.new("Frame", pbWrapper)
+    pbTrack.Size = UDim2.new(1,-12,0,12); pbTrack.Position = UDim2.new(0,6,0,24)
+    pbTrack.BackgroundColor3 = Color3.fromRGB(30,30,40); pbTrack.BorderSizePixel = 0
+    Instance.new("UICorner", pbTrack).CornerRadius = UDim.new(1,0)
+
+    local pbFill = Instance.new("Frame", pbTrack)
+    pbFill.Size = UDim2.new(0,0,1,0)
+    pbFill.BackgroundColor3 = Color3.fromRGB(80,200,120)
+    pbFill.BorderSizePixel = 0
+    Instance.new("UICorner", pbFill).CornerRadius = UDim.new(1,0)
+
+    sellProgressContainer = pbWrapper
+    sellProgressFill      = pbFill
+    sellProgressLabel     = pbLabel
+end
+
+-- ── Selection helpers ─────────────────────────────────────────────────────────
+
+local function highlightWood(model)
+    if woodSelected[model] then return end
+    local hl = Instance.new("SelectionBox")
+    hl.Color3 = Color3.fromRGB(0,220,80)
+    hl.LineThickness = 0.06
+    hl.SurfaceTransparency = 0.7
+    hl.SurfaceColor3 = Color3.fromRGB(0,220,80)
+    hl.Adornee = model
+    hl.Parent = model
+    woodSelected[model] = hl
+end
+
+local function unhighlightWood(model)
+    if woodSelected[model] then
+        woodSelected[model]:Destroy()
+        woodSelected[model] = nil
+    end
+end
+
+local function unhighlightAllWood()
+    for model, hl in pairs(woodSelected) do
+        if hl and hl.Parent then hl:Destroy() end
+    end
+    woodSelected = {}
+end
+
+-- ── Sell a single log model ───────────────────────────────────────────────────
+
+local function sellLog(model)
+    if not (model and model.Parent) then return end
+    local RS   = game:GetService("ReplicatedStorage")
+    local char = player.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local mainPart = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+    if not mainPart then return end
+
+    local targetCF = CFrame.new(SELL_POS)
+
+    -- Walk close if needed
+    if (hrp.Position - mainPart.Position).Magnitude > 25 then
+        hrp.CFrame = mainPart.CFrame * CFrame.new(0, 3, 4)
+        task.wait(0.1)
+    end
+
+    -- Claim net ownership (same pattern as Vanilla2 wood section)
+    local dragger = RS:FindFirstChild("Interaction")
+        and RS.Interaction:FindFirstChild("ClientIsDragging")
+    if dragger then
+        for _ = 1, 50 do
+            task.wait(0.05)
+            dragger:FireServer(model)
+        end
+    end
+
+    -- Slam to sell point
+    for _ = 1, 200 do
+        mainPart.CFrame = targetCF
+    end
+
+    task.wait(0.5)
+end
+
+-- ── Group select: all matching-class logs in workspace ────────────────────────
+
+local function groupSelectLogs(targetModel)
+    if not isWoodLog(targetModel) then return end
+    local tc = targetModel:FindFirstChild("TreeClass")
+    if not tc then return end
+    local targetClass = tc.Value:lower()
+
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and isWoodLog(obj) then
+            local otc = obj:FindFirstChild("TreeClass")
+            if otc and otc.Value:lower() == targetClass then
+                highlightWood(obj)
+            end
+        end
+    end
+end
+
+-- ── Sell Selected: loops until all logs are gone ──────────────────────────────
+
+local function sellSelected()
+    if isSellRunning then return end
+
+    local queue = {}
+    for model in pairs(woodSelected) do
+        if model and model.Parent then
+            table.insert(queue, model)
+        end
+    end
+    if #queue == 0 then return end
+
+    isSellRunning = true
+    local total = #queue
+    local done  = 0
+
+    sellProgressContainer.Visible = true
+    sellProgressFill.Size = UDim2.new(0,0,1,0)
+    sellProgressLabel.Text = "Selling... 0 / " .. total
+
+    task.spawn(function()
+        local pass = 1
+        while isSellRunning do
+            local remaining = {}
+            for _, model in ipairs(queue) do
+                if model and model.Parent then
+                    table.insert(remaining, model)
+                end
+            end
+            if #remaining == 0 then break end
+
+            sellProgressLabel.Text = "Pass " .. pass .. " — selling " .. #remaining .. " log(s)..."
+
+            for _, model in ipairs(remaining) do
+                if not isSellRunning then break end
+                sellLog(model)
+                unhighlightWood(model)
+                done = done + 1
+                local pct = math.clamp(done / math.max(total,1), 0, 1)
+                TweenService:Create(sellProgressFill, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {
+                    Size = UDim2.new(pct,0,1,0)
+                }):Play()
+                sellProgressLabel.Text = "Selling... " .. done .. " / " .. total
+            end
+
+            task.wait(1.5)
+            pass = pass + 1
+
+            -- Check if anything survived (network lag / bounced back)
+            local stillHere = 0
+            for _, model in ipairs(queue) do
+                if model and model.Parent then
+                    local mp = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+                    if mp and (mp.Position - SELL_POS).Magnitude > 10 then
+                        stillHere = stillHere + 1
+                    end
+                end
+            end
+            if stillHere == 0 then break end
+        end
+
+        isSellRunning = false
+        unhighlightAllWood()
+
+        TweenService:Create(sellProgressFill, TweenInfo.new(0.2), {
+            Size = UDim2.new(1,0,1,0),
+            BackgroundColor3 = Color3.fromRGB(60,200,110)
+        }):Play()
+        sellProgressLabel.Text = "Done! All logs sent to dropoff."
+
+        task.delay(2.5, function()
+            if sellProgressContainer then
+                TweenService:Create(sellProgressContainer, TweenInfo.new(0.4), {BackgroundTransparency=1}):Play()
+                TweenService:Create(sellProgressFill, TweenInfo.new(0.4), {BackgroundTransparency=1}):Play()
+                TweenService:Create(sellProgressLabel, TweenInfo.new(0.4), {TextTransparency=1}):Play()
+                task.delay(0.45, function()
+                    if sellProgressContainer then
+                        sellProgressContainer.Visible = false
+                        sellProgressContainer.BackgroundTransparency = 0
+                        sellProgressFill.BackgroundTransparency = 0
+                        sellProgressFill.BackgroundColor3 = Color3.fromRGB(80,200,120)
+                        sellProgressFill.Size = UDim2.new(0,0,1,0)
+                        sellProgressLabel.TextTransparency = 0
+                    end
+                end)
+            end
+        end)
+    end)
+end
+
+-- ── Mouse handler ─────────────────────────────────────────────────────────────
+
+local woodMouse    = player:GetMouse()
+local woodMouseConn = nil
+
+local function connectWoodMouse()
+    if woodMouseConn then return end
+    woodMouseConn = woodMouse.Button1Down:Connect(function()
+        local target = woodMouse.Target
+        if not target then return end
+        local model = target:FindFirstAncestorOfClass("Model")
+        if not model then return end
+
+        if clickSellEnabled then
+            if isWoodLog(model) then
+                task.spawn(function() sellLog(model) end)
+            end
+        elseif groupSelectEnabled then
+            if isWoodLog(model) then
+                groupSelectLogs(model)
+            end
+        else
+            -- Single-toggle selection when neither mode is active
+            if isWoodLog(model) then
+                if woodSelected[model] then unhighlightWood(model)
+                else highlightWood(model) end
+            end
+        end
+    end)
+end
+
+local function disconnectWoodMouse()
+    if woodMouseConn then
+        woodMouseConn:Disconnect()
+        woodMouseConn = nil
+    end
+end
+
+table.insert(cleanupTasks, function()
+    isSellRunning = false
+    disconnectWoodMouse()
+    unhighlightAllWood()
+end)
+
+-- ── Build Wood Tab UI ─────────────────────────────────────────────────────────
+
+createWSectionLabel("Sell Features")
+
+createWToggle("Click Sell", false, function(val)
+    clickSellEnabled = val
+    if val then
+        groupSelectEnabled = false
+        connectWoodMouse()
+    else
+        if not groupSelectEnabled then disconnectWoodMouse() end
+    end
+end)
+
+createWSep()
+createWSectionLabel("Log Selection")
+
+createWToggle("Group Select (Logs Only)", false, function(val)
+    groupSelectEnabled = val
+    if val then
+        clickSellEnabled = false
+        connectWoodMouse()
+    else
+        if not clickSellEnabled then disconnectWoodMouse() end
+    end
+end)
+
+local infoLbl = Instance.new("TextLabel", woodPage)
+infoLbl.Size = UDim2.new(1,-12,0,30)
+infoLbl.BackgroundColor3 = Color3.fromRGB(18,18,24)
+infoLbl.BorderSizePixel = 0
+infoLbl.Font = Enum.Font.Gotham; infoLbl.TextSize = 11
+infoLbl.TextColor3 = Color3.fromRGB(120,120,150)
+infoLbl.TextWrapped = true; infoLbl.TextXAlignment = Enum.TextXAlignment.Left
+infoLbl.Text = "  Click a log to select all matching logs. Gift items are excluded."
+Instance.new("UICorner", infoLbl).CornerRadius = UDim.new(0,6)
+Instance.new("UIPadding", infoLbl).PaddingLeft = UDim.new(0,6)
+
+createWSep()
+createWSectionLabel("Actions")
+
+createWButton("Sell Selected Logs", Color3.fromRGB(35,90,45), function()
+    if isSellRunning then return end
+    sellSelected()
+end)
+
+createWButton("Cancel Sell", BTN_COLOR, function()
+    isSellRunning = false
+    if sellProgressContainer and sellProgressContainer.Visible then
+        sellProgressLabel.Text = "Cancelled."
+        task.delay(1.5, function()
+            TweenService:Create(sellProgressContainer, TweenInfo.new(0.4), {BackgroundTransparency=1}):Play()
+            task.delay(0.45, function()
+                if sellProgressContainer then
+                    sellProgressContainer.Visible = false
+                    sellProgressContainer.BackgroundTransparency = 0
+                end
+            end)
+        end)
+    end
+end)
+
+createWButton("Clear Selection", BTN_COLOR, function()
+    unhighlightAllWood()
+end)
+
+-- ════════════════════════════════════════════════════
 -- UNIFIED INPUT HANDLER
 -- ════════════════════════════════════════════════════
 local inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -181,11 +628,7 @@ local inputConn = UserInputService.InputBegan:Connect(function(input, gameProces
     end
 
     if input.KeyCode == getCurrentFlyKey() and getFlyToggleEnabled() then
-        if getIsFlyEnabled() then
-            stopFly()
-        else
-            startFly()
-        end
+        if getIsFlyEnabled() then stopFly() else startFly() end
     end
 end)
 
