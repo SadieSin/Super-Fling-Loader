@@ -89,7 +89,8 @@ end)
 
 createWSectionLabel("Environment")
 
-createWorldToggle("Always Day", false, function(v)
+-- ── ALWAYS DAY — default ON ───────────────────────────────────────────────────
+createWorldToggle("Always Day", true, function(v)
     alwaysDayActive = v
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
     if v then
@@ -910,29 +911,83 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
+        -- ── WOOD DUPE — 0.6s between logs, noclip-style Heartbeat approach ──────────
         if getWood() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("TreeClass") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
             end)
             if total > 0 then
                 progWood.Visible=true; setProgWood(0,total)
-                setDupeStatus("Sending wood...", true); local done=0
+                setDupeStatus("Sending wood...", true)
+                local done = 0
+                local RS2  = game:GetService("ReplicatedStorage")
+                local dragger2 = RS2:FindFirstChild("Interaction") and RS2.Interaction:FindFirstChild("ClientIsDragging")
+
                 pcall(function()
                     for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
                         if not _G.VH.butter.running then break end
-                        if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("TreeClass") then
-                            local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
-                            if not part then continue end
-                            local PCF  = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame) or v.Parent:FindFirstChildOfClass("Part").CFrame
-                            local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-                            if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                                Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
-                            end
-                            for i=1,50 do task.wait(0.05); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
-                            for i=1,200 do part.CFrame = CFrame.new(nPos) * PCF.Rotation end
-                            task.wait(0.5)
-                            done+=1; setProgWood(done, total)
+                        if not (v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("TreeClass")) then continue end
+
+                        local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
+                        if not part then continue end
+
+                        local PCF  = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame) or v.Parent:FindFirstChildOfClass("Part").CFrame
+                        local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                        local targetCF = CFrame.new(nPos) * PCF.Rotation
+                        local model = v.Parent
+
+                        -- Step 1: teleport character right next to the log
+                        if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 20 then
+                            Char.HumanoidRootPart.CFrame = part.CFrame * CFrame.new(0, 3, 3)
+                            task.wait(0.08)
                         end
+
+                        -- Step 2: Heartbeat loop — fire drag + slam CFrame every frame
+                        --         until confirmed moved OR timeout (2s)
+                        local startT = tick()
+                        local TIMEOUT = 2.0
+                        local CONFIRM = 5  -- studs
+
+                        local conn
+                        local done2 = false
+                        conn = RunService.Heartbeat:Connect(function()
+                            if not (part and part.Parent) then
+                                conn:Disconnect(); done2 = true; return
+                            end
+                            -- Keep char close
+                            if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 20 then
+                                Char.HumanoidRootPart.CFrame = part.CFrame * CFrame.new(0, 3, 3)
+                            end
+                            -- Disable collisions every frame so char doesn't get stuck on logs
+                            pcall(function()
+                                for _, p in ipairs(Char:GetDescendants()) do
+                                    if p:IsA("BasePart") then p.CanCollide = false end
+                                end
+                            end)
+                            if dragger2 then pcall(function() dragger2:FireServer(model) end) end
+                            pcall(function() part.CFrame = targetCF end)
+                            local dist = (part.Position - targetCF.Position).Magnitude
+                            if dist < CONFIRM or (tick() - startT) >= TIMEOUT then
+                                conn:Disconnect(); done2 = true
+                            end
+                        end)
+
+                        -- Wait for this log's Heartbeat to confirm, max 2.5s safety
+                        local waitStart = tick()
+                        while not done2 and (tick() - waitStart) < 2.5 do
+                            task.wait()
+                        end
+                        if conn then pcall(function() conn:Disconnect() end) end
+
+                        -- Restore collisions after each log
+                        pcall(function()
+                            for _, p in ipairs(Char:GetDescendants()) do
+                                if p:IsA("BasePart") then p.CanCollide = true end
+                            end
+                        end)
+
+                        done += 1; setProgWood(done, total)
+                        task.wait(0.6)   -- 0.6s between logs
                     end
                 end)
                 setProgWood(total, total)
