@@ -40,8 +40,14 @@ local previewPart      = nil
 local previewFollowing = false
 local previewPlaced    = false
 local isSorting        = false
+local isStopped        = false   -- paused mid-sort (Stop button)
 local sortThread       = nil
 local currentItemConn  = nil
+local sortSlots        = nil     -- full slot list, preserved for resume
+local sortIndex        = 0       -- next slot index to process (1-based)
+local sortTotal        = 0
+local sortDone         = 0
+local overflowBlocked  = false   -- true when grid is too small → block Start
 
 local gridCols   = 3   -- X  (items per row, left→right)
 local gridLayers = 1   -- Y  (vertical layers, bottom→top)
@@ -395,7 +401,7 @@ local function goToItem(model)
 end
 
 -- Move one item to targetCF via per-frame Heartbeat.
--- Calls onDone(bool) when confirmed or timed out. Returns the connection.
+-- Calls onDone() when confirmed or timed out. Returns the connection.
 local function moveItemTo(model, targetCF, onDone)
     if not (model and model.Parent) then
         if onDone then task.spawn(onDone, false) end
@@ -417,37 +423,54 @@ local function moveItemTo(model, targetCF, onDone)
     local startTime = tick()
     local conn
 
-    -- Teleport character next to the item immediately
-    goToItem(model)
+    -- Safe hover offset: always stay 5 studs above the TARGET position
+    -- (not item position) so we don't clip through tall stacks
+    local hoverCF = CFrame.new(targetCF.Position + Vector3.new(0, 5, 4))
+
+    local function stayNear()
+        if hrp and hrp.Parent then
+            hrp.CFrame = hoverCF
+        end
+    end
+
+    -- Teleport to hover point immediately
+    stayNear()
 
     conn = RunService.Heartbeat:Connect(function()
-        -- Item removed
         if not (mp and mp.Parent) then
             conn:Disconnect()
             if onDone then task.spawn(onDone, true) end
             return
         end
 
-        -- Stay within drag range every frame
-        if (hrp.Position - mp.Position).Magnitude > 22 then
-            hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
+        -- Stay within drag range every frame, using the hover point
+        if (hrp.Position - targetCF.Position).Magnitude > 18 then
+            stayNear()
         end
 
-        -- Fire ClientIsDragging + write CFrame on the same frame (essential for LT2)
+        -- Fire drag + force CFrame every frame
         if dragger then pcall(function() dragger:FireServer(model) end) end
-        pcall(function() mp.CFrame = targetCF end)
+        pcall(function()
+            mp.CFrame        = targetCF
+            mp.AssemblyLinearVelocity  = Vector3.zero
+            mp.AssemblyAngularVelocity = Vector3.zero
+        end)
 
         local arrived  = (mp.Position - targetCF.Position).Magnitude < CONFIRM_DIST
         local timedOut = (tick() - startTime) >= SORT_TIMEOUT
 
         if arrived or timedOut then
             conn:Disconnect()
-            -- Reinforce for a few more frames so the server locks it in
+            -- Reinforce for more frames to fight physics/network
             task.spawn(function()
-                for _ = 1, 25 do
+                for _ = 1, 40 do
                     pcall(function()
-                        if dragger     then dragger:FireServer(model) end
-                        if mp and mp.Parent then mp.CFrame = targetCF end
+                        if dragger then dragger:FireServer(model) end
+                        if mp and mp.Parent then
+                            mp.CFrame        = targetCF
+                            mp.AssemblyLinearVelocity  = Vector3.zero
+                            mp.AssemblyAngularVelocity = Vector3.zero
+                        end
                     end)
                     task.wait()
                 end
@@ -710,6 +733,50 @@ local function hideProgress(delay)
 end
 
 -- ════════════════════════════════════════════════════
+-- OVERFLOW POPUP
+-- ════════════════════════════════════════════════════
+local overflowPopup, overflowLabel
+do
+    local pop = Instance.new("Frame", sorterPage)
+    pop.Size = UDim2.new(1,-12,0,56)
+    pop.BackgroundColor3 = Color3.fromRGB(80,20,20)
+    pop.BorderSizePixel = 0
+    pop.Visible = false
+    Instance.new("UICorner", pop).CornerRadius = UDim.new(0,8)
+    local stroke = Instance.new("UIStroke", pop)
+    stroke.Color = Color3.fromRGB(255,80,80); stroke.Thickness = 1.5; stroke.Transparency = 0.3
+
+    local lbl = Instance.new("TextLabel", pop)
+    lbl.Size = UDim2.new(1,-16,1,0); lbl.Position = UDim2.new(0,8,0,0)
+    lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold; lbl.TextSize = 12
+    lbl.TextColor3 = Color3.fromRGB(255,140,140)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextWrapped = true
+    lbl.Text = ""
+    overflowPopup = pop
+    overflowLabel = lbl
+end
+
+local function showOverflow(msg)
+    overflowBlocked = true
+    overflowLabel.Text = "⚠  " .. msg
+    overflowPopup.Visible = true
+end
+
+local function hideOverflow()
+    overflowBlocked = false
+    overflowPopup.Visible = false
+end
+
+-- Returns how many items fit in the current grid settings
+local function computeGridCapacity()
+    local cols   = math.max(1, gridCols)
+    local layers = math.max(1, gridLayers)
+    local rows   = math.max(0, gridRows)
+    if rows == 0 then return math.huge end   -- auto = unlimited
+    return cols * rows * layers
+end
+
+-- ════════════════════════════════════════════════════
 -- LASSO OVERLAY
 -- ════════════════════════════════════════════════════
 local coreGui    = game:GetService("CoreGui")
@@ -748,14 +815,18 @@ local function selectLasso()
 end
 
 -- ════════════════════════════════════════════════════
--- START SORT BUTTON  (forward ref so refreshStatus can style it)
+-- START / STOP BUTTON  (forward refs so refreshStatus can style them)
 -- ════════════════════════════════════════════════════
-local startBtn
+local startBtn, stopBtn
 
 local function refreshStatus()
     local n = countSelected()
     if isSorting then
         setStatus("⏳  Sorting in progress...", Color3.fromRGB(140,220,255))
+    elseif isStopped then
+        setStatus("⏸  Paused — hit Start to resume from where it stopped.", Color3.fromRGB(255,210,80))
+    elseif overflowBlocked then
+        setStatus("❌  Too many items! Increase X, Y, or Z then regenerate.", Color3.fromRGB(255,100,100))
     elseif n == 0 then
         setStatus("👆  Select items with Click, Group, or Lasso.")
     elseif previewFollowing then
@@ -763,15 +834,20 @@ local function refreshStatus()
     elseif previewPlaced then
         setStatus("✅  " .. n .. " item(s) ready. Hit Start Sorting!", Color3.fromRGB(100,220,120))
     elseif previewPart then
-        setStatus("📦  Preview exists. Left-click anywhere to place it.", Color3.fromRGB(200,200,100))
+        setStatus("📦  Preview exists. Right-click anywhere to place it.", Color3.fromRGB(200,200,100))
     else
         setStatus("📦  " .. n .. " selected. Click Generate Preview.", Color3.fromRGB(200,200,120))
     end
 
     if startBtn then
-        local canSort = n > 0 and previewPlaced and not isSorting
+        local canSort = (n > 0 or isStopped) and (previewPlaced or isStopped) and not isSorting and not overflowBlocked
         startBtn.BackgroundColor3 = canSort and Color3.fromRGB(35,100,50) or Color3.fromRGB(28,28,38)
         startBtn.TextColor3       = canSort and THEME_TEXT or Color3.fromRGB(72,72,82)
+        startBtn.Text = isStopped and "▶  Resume Sorting" or "▶  Start Sorting"
+    end
+    if stopBtn then
+        stopBtn.BackgroundColor3 = isSorting and Color3.fromRGB(100,60,20) or Color3.fromRGB(28,28,38)
+        stopBtn.TextColor3       = isSorting and Color3.fromRGB(255,190,80) or Color3.fromRGB(72,72,82)
     end
 end
 
@@ -808,6 +884,7 @@ mkSep(); mkLabel("Sort Grid  —  X  Width · Y  Height · Z  Depth")
 
 mkIntSlider("Width  (items per row)", "X", 1, 12, 3, function(v)
     gridCols = v
+    hideOverflow()
     if previewFollowing and previewPart and previewPart.Parent then
         local sX, sY, sZ = computePreviewSize()
         previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
@@ -816,6 +893,7 @@ end)
 
 mkIntSlider("Height  (vertical layers)", "Y", 1, 8, 1, function(v)
     gridLayers = v
+    hideOverflow()
     if previewFollowing and previewPart and previewPart.Parent then
         local sX, sY, sZ = computePreviewSize()
         previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
@@ -824,6 +902,7 @@ end)
 
 mkIntSlider("Depth  (rows per layer, 0=auto)", "Z", 0, 12, 0, function(v)
     gridRows = v
+    hideOverflow()
     if previewFollowing and previewPart and previewPart.Parent then
         local sX, sY, sZ = computePreviewSize()
         previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
@@ -845,6 +924,18 @@ mkBtn("Generate Preview  (follows mouse)", Color3.fromRGB(35,55,100), function()
     if countSelected() == 0 then
         setStatus("⚠  No items selected!"); return
     end
+    -- Check if all items fit in the grid
+    local n = countSelected()
+    local cap = computeGridCapacity()
+    if n > cap then
+        showOverflow(
+            n .. " items selected but grid only holds " .. cap ..
+            " (X=" .. gridCols .. " × Z=" .. gridRows .. " × Y=" .. gridLayers ..
+            "). Increase X, Y, or Z sliders.")
+        refreshStatus()
+        return
+    end
+    hideOverflow()
     local sX, sY, sZ = computePreviewSize()
     buildPreviewBox(sX, sY, sZ)
     startPreviewFollow()
@@ -867,6 +958,80 @@ Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
 
 startBtn.MouseButton1Click:Connect(function()
     if isSorting then return end
+    if overflowBlocked then
+        setStatus("❌  Fix the grid size first!"); return
+    end
+
+    -- ── RESUME after Stop ──────────────────────────────────────────
+    if isStopped and sortSlots then
+        isStopped = false
+        isSorting = true
+        pbContainer.Visible = true
+        pbFill.BackgroundColor3 = Color3.fromRGB(255,175,55)
+        pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
+        refreshStatus()
+
+        sortThread = task.spawn(function()
+            for i = sortIndex, sortTotal do
+                if not isSorting then break end
+                local slot = sortSlots[i]
+                if not (slot.model and slot.model.Parent) then
+                    sortDone  = sortDone + 1
+                    sortIndex = i + 1
+                    continue
+                end
+
+                pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
+
+                local finished = false
+                currentItemConn = moveItemTo(slot.model, slot.cf, function()
+                    finished = true
+                end)
+                while not finished and isSorting do task.wait() end
+                if currentItemConn then
+                    pcall(function() currentItemConn:Disconnect() end)
+                    currentItemConn = nil
+                end
+                if not isSorting then
+                    sortIndex = i   -- remember where we paused
+                    break
+                end
+
+                unhighlightItem(slot.model)
+                sortDone  = sortDone + 1
+                sortIndex = i + 1
+
+                local pct = math.clamp(sortDone / math.max(sortTotal,1), 0, 1)
+                TweenService:Create(pbFill, TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+                    { Size = UDim2.new(pct,0,1,0) }):Play()
+                pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
+                task.wait(0.35)
+            end
+
+            local finished = sortDone >= sortTotal
+            isSorting  = false
+            sortThread = nil
+            currentItemConn = nil
+
+            if finished then
+                isStopped  = false
+                sortSlots  = nil
+                TweenService:Create(pbFill, TweenInfo.new(0.25),
+                    { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.fromRGB(90,220,110) }):Play()
+                pbLabel.Text = "✔  Sorting complete!"
+                destroyPreview()
+                unhighlightAll()
+                hideProgress(2.5)
+            else
+                isStopped = true
+                pbLabel.Text = "⏸  Stopped at " .. sortDone .. " / " .. sortTotal
+            end
+            refreshStatus()
+        end)
+        return
+    end
+
+    -- ── FRESH START ────────────────────────────────────────────────
     if not (previewPlaced and previewPart and previewPart.Parent) then
         setStatus("⚠  Generate a preview and place it first!"); return
     end
@@ -880,80 +1045,122 @@ startBtn.MouseButton1Click:Connect(function()
     end
     if #items == 0 then return end
 
-    -- Anchor = bottom-left-front corner of the placed preview box
     local anchorCF = previewPart.CFrame
         * CFrame.new(-previewPart.Size.X/2, -previewPart.Size.Y/2, -previewPart.Size.Z/2)
 
-    local slots = calculateSlots(items, anchorCF, gridCols, gridLayers, gridRows)
-    local total = #slots
-    local done  = 0
+    sortSlots  = calculateSlots(items, anchorCF, gridCols, gridLayers, gridRows)
+    sortTotal  = #sortSlots
+    sortDone   = 0
+    sortIndex  = 1
+    isStopped  = false
+    isSorting  = true
 
-    isSorting = true
     pbContainer.Visible = true
     pbFill.Size = UDim2.new(0,0,1,0)
     pbFill.BackgroundColor3 = Color3.fromRGB(255,175,55)
-    pbLabel.Text = "Sorting... 0 / " .. total
+    pbLabel.Text = "Sorting... 0 / " .. sortTotal
     refreshStatus()
 
     sortThread = task.spawn(function()
-        for _, slot in ipairs(slots) do
-            if not isSorting then break end
+        for i = sortIndex, sortTotal do
+            if not isSorting then
+                sortIndex = i
+                break
+            end
+            local slot = sortSlots[i]
             if not (slot.model and slot.model.Parent) then
-                done = done + 1; continue
+                sortDone  = sortDone + 1
+                sortIndex = i + 1
+                continue
             end
 
-            pbLabel.Text = "Sorting... " .. done .. " / " .. total
+            pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
 
             local finished = false
             currentItemConn = moveItemTo(slot.model, slot.cf, function()
                 finished = true
             end)
-
             while not finished and isSorting do task.wait() end
-
             if currentItemConn then
                 pcall(function() currentItemConn:Disconnect() end)
                 currentItemConn = nil
             end
-            if not isSorting then break end
+            if not isSorting then
+                sortIndex = i
+                break
+            end
 
             unhighlightItem(slot.model)
-            done = done + 1
+            sortDone  = sortDone + 1
+            sortIndex = i + 1
 
-            local pct = math.clamp(done / math.max(total,1), 0, 1)
+            local pct = math.clamp(sortDone / math.max(sortTotal,1), 0, 1)
             TweenService:Create(pbFill, TweenInfo.new(0.18, Enum.EasingStyle.Quad),
                 { Size = UDim2.new(pct,0,1,0) }):Play()
-            pbLabel.Text = "Sorting... " .. done .. " / " .. total
-
+            pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
             task.wait(0.35)
         end
 
-        isSorting       = false
-        sortThread      = nil
+        local allDone = sortDone >= sortTotal
+        isSorting  = false
+        sortThread = nil
         currentItemConn = nil
 
-        if done >= total then
+        if allDone then
+            isStopped = false
+            sortSlots = nil
             TweenService:Create(pbFill, TweenInfo.new(0.25),
                 { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.fromRGB(90,220,110) }):Play()
             pbLabel.Text = "✔  Sorting complete!"
             destroyPreview()
             unhighlightAll()
             hideProgress(2.5)
+        else
+            isStopped = true
+            pbLabel.Text = "⏸  Stopped at " .. sortDone .. " / " .. sortTotal
         end
         refreshStatus()
     end)
 end)
 
-mkBtn("Cancel", BTN_COLOR, function()
+-- Stop button — pauses mid-sort, preserves progress for resume
+stopBtn = Instance.new("TextButton", sorterPage)
+stopBtn.Size = UDim2.new(1,-12,0,32)
+stopBtn.BackgroundColor3 = Color3.fromRGB(28,28,38)
+stopBtn.Text = "⏹  Stop"; stopBtn.Font = Enum.Font.GothamBold
+stopBtn.TextSize = 13; stopBtn.TextColor3 = Color3.fromRGB(72,72,82)
+stopBtn.BorderSizePixel = 0
+Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0,6)
+
+stopBtn.MouseButton1Click:Connect(function()
     if not isSorting then return end
+    isSorting = false   -- sortThread will notice, set isStopped=true, and break
+    if currentItemConn then
+        pcall(function() currentItemConn:Disconnect() end)
+        currentItemConn = nil
+    end
+    -- sortThread sets isStopped itself; just update UI immediately
+    pbLabel.Text = "⏸  Stopping..."
+    refreshStatus()
+end)
+
+-- Cancel — stops sorting AND clears preview + selection entirely
+mkBtn("Cancel  (clear all)", Color3.fromRGB(70,20,20), function()
+    -- Stop any active sort
     isSorting = false
+    isStopped = false
+    sortSlots = nil; sortIndex = 0; sortTotal = 0; sortDone = 0
     if currentItemConn then
         pcall(function() currentItemConn:Disconnect() end)
         currentItemConn = nil
     end
     if sortThread then pcall(task.cancel, sortThread); sortThread = nil end
+    -- Clear preview and selection
+    destroyPreview()
+    unhighlightAll()
+    hideOverflow()
     pbLabel.Text = "Cancelled."
-    hideProgress(1.5)
+    hideProgress(1.0)
     refreshStatus()
 end)
 
@@ -1021,6 +1228,8 @@ end)
 -- ════════════════════════════════════════════════════
 table.insert(cleanupTasks, function()
     isSorting = false
+    isStopped = false
+    sortSlots = nil; sortIndex = 0; sortTotal = 0; sortDone = 0
     if followConn      then followConn:Disconnect();      followConn = nil end
     if currentItemConn then currentItemConn:Disconnect(); currentItemConn = nil end
     if sortThread      then pcall(task.cancel, sortThread); sortThread = nil end
