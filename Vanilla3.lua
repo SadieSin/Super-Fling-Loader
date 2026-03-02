@@ -3,6 +3,7 @@
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
 
+-- Guard: if _G.VH is missing, Vanilla1 wasn't executed first (or was already cleaned up)
 if not _G.VH then
     warn("[VanillaHub] Vanilla3: _G.VH not found. Execute Vanilla1 first.")
     return
@@ -20,12 +21,21 @@ local BTN_COLOR        = _G.VH.BTN_COLOR
 local BTN_HOVER        = _G.VH.BTN_HOVER
 local switchTab        = _G.VH.switchTab
 local toggleGUI        = _G.VH.toggleGUI
+local stopFly          = _G.VH.stopFly
+local startFly         = _G.VH.startFly
+local flyKeyBtn        = _G.VH.flyKeyBtn
 local keybindButtonGUI
 
+local function getWaitingForFlyKey() return _G.VH and _G.VH.waitingForFlyKey end
+local function setWaitingForFlyKey(v) if _G.VH then _G.VH.waitingForFlyKey = v end end
 local function getWaitingForKeyGUI() return _G.VH and _G.VH.waitingForKeyGUI end
 local function setWaitingForKeyGUI(v) if _G.VH then _G.VH.waitingForKeyGUI = v end end
+local function getCurrentFlyKey() return _G.VH and _G.VH.currentFlyKey or Enum.KeyCode.Q end
+local function setCurrentFlyKey(v) if _G.VH then _G.VH.currentFlyKey = v end end
 local function getCurrentToggleKey() return _G.VH and _G.VH.currentToggleKey or Enum.KeyCode.LeftAlt end
 local function setCurrentToggleKey(v) if _G.VH then _G.VH.currentToggleKey = v end end
+local function getFlyToggleEnabled() return _G.VH and _G.VH.flyToggleEnabled end
+local function getIsFlyEnabled() return _G.VH and _G.VH.isFlyEnabled end
 
 -- ════════════════════════════════════════════════════
 -- AUTOBUY TAB (kept, content intentionally empty)
@@ -80,8 +90,9 @@ local function updateSearchResults(query)
     local lq = string.lower(query or "")
 
     local functions = {
-        {"Noclip", "PlayerTab"}, {"InfJump", "PlayerTab"},
-        {"Walkspeed", "PlayerTab"}, {"Jump Power", "PlayerTab"},
+        {"Fly", "PlayerTab"}, {"Noclip", "PlayerTab"}, {"InfJump", "PlayerTab"},
+        {"Walkspeed", "PlayerTab"}, {"Jump Power", "PlayerTab"}, {"Fly Speed", "PlayerTab"},
+        {"Fly Key", "PlayerTab"},
         {"Teleport Locations", "TeleportTab"}, {"Quick Teleport", "TeleportTab"},
         {"Spawn", "TeleportTab"}, {"Wood Dropoff", "TeleportTab"}, {"Land Store", "TeleportTab"},
         {"Teleport Selected Items", "ItemTab"}, {"Group Selection", "ItemTab"},
@@ -136,10 +147,12 @@ task.delay(0.1, function() updateSearchResults("") end)
 
 -- ════════════════════════════════════════════════════
 -- UNIFIED INPUT HANDLER
+-- Stored as a connection so it can be fully disconnected on cleanup
 -- ════════════════════════════════════════════════════
 local inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    -- If _G.VH is gone (script was cleaned up), silently stop handling
     if not _G.VH then return end
 
     if getWaitingForKeyGUI() then
@@ -154,12 +167,31 @@ local inputConn = UserInputService.InputBegan:Connect(function(input, gameProces
         return
     end
 
+    if getWaitingForFlyKey() then
+        setWaitingForFlyKey(false)
+        setCurrentFlyKey(input.KeyCode)
+        if flyKeyBtn and flyKeyBtn.Parent then
+            flyKeyBtn.Text = input.KeyCode.Name
+            flyKeyBtn.BackgroundColor3 = BTN_COLOR
+        end
+        return
+    end
+
     if input.KeyCode == getCurrentToggleKey() then
         toggleGUI()
         return
     end
+
+    if input.KeyCode == getCurrentFlyKey() and getFlyToggleEnabled() then
+        if getIsFlyEnabled() then
+            stopFly()
+        else
+            startFly()
+        end
+    end
 end)
 
+-- Disconnect the input handler when the hub is closed/re-executed
 table.insert(cleanupTasks, function()
     if inputConn then inputConn:Disconnect(); inputConn = nil end
 end)
