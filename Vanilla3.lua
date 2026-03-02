@@ -3,7 +3,6 @@
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
 
--- Guard: if _G.VH is missing, Vanilla1 wasn't executed first (or was already cleaned up)
 if not _G.VH then
     warn("[VanillaHub] Vanilla3: _G.VH not found. Execute Vanilla1 first.")
     return
@@ -38,7 +37,7 @@ local function getFlyToggleEnabled() return _G.VH and _G.VH.flyToggleEnabled end
 local function getIsFlyEnabled() return _G.VH and _G.VH.isFlyEnabled end
 
 -- ════════════════════════════════════════════════════
--- AUTOBUY TAB (kept, content intentionally empty)
+-- AUTOBUY TAB
 -- ════════════════════════════════════════════════════
 local autoBuyPage = pages["AutoBuyTab"]
 
@@ -53,13 +52,13 @@ kbFrame.BorderSizePixel = 0; Instance.new("UICorner", kbFrame).CornerRadius = UD
 local kbTitle = Instance.new("TextLabel", kbFrame)
 kbTitle.Size = UDim2.new(1,-20,0,28); kbTitle.Position = UDim2.new(0,10,0,8)
 kbTitle.BackgroundTransparency = 1; kbTitle.Font = Enum.Font.GothamBold; kbTitle.TextSize = 15
-kbTitle.TextColor3 = Color3.fromRGB(220,220,220); kbTitle.TextXAlignment = Enum.TextXAlignment.Left
+kbTitle.TextColor3 = Color3.fromRGB(253, 200, 255); kbTitle.TextXAlignment = Enum.TextXAlignment.Left
 kbTitle.Text = "GUI Toggle Keybind"
 keybindButtonGUI = Instance.new("TextButton", kbFrame)
 keybindButtonGUI.Size = UDim2.new(0,200,0,28); keybindButtonGUI.Position = UDim2.new(0,10,0,36)
 keybindButtonGUI.BackgroundColor3 = Color3.fromRGB(30,30,30); keybindButtonGUI.BorderSizePixel = 0
 keybindButtonGUI.Font = Enum.Font.Gotham; keybindButtonGUI.TextSize = 14
-keybindButtonGUI.TextColor3 = Color3.fromRGB(200,200,200)
+keybindButtonGUI.TextColor3 = Color3.fromRGB(253, 200, 255)
 keybindButtonGUI.Text = "Toggle Key: " .. getCurrentToggleKey().Name
 Instance.new("UICorner", keybindButtonGUI).CornerRadius = UDim.new(0,8)
 keybindButtonGUI.MouseButton1Click:Connect(function()
@@ -78,7 +77,7 @@ local searchInput = Instance.new("TextBox", searchPage)
 searchInput.Size = UDim2.new(1,-28,0,42); searchInput.BackgroundColor3 = Color3.fromRGB(22,22,28)
 searchInput.PlaceholderText = "🔍 Search for functions or tabs..."; searchInput.Text = ""
 searchInput.Font = Enum.Font.GothamSemibold; searchInput.TextSize = 15
-searchInput.TextColor3 = Color3.fromRGB(220,220,220); searchInput.TextXAlignment = Enum.TextXAlignment.Left
+searchInput.TextColor3 = Color3.fromRGB(253, 200, 255); searchInput.TextXAlignment = Enum.TextXAlignment.Left
 searchInput.ClearTextOnFocus = false
 Instance.new("UICorner", searchInput).CornerRadius = UDim.new(0,10)
 Instance.new("UIPadding", searchInput).PaddingLeft = UDim.new(0,14)
@@ -110,11 +109,11 @@ local function updateSearchResults(query)
                 local resBtn = Instance.new("TextButton", searchPage)
                 resBtn.Size = UDim2.new(1,-28,0,42); resBtn.BackgroundColor3 = Color3.fromRGB(22,22,28)
                 resBtn.Text = "📂  " .. name .. " Tab"; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
-                resBtn.TextColor3 = Color3.fromRGB(200,200,200); resBtn.TextXAlignment = Enum.TextXAlignment.Left
+                resBtn.TextColor3 = Color3.fromRGB(253, 200, 255); resBtn.TextXAlignment = Enum.TextXAlignment.Left
                 Instance.new("UIPadding", resBtn).PaddingLeft = UDim.new(0,16)
                 Instance.new("UICorner", resBtn).CornerRadius = UDim.new(0,10)
                 resBtn.MouseEnter:Connect(function() TweenService:Create(resBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(35,35,45), TextColor3 = Color3.fromRGB(255,255,255)}):Play() end)
-                resBtn.MouseLeave:Connect(function() TweenService:Create(resBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(22,22,28), TextColor3 = Color3.fromRGB(200,200,200)}):Play() end)
+                resBtn.MouseLeave:Connect(function() TweenService:Create(resBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(22,22,28), TextColor3 = Color3.fromRGB(253, 200, 255)}):Play() end)
                 resBtn.MouseButton1Click:Connect(function() switchTab(name.."Tab") end)
             end
         end
@@ -127,7 +126,7 @@ local function updateSearchResults(query)
                 local resBtn = Instance.new("TextButton", searchPage)
                 resBtn.Size = UDim2.new(1,-28,0,42); resBtn.BackgroundColor3 = Color3.fromRGB(18,22,30)
                 resBtn.Text = "⚙  " .. fname; resBtn.Font = Enum.Font.GothamSemibold; resBtn.TextSize = 15
-                resBtn.TextColor3 = Color3.fromRGB(180,210,255); resBtn.TextXAlignment = Enum.TextXAlignment.Left
+                resBtn.TextColor3 = Color3.fromRGB(253, 200, 255); resBtn.TextXAlignment = Enum.TextXAlignment.Left
                 Instance.new("UIPadding", resBtn).PaddingLeft = UDim.new(0,16)
                 Instance.new("UICorner", resBtn).CornerRadius = UDim.new(0,10)
                 local subLbl = Instance.new("TextLabel", resBtn)
@@ -136,7 +135,7 @@ local function updateSearchResults(query)
                 subLbl.TextColor3 = Color3.fromRGB(120,120,150); subLbl.TextXAlignment = Enum.TextXAlignment.Left
                 subLbl.Text = "in " .. ftab:gsub("Tab","") .. " tab"
                 resBtn.MouseEnter:Connect(function() TweenService:Create(resBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(28,35,52), TextColor3 = Color3.fromRGB(255,255,255)}):Play() end)
-                resBtn.MouseLeave:Connect(function() TweenService:Create(resBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(18,22,30), TextColor3 = Color3.fromRGB(180,210,255)}):Play() end)
+                resBtn.MouseLeave:Connect(function() TweenService:Create(resBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(18,22,30), TextColor3 = Color3.fromRGB(253, 200, 255)}):Play() end)
                 resBtn.MouseButton1Click:Connect(function() switchTab(ftab) end)
             end
         end
@@ -147,12 +146,10 @@ task.delay(0.1, function() updateSearchResults("") end)
 
 -- ════════════════════════════════════════════════════
 -- UNIFIED INPUT HANDLER
--- Stored as a connection so it can be fully disconnected on cleanup
 -- ════════════════════════════════════════════════════
 local inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    -- If _G.VH is gone (script was cleaned up), silently stop handling
     if not _G.VH then return end
 
     if getWaitingForKeyGUI() then
@@ -191,7 +188,6 @@ local inputConn = UserInputService.InputBegan:Connect(function(input, gameProces
     end
 end)
 
--- Disconnect the input handler when the hub is closed/re-executed
 table.insert(cleanupTasks, function()
     if inputConn then inputConn:Disconnect(); inputConn = nil end
 end)
