@@ -392,6 +392,22 @@ local function moveItemTo(model, targetCF, onDone)
     local startTime = tick()
     local conn
 
+    -- Lift the target a tiny bit so the item settles onto the surface
+    -- instead of being shoved into it (which makes physics fling it)
+    local settledCF = targetCF * CFrame.new(0, 0.05, 0)
+
+    -- Zero velocity on every BasePart in the model each frame
+    local function freezeVelocity()
+        pcall(function()
+            for _, p in ipairs(model:GetDescendants()) do
+                if p:IsA("BasePart") and not p.Anchored then
+                    p.AssemblyLinearVelocity  = Vector3.zero
+                    p.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+        end)
+    end
+
     -- Teleport character next to the item immediately
     goToItem(model)
 
@@ -408,24 +424,28 @@ local function moveItemTo(model, targetCF, onDone)
             hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
         end
 
-        -- Fire ClientIsDragging + write CFrame on the same frame (essential for LT2)
+        -- Fire ClientIsDragging + write CFrame + kill velocity on same frame
         if dragger then pcall(function() dragger:FireServer(model) end) end
-        pcall(function() mp.CFrame = targetCF end)
+        pcall(function() mp.CFrame = settledCF end)
+        freezeVelocity()
 
-        local arrived  = (mp.Position - targetCF.Position).Magnitude < CONFIRM_DIST
+        local arrived  = (mp.Position - settledCF.Position).Magnitude < CONFIRM_DIST
         local timedOut = (tick() - startTime) >= SORT_TIMEOUT
 
         if arrived or timedOut then
             conn:Disconnect()
-            -- Reinforce for a few more frames so the server locks it in
+            -- Reinforce: keep hammering CFrame + zero velocity so item can't tip
             task.spawn(function()
-                for _ = 1, 25 do
+                for _ = 1, 40 do
                     pcall(function()
-                        if dragger     then dragger:FireServer(model) end
-                        if mp and mp.Parent then mp.CFrame = targetCF end
+                        if dragger then dragger:FireServer(model) end
+                        if mp and mp.Parent then mp.CFrame = settledCF end
                     end)
+                    freezeVelocity()
                     task.wait()
                 end
+                -- Final hard freeze — zero all velocity one last time
+                freezeVelocity()
                 if onDone then onDone(arrived) end
             end)
         end
@@ -603,7 +623,7 @@ end
 -- ════════════════════════════════════════════════════
 local statusCard, statusLabel
 do
-    local card = Instance.new("Frame", sorterPage)
+    local card = Instance.new("Frame")
     card.Size = UDim2.new(1,-12,0,48)
     card.BackgroundColor3 = Color3.fromRGB(28,20,38)
     card.BorderSizePixel = 0
@@ -631,7 +651,7 @@ end
 -- ════════════════════════════════════════════════════
 local pbContainer, pbFill, pbLabel
 do
-    local pb = Instance.new("Frame", sorterPage)
+    local pb = Instance.new("Frame")
     pb.Size = UDim2.new(1,-12,0,44); pb.BackgroundColor3 = Color3.fromRGB(18,18,24)
     pb.BorderSizePixel = 0; pb.Visible = false
     Instance.new("UICorner", pb).CornerRadius = UDim.new(0,8)
@@ -755,6 +775,7 @@ end
 -- BUILD UI
 -- ════════════════════════════════════════════════════
 mkLabel("Status")
+statusCard.Parent = sorterPage
 
 mkSep(); mkLabel("Selection Mode")
 
@@ -824,7 +845,7 @@ Instance.new("UIPadding", gridHint).PaddingLeft = UDim.new(0,6)
 -- Overflow warning popup (shown when items > grid capacity)
 local overflowPopup, overflowLabel
 do
-    local pop = Instance.new("Frame", sorterPage)
+    local pop = Instance.new("Frame")
     pop.Size = UDim2.new(1,-12,0,52)
     pop.BackgroundColor3 = Color3.fromRGB(80,20,20)
     pop.BorderSizePixel = 0; pop.Visible = false
@@ -840,6 +861,7 @@ do
     overflowPopup = pop
     overflowLabel = lbl
 end
+overflowPopup.Parent = sorterPage
 
 local function showOverflow(msg)
     overflowBlocked = true
