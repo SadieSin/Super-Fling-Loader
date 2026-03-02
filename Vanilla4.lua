@@ -43,15 +43,15 @@ local isSorting        = false
 local isStopped        = false   -- paused mid-sort (Stop button)
 local sortThread       = nil
 local currentItemConn  = nil
-local sortSlots        = nil     -- full slot list, preserved for resume
-local sortIndex        = 0       -- next slot index to process (1-based)
+local sortSlots        = nil     -- preserved for resume
+local sortIndex        = 1
 local sortTotal        = 0
 local sortDone         = 0
-local overflowBlocked  = false   -- true when grid is too small → block Start
+local overflowBlocked  = false
 
-local gridCols   = 3   -- X  (items per row, left→right)
-local gridLayers = 1   -- Y  (vertical layers, bottom→top)
-local gridRows   = 0   -- Z  (0 = auto, front→back)
+local gridCols   = 3   -- X  items per row, left→right
+local gridLayers = 1   -- Y  vertical layers, bottom→top
+local gridRows   = 0   -- Z  rows per layer (0 = auto)
 
 local clickSelEnabled = false
 local lassoEnabled    = false
@@ -129,62 +129,42 @@ local function groupSelectItem(target)
 end
 
 -- ════════════════════════════════════════════════════
--- SORT SLOT CALCULATOR
+-- SORT SLOT CALCULATOR  (3-D: X cols, Z rows, Y layers)
 -- ════════════════════════════════════════════════════
--- calculateSlots
--- Fills a 3-D grid: left→right (X cols), front→back (Z rows), bottom→top (Y layers).
--- colCount  = items per X column  (gridCols,   ≥1)
--- layerCount= vertical layers     (gridLayers, ≥1; 1 = single layer, original behaviour)
--- rowCount  = rows per layer      (gridRows,   0 = auto)
--- Items sorted tallest-first so tall items sit in row 0 and short ones fill later rows.
--- The bottom layer is filled completely before moving up to the next layer.
 local function calculateSlots(items, anchorCF, colCount, layerCount, rowCount)
     colCount   = math.max(1, colCount)
     layerCount = math.max(1, layerCount)
-    rowCount   = math.max(0, rowCount)   -- 0 = unlimited / auto
+    rowCount   = math.max(0, rowCount)
 
     local entries = {}
     for _, model in ipairs(items) do
-        local ok, _cf, sz = pcall(function() return model:GetBoundingBox() end)
+        local ok, _, sz = pcall(function() return model:GetBoundingBox() end)
         local s = (ok and sz) or Vector3.new(2, 2, 2)
         table.insert(entries, { model = model, w = s.X, h = s.Y, d = s.Z })
     end
-
-    -- Sort tallest first so tall items claim the bottom layer row-0 slots
     table.sort(entries, function(a, b) return a.h > b.h end)
 
-    -- Determine per-layer capacity
-    local total       = #entries
-    -- rowsPerLayer: if rowCount=0, distribute items evenly across layers
-    local rpl
+    local total = #entries
+    local rpl   -- rows per layer
     if rowCount > 0 then
         rpl = rowCount
     else
-        local slotsPerLayer = math.ceil(total / layerCount)
-        rpl = math.ceil(slotsPerLayer / colCount)
-        rpl = math.max(1, rpl)
+        rpl = math.max(1, math.ceil(math.ceil(total / layerCount) / colCount))
     end
-    -- slotPerLayer = cols × rows
     local slotPerLayer = colCount * rpl
 
-    -- Pre-compute per-row max depth and per-layer max height for proper spacing
-    -- We do a two-pass approach: first assign grid positions, then convert to world offsets
-
-    -- Pass 1: assign (layer, row, col) index to each entry
+    -- Pass 1: assign (layer, row, col)
     for i, e in ipairs(entries) do
-        local idx   = i - 1                          -- 0-based
-        local layer = math.floor(idx / slotPerLayer) -- 0-based layer (bottom first)
+        local idx   = i - 1
+        local layer = math.floor(idx / slotPerLayer)
         local rem   = idx % slotPerLayer
-        local row   = math.floor(rem / colCount)     -- 0-based row within layer
-        local col   = rem % colCount                 -- 0-based col within row
+        local row   = math.floor(rem / colCount)
+        local col   = rem % colCount
         e.layer = layer; e.row = row; e.col = col
     end
 
-    -- Pass 2: compute per-row max-D and per-layer max-H for gap offsets
-    -- layerMaxH[layer] = tallest item in that layer
-    -- rowMaxD[layer][row] = deepest item in that row
-    local layerMaxH = {}
-    local rowMaxD   = {}
+    -- Pass 2: per-layer max H, per-row max D
+    local layerMaxH, rowMaxD = {}, {}
     for _, e in ipairs(entries) do
         local l, r = e.layer, e.row
         layerMaxH[l] = math.max(layerMaxH[l] or 0, e.h)
@@ -192,32 +172,28 @@ local function calculateSlots(items, anchorCF, colCount, layerCount, rowCount)
         rowMaxD[l][r] = math.max(rowMaxD[l][r] or 0, e.d)
     end
 
-    -- Cumulative layer Y offsets (bottom of each layer)
-    local layerY = {}
-    local accY   = 0
     local maxLayer = 0
     for _, e in ipairs(entries) do if e.layer > maxLayer then maxLayer = e.layer end end
+
+    local layerY = {}; local accY = 0
     for l = 0, maxLayer do
         layerY[l] = accY
         accY = accY + (layerMaxH[l] or 0) + ITEM_GAP
     end
 
-    -- Cumulative row Z offsets within each layer
     local rowZ = {}
     for l = 0, maxLayer do
-        rowZ[l] = {}
-        local accZ = 0
+        rowZ[l] = {}; local accZ = 0
         local maxRow = 0
         for _, e in ipairs(entries) do
             if e.layer == l and e.row > maxRow then maxRow = e.row end
         end
         for r = 0, maxRow do
             rowZ[l][r] = accZ
-            accZ = accZ + (rowMaxD[l] and rowMaxD[l][r] or 0) + ITEM_GAP
+            accZ = accZ + ((rowMaxD[l] and rowMaxD[l][r]) or 0) + ITEM_GAP
         end
     end
 
-    -- Per-col max width (shared across all layers/rows for alignment)
     local colMaxW = {}
     for _, e in ipairs(entries) do
         colMaxW[e.col] = math.max(colMaxW[e.col] or 0, e.w)
@@ -228,16 +204,13 @@ local function calculateSlots(items, anchorCF, colCount, layerCount, rowCount)
         accX = accX + (colMaxW[c] or 0) + ITEM_GAP
     end
 
-    -- Pass 3: build slot list
     local slots = {}
     for _, e in ipairs(entries) do
         local lx = colX[e.col]   + e.w / 2
         local ly = layerY[e.layer] + e.h / 2
         local lz = (rowZ[e.layer] and rowZ[e.layer][e.row] or 0) + e.d / 2
-        local worldCF = anchorCF * CFrame.new(Vector3.new(lx, ly, lz))
-        table.insert(slots, { model = e.model, cf = worldCF })
+        table.insert(slots, { model = e.model, cf = anchorCF * CFrame.new(lx, ly, lz) })
     end
-
     return slots
 end
 
@@ -255,7 +228,7 @@ end
 local function computePreviewSize()
     local entries = {}
     for model in pairs(selectedItems) do
-        local ok, _cf, sz = pcall(function() return model:GetBoundingBox() end)
+        local ok, _, sz = pcall(function() return model:GetBoundingBox() end)
         local s = (ok and sz) or Vector3.new(2, 2, 2)
         table.insert(entries, { w = s.X, h = s.Y, d = s.Z })
     end
@@ -272,17 +245,17 @@ local function computePreviewSize()
         if e.d > maxD then maxD = e.d end
     end
 
-    local totalItems  = #entries
+    local totalItems = #entries
     local slotPerLayer
     if rows > 0 then
         slotPerLayer = cols * rows
     else
         slotPerLayer = math.ceil(totalItems / layers)
     end
-    local actualRows   = math.ceil(slotPerLayer / cols)
+    local actualRows = math.ceil(slotPerLayer / cols)
 
-    local boxW = cols   * (maxW + ITEM_GAP) - ITEM_GAP
-    local boxH = layers * (maxH + ITEM_GAP) - ITEM_GAP
+    local boxW = cols       * (maxW + ITEM_GAP) - ITEM_GAP
+    local boxH = layers     * (maxH + ITEM_GAP) - ITEM_GAP
     local boxD = actualRows * (maxD + ITEM_GAP) - ITEM_GAP
     return math.max(boxW, 1), math.max(boxH, 1), math.max(boxD, 1)
 end
@@ -305,14 +278,11 @@ local function getMouseSurfaceCF(halfH)
     if result then
         hitPos = result.Position
     else
-        -- fallback: intersect with Y=0 plane (guard against horizontal ray)
-        if math.abs(unitRay.Direction.Y) > 0.001 then
-            local t = unitRay.Origin.Y / -unitRay.Direction.Y
-            if t > 0 then
-                hitPos = unitRay.Origin + unitRay.Direction * t
-            end
-        end
-        if not hitPos then
+        -- fallback: intersect with Y=0 plane
+        local t = unitRay.Origin.Y / -unitRay.Direction.Y
+        if t > 0 then
+            hitPos = unitRay.Origin + unitRay.Direction * t
+        else
             hitPos = unitRay.Origin + unitRay.Direction * 40
         end
     end
@@ -384,106 +354,76 @@ end
 -- ════════════════════════════════════════════════════
 -- SORT ENGINE
 -- ════════════════════════════════════════════════════
-
--- Discover all remotes we might need at sort-start (not cached globally so
--- we always get the freshest references).
-local function getRemotes()
-    local interaction = RS:FindFirstChild("Interaction")
-    local remotes = {
-        -- Primary drag signal: tells server "I own this drag"
-        clientIsDragging  = interaction and interaction:FindFirstChild("ClientIsDragging"),
-        -- Some LT2-style games send the target CFrame as a second argument
-        -- or have a dedicated placement remote — find whatever is available
-        placePart         = interaction and (
-            interaction:FindFirstChild("PlacePart")
-            or interaction:FindFirstChild("MoveItem")
-            or interaction:FindFirstChild("SetPartCFrame")
-            or interaction:FindFirstChild("DropItem")
-        ),
-        -- Fallback: look in RS root level
-        moveRemote        = RS:FindFirstChild("MoveItem")
-                         or RS:FindFirstChild("PlacePart")
-                         or RS:FindFirstChild("SetPartCFrame"),
-    }
-    return remotes
+local function getInteraction()
+    local i = RS:FindFirstChild("Interaction")
+    return i and i:FindFirstChild("ClientIsDragging")
 end
 
--- Attempt every known server-replication path for moving a part.
--- Priority:
---   1. placePart/moveRemote:FireServer(model, targetCF)  ← server sets CFrame directly
---   2. clientIsDragging:FireServer(model) + client CFrame write
---      (works when the server grants network ownership to the dragger)
--- Both are fired every frame so whichever the server responds to wins.
-local function fireMove(remotes, model, mp, targetCF)
-    -- Path 1: explicit placement remote with CFrame argument
-    if remotes.placePart then
-        pcall(function() remotes.placePart:FireServer(model, targetCF) end)
+-- Teleport character right next to a model's main part
+local function goToItem(model)
+    local mp   = getMainPart(model)
+    local char = player.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if mp and hrp then
+        hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
     end
-    if remotes.moveRemote then
-        pcall(function() remotes.moveRemote:FireServer(model, targetCF) end)
-    end
-
-    -- Path 2: drag ownership signal + local CFrame write
-    -- When the server grants us network ownership the local write replicates.
-    if remotes.clientIsDragging then
-        pcall(function() remotes.clientIsDragging:FireServer(model) end)
-    end
-    pcall(function()
-        mp.CFrame                  = targetCF
-        mp.AssemblyLinearVelocity  = Vector3.zero
-        mp.AssemblyAngularVelocity = Vector3.zero
-    end)
 end
 
--- Move one item to targetCF. Calls onDone() when arrived or timed out.
--- Returns the Heartbeat connection (caller must Disconnect if aborting early).
+-- Move one item to targetCF via per-frame Heartbeat.
+-- Calls onDone(bool) when confirmed or timed out. Returns the connection.
 local function moveItemTo(model, targetCF, onDone)
     if not (model and model.Parent) then
-        if onDone then task.spawn(onDone, false) end; return nil
+        if onDone then task.spawn(onDone, false) end
+        return nil
     end
     local mp = getMainPart(model)
     if not mp then
-        if onDone then task.spawn(onDone, false) end; return nil
+        if onDone then task.spawn(onDone, false) end
+        return nil
     end
     local char = player.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then
-        if onDone then task.spawn(onDone, false) end; return nil
+        if onDone then task.spawn(onDone, false) end
+        return nil
     end
 
-    local remotes   = getRemotes()
+    local dragger   = getInteraction()
     local startTime = tick()
     local conn
 
-    -- Hover 5 studs above the target slot so we never clip into stacked items
-    local hoverCF = CFrame.new(targetCF.Position + Vector3.new(0, 5, 4))
-    local function stayNear()
-        if hrp and hrp.Parent then hrp.CFrame = hoverCF end
-    end
-    stayNear()
+    -- Teleport character next to the item immediately
+    goToItem(model)
 
     conn = RunService.Heartbeat:Connect(function()
+        -- Item removed
         if not (mp and mp.Parent) then
             conn:Disconnect()
             if onDone then task.spawn(onDone, true) end
             return
         end
 
-        -- Keep character within pickup range every frame
-        if (hrp.Position - targetCF.Position).Magnitude > 18 then stayNear() end
+        -- Stay within drag range every frame
+        if (hrp.Position - mp.Position).Magnitude > 22 then
+            hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
+        end
 
-        -- Fire all replication paths every frame
-        fireMove(remotes, model, mp, targetCF)
+        -- Fire ClientIsDragging + write CFrame on the same frame (essential for LT2)
+        if dragger then pcall(function() dragger:FireServer(model) end) end
+        pcall(function() mp.CFrame = targetCF end)
 
         local arrived  = (mp.Position - targetCF.Position).Magnitude < CONFIRM_DIST
         local timedOut = (tick() - startTime) >= SORT_TIMEOUT
 
         if arrived or timedOut then
             conn:Disconnect()
-            -- Reinforce for 60 more frames (~1 s) to let server confirm position
+            -- Reinforce for a few more frames so the server locks it in
             task.spawn(function()
-                for _ = 1, 60 do
-                    pcall(function() fireMove(remotes, model, mp, targetCF) end)
+                for _ = 1, 25 do
+                    pcall(function()
+                        if dragger     then dragger:FireServer(model) end
+                        if mp and mp.Parent then mp.CFrame = targetCF end
+                    end)
                     task.wait()
                 end
                 if onDone then onDone(arrived) end
@@ -497,12 +437,6 @@ end
 -- ════════════════════════════════════════════════════
 -- UI HELPERS
 -- ════════════════════════════════════════════════════
-local AXIS_COLORS = {
-    X = Color3.fromRGB(220,70,70),
-    Y = Color3.fromRGB(70,200,70),
-    Z = Color3.fromRGB(70,120,255),
-}
-
 local function mkLabel(text)
     local lbl = Instance.new("TextLabel", sorterPage)
     lbl.Size = UDim2.new(1,-12,0,22)
@@ -580,10 +514,11 @@ local function mkBtn(text, color, cb)
     return btn
 end
 
--- ════════════════════════════════════════════════════
--- SLIDER CONNECTIONS (tracked for cleanup)
--- ════════════════════════════════════════════════════
-local sliderConns = {}  -- holds { changed=conn, ended=conn } per slider
+local AXIS_COLORS = {
+    X = Color3.fromRGB(220,70,70),
+    Y = Color3.fromRGB(70,200,70),
+    Z = Color3.fromRGB(70,120,255),
+}
 
 local function mkIntSlider(label, axis, minV, maxV, defaultV, cb)
     local axCol = AXIS_COLORS[axis] or THEME_TEXT
@@ -649,20 +584,16 @@ local function mkIntSlider(label, axis, minV, maxV, defaultV, cb)
             dragging = true; apply(inp.Position.X)
         end
     end)
-
-    -- Track these connections so they can be cleaned up
-    local sc = {}
-    sc.changed = UserInputService.InputChanged:Connect(function(inp)
+    UserInputService.InputChanged:Connect(function(inp)
         if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
             apply(inp.Position.X)
         end
     end)
-    sc.ended = UserInputService.InputEnded:Connect(function(inp)
+    UserInputService.InputEnded:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = false
         end
     end)
-    table.insert(sliderConns, sc)
 
     return fr
 end
@@ -745,50 +676,6 @@ local function hideProgress(delay)
 end
 
 -- ════════════════════════════════════════════════════
--- OVERFLOW POPUP
--- ════════════════════════════════════════════════════
-local overflowPopup, overflowLabel
-do
-    local pop = Instance.new("Frame", sorterPage)
-    pop.Size = UDim2.new(1,-12,0,56)
-    pop.BackgroundColor3 = Color3.fromRGB(80,20,20)
-    pop.BorderSizePixel = 0
-    pop.Visible = false
-    Instance.new("UICorner", pop).CornerRadius = UDim.new(0,8)
-    local stroke = Instance.new("UIStroke", pop)
-    stroke.Color = Color3.fromRGB(255,80,80); stroke.Thickness = 1.5; stroke.Transparency = 0.3
-
-    local lbl = Instance.new("TextLabel", pop)
-    lbl.Size = UDim2.new(1,-16,1,0); lbl.Position = UDim2.new(0,8,0,0)
-    lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold; lbl.TextSize = 12
-    lbl.TextColor3 = Color3.fromRGB(255,140,140)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextWrapped = true
-    lbl.Text = ""
-    overflowPopup = pop
-    overflowLabel = lbl
-end
-
-local function showOverflow(msg)
-    overflowBlocked = true
-    overflowLabel.Text = "⚠  " .. msg
-    overflowPopup.Visible = true
-end
-
-local function hideOverflow()
-    overflowBlocked = false
-    overflowPopup.Visible = false
-end
-
--- Returns how many items fit in the current grid settings
-local function computeGridCapacity()
-    local cols   = math.max(1, gridCols)
-    local layers = math.max(1, gridLayers)
-    local rows   = math.max(0, gridRows)
-    if rows == 0 then return math.huge end   -- auto = unlimited
-    return cols * rows * layers
-end
-
--- ════════════════════════════════════════════════════
 -- LASSO OVERLAY
 -- ════════════════════════════════════════════════════
 local coreGui    = game:GetService("CoreGui")
@@ -836,7 +723,7 @@ local function refreshStatus()
     if isSorting then
         setStatus("⏳  Sorting in progress...", Color3.fromRGB(140,220,255))
     elseif isStopped then
-        setStatus("⏸  Paused — hit Start to resume from where it stopped.", Color3.fromRGB(255,210,80))
+        setStatus("⏸  Paused — hit Start to resume.", Color3.fromRGB(255,210,80))
     elseif overflowBlocked then
         setStatus("❌  Too many items! Increase X, Y, or Z then regenerate.", Color3.fromRGB(255,100,100))
     elseif n == 0 then
@@ -852,7 +739,8 @@ local function refreshStatus()
     end
 
     if startBtn then
-        local canSort = (n > 0 or isStopped) and (previewPlaced or isStopped) and not isSorting and not overflowBlocked
+        local canSort = (n > 0 or isStopped) and (previewPlaced or isStopped)
+                        and not isSorting and not overflowBlocked
         startBtn.BackgroundColor3 = canSort and Color3.fromRGB(35,100,50) or Color3.fromRGB(28,28,38)
         startBtn.TextColor3       = canSort and THEME_TEXT or Color3.fromRGB(72,72,82)
         startBtn.Text = isStopped and "▶  Resume Sorting" or "▶  Start Sorting"
@@ -896,7 +784,8 @@ mkSep(); mkLabel("Sort Grid  —  X  Width · Y  Height · Z  Depth")
 
 mkIntSlider("Width  (items per row)", "X", 1, 12, 3, function(v)
     gridCols = v
-    hideOverflow()
+    overflowBlocked = false
+    if overflowPopup then overflowPopup.Visible = false end
     if previewFollowing and previewPart and previewPart.Parent then
         local sX, sY, sZ = computePreviewSize()
         previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
@@ -905,16 +794,18 @@ end)
 
 mkIntSlider("Height  (vertical layers)", "Y", 1, 8, 1, function(v)
     gridLayers = v
-    hideOverflow()
+    overflowBlocked = false
+    if overflowPopup then overflowPopup.Visible = false end
     if previewFollowing and previewPart and previewPart.Parent then
         local sX, sY, sZ = computePreviewSize()
         previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
     end
 end)
 
-mkIntSlider("Depth  (rows per layer, 0=auto)", "Z", 0, 12, 0, function(v)
+mkIntSlider("Depth  (rows, 0=auto)", "Z", 0, 12, 0, function(v)
     gridRows = v
-    hideOverflow()
+    overflowBlocked = false
+    if overflowPopup then overflowPopup.Visible = false end
     if previewFollowing and previewPart and previewPart.Parent then
         local sX, sY, sZ = computePreviewSize()
         previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
@@ -926,9 +817,48 @@ gridHint.Size = UDim2.new(1,-12,0,28); gridHint.BackgroundColor3 = Color3.fromRG
 gridHint.BorderSizePixel = 0; gridHint.Font = Enum.Font.Gotham; gridHint.TextSize = 11
 gridHint.TextColor3 = Color3.fromRGB(100,100,130); gridHint.TextWrapped = true
 gridHint.TextXAlignment = Enum.TextXAlignment.Left
-gridHint.Text = "  Fills left→right (X), front→back (Z), bottom→top (Y).  Tallest items sort first.  Z=0 auto-distributes rows."
+gridHint.Text = "  Fills left→right (X), front→back (Z), bottom→top (Y). Tallest items first. Z=0 auto."
 Instance.new("UICorner", gridHint).CornerRadius = UDim.new(0,6)
 Instance.new("UIPadding", gridHint).PaddingLeft = UDim.new(0,6)
+
+-- Overflow warning popup (shown when items > grid capacity)
+local overflowPopup, overflowLabel
+do
+    local pop = Instance.new("Frame", sorterPage)
+    pop.Size = UDim2.new(1,-12,0,52)
+    pop.BackgroundColor3 = Color3.fromRGB(80,20,20)
+    pop.BorderSizePixel = 0; pop.Visible = false
+    Instance.new("UICorner", pop).CornerRadius = UDim.new(0,8)
+    local stroke = Instance.new("UIStroke", pop)
+    stroke.Color = Color3.fromRGB(255,80,80); stroke.Thickness = 1.5; stroke.Transparency = 0.3
+    local lbl = Instance.new("TextLabel", pop)
+    lbl.Size = UDim2.new(1,-16,1,0); lbl.Position = UDim2.new(0,8,0,0)
+    lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold; lbl.TextSize = 12
+    lbl.TextColor3 = Color3.fromRGB(255,140,140)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextWrapped = true
+    lbl.Text = ""
+    overflowPopup = pop
+    overflowLabel = lbl
+end
+
+local function showOverflow(msg)
+    overflowBlocked = true
+    overflowLabel.Text = "⚠  " .. msg
+    overflowPopup.Visible = true
+end
+
+local function hideOverflow()
+    overflowBlocked = false
+    overflowPopup.Visible = false
+end
+
+local function gridCapacity()
+    local cols   = math.max(1, gridCols)
+    local layers = math.max(1, gridLayers)
+    local rows   = math.max(0, gridRows)
+    if rows == 0 then return math.huge end
+    return cols * rows * layers
+end
 
 mkSep(); mkLabel("Preview")
 
@@ -936,16 +866,13 @@ mkBtn("Generate Preview  (follows mouse)", Color3.fromRGB(35,55,100), function()
     if countSelected() == 0 then
         setStatus("⚠  No items selected!"); return
     end
-    -- Check if all items fit in the grid
     local n = countSelected()
-    local cap = computeGridCapacity()
+    local cap = gridCapacity()
     if n > cap then
-        showOverflow(
-            n .. " items selected but grid only holds " .. cap ..
-            " (X=" .. gridCols .. " × Z=" .. gridRows .. " × Y=" .. gridLayers ..
-            "). Increase X, Y, or Z sliders.")
-        refreshStatus()
-        return
+        showOverflow(n .. " items but grid only fits " .. cap ..
+            "  (X=" .. gridCols .. " × Z=" .. gridRows .. " × Y=" .. gridLayers ..
+            "). Increase sliders.")
+        refreshStatus(); return
     end
     hideOverflow()
     local sX, sY, sZ = computePreviewSize()
@@ -968,125 +895,21 @@ startBtn.TextSize = 14; startBtn.TextColor3 = Color3.fromRGB(72,72,82)
 startBtn.BorderSizePixel = 0
 Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
 
-startBtn.MouseButton1Click:Connect(function()
-    if isSorting then return end
-    if overflowBlocked then
-        setStatus("❌  Fix the grid size first!"); return
-    end
-
-    -- ── RESUME after Stop ──────────────────────────────────────────
-    if isStopped and sortSlots then
-        isStopped = false
-        isSorting = true
-        pbContainer.Visible = true
-        pbFill.BackgroundColor3 = Color3.fromRGB(255,175,55)
-        pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
-        refreshStatus()
-
-        sortThread = task.spawn(function()
-            for i = sortIndex, sortTotal do
-                if not isSorting then break end
-                local slot = sortSlots[i]
-                if not (slot.model and slot.model.Parent) then
-                    sortDone  = sortDone + 1
-                    sortIndex = i + 1
-                    continue
-                end
-
-                pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
-
-                local finished = false
-                currentItemConn = moveItemTo(slot.model, slot.cf, function()
-                    finished = true
-                end)
-                while not finished and isSorting do task.wait() end
-                if currentItemConn then
-                    pcall(function() currentItemConn:Disconnect() end)
-                    currentItemConn = nil
-                end
-                if not isSorting then
-                    sortIndex = i   -- remember where we paused
-                    break
-                end
-
-                unhighlightItem(slot.model)
-                sortDone  = sortDone + 1
-                sortIndex = i + 1
-
-                local pct = math.clamp(sortDone / math.max(sortTotal,1), 0, 1)
-                TweenService:Create(pbFill, TweenInfo.new(0.18, Enum.EasingStyle.Quad),
-                    { Size = UDim2.new(pct,0,1,0) }):Play()
-                pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
-                task.wait(0.35)
-            end
-
-            local finished = sortDone >= sortTotal
-            isSorting  = false
-            sortThread = nil
-            currentItemConn = nil
-
-            if finished then
-                isStopped  = false
-                sortSlots  = nil
-                TweenService:Create(pbFill, TweenInfo.new(0.25),
-                    { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.fromRGB(90,220,110) }):Play()
-                pbLabel.Text = "✔  Sorting complete!"
-                destroyPreview()
-                unhighlightAll()
-                hideProgress(2.5)
-            else
-                isStopped = true
-                pbLabel.Text = "⏸  Stopped at " .. sortDone .. " / " .. sortTotal
-            end
-            refreshStatus()
-        end)
-        return
-    end
-
-    -- ── FRESH START ────────────────────────────────────────────────
-    if not (previewPlaced and previewPart and previewPart.Parent) then
-        setStatus("⚠  Generate a preview and place it first!"); return
-    end
-    if countSelected() == 0 then
-        setStatus("⚠  No items selected!"); return
-    end
-
-    local items = {}
-    for model in pairs(selectedItems) do
-        if model and model.Parent then table.insert(items, model) end
-    end
-    if #items == 0 then return end
-
-    local anchorCF = previewPart.CFrame
-        * CFrame.new(-previewPart.Size.X/2, -previewPart.Size.Y/2, -previewPart.Size.Z/2)
-
-    sortSlots  = calculateSlots(items, anchorCF, gridCols, gridLayers, gridRows)
-    sortTotal  = #sortSlots
-    sortDone   = 0
-    sortIndex  = 1
-    isStopped  = false
-    isSorting  = true
-
-    pbContainer.Visible = true
-    pbFill.Size = UDim2.new(0,0,1,0)
-    pbFill.BackgroundColor3 = Color3.fromRGB(255,175,55)
-    pbLabel.Text = "Sorting... 0 / " .. sortTotal
-    refreshStatus()
-
+-- Shared sort loop — used by both fresh start and resume
+local function runSortLoop(slots, startI, total, doneStart)
+    local done = doneStart
     sortThread = task.spawn(function()
-        for i = sortIndex, sortTotal do
+        for i = startI, total do
             if not isSorting then
                 sortIndex = i
                 break
             end
-            local slot = sortSlots[i]
+            local slot = slots[i]
             if not (slot.model and slot.model.Parent) then
-                sortDone  = sortDone + 1
-                sortIndex = i + 1
-                continue
+                done = done + 1; sortIndex = i + 1; continue
             end
 
-            pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
+            pbLabel.Text = "Sorting... " .. done .. " / " .. total
 
             local finished = false
             currentItemConn = moveItemTo(slot.model, slot.cf, function()
@@ -1103,39 +926,74 @@ startBtn.MouseButton1Click:Connect(function()
             end
 
             unhighlightItem(slot.model)
-            sortDone  = sortDone + 1
-            sortIndex = i + 1
+            done = done + 1; sortIndex = i + 1; sortDone = done
 
-            local pct = math.clamp(sortDone / math.max(sortTotal,1), 0, 1)
+            local pct = math.clamp(done / math.max(total,1), 0, 1)
             TweenService:Create(pbFill, TweenInfo.new(0.18, Enum.EasingStyle.Quad),
                 { Size = UDim2.new(pct,0,1,0) }):Play()
-            pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
+            pbLabel.Text = "Sorting... " .. done .. " / " .. total
             task.wait(0.35)
         end
 
-        local allDone = sortDone >= sortTotal
-        isSorting  = false
-        sortThread = nil
-        currentItemConn = nil
+        isSorting = false; sortThread = nil; currentItemConn = nil
 
-        if allDone then
-            isStopped = false
-            sortSlots = nil
+        if done >= total then
+            isStopped = false; sortSlots = nil
             TweenService:Create(pbFill, TweenInfo.new(0.25),
                 { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.fromRGB(90,220,110) }):Play()
             pbLabel.Text = "✔  Sorting complete!"
-            destroyPreview()
-            unhighlightAll()
-            hideProgress(2.5)
+            destroyPreview(); unhighlightAll(); hideProgress(2.5)
         else
             isStopped = true
-            pbLabel.Text = "⏸  Stopped at " .. sortDone .. " / " .. sortTotal
+            pbLabel.Text = "⏸  Stopped at " .. done .. " / " .. total
         end
         refreshStatus()
     end)
+end
+
+startBtn.MouseButton1Click:Connect(function()
+    if isSorting then return end
+    if overflowBlocked then setStatus("❌  Fix grid size first!"); return end
+
+    -- RESUME
+    if isStopped and sortSlots then
+        isStopped = false; isSorting = true
+        pbContainer.Visible = true
+        pbFill.BackgroundColor3 = Color3.fromRGB(255,175,55)
+        pbLabel.Text = "Sorting... " .. sortDone .. " / " .. sortTotal
+        refreshStatus()
+        runSortLoop(sortSlots, sortIndex, sortTotal, sortDone)
+        return
+    end
+
+    -- FRESH START
+    if not (previewPlaced and previewPart and previewPart.Parent) then
+        setStatus("⚠  Generate a preview and place it first!"); return
+    end
+    if countSelected() == 0 then setStatus("⚠  No items selected!"); return end
+
+    local items = {}
+    for model in pairs(selectedItems) do
+        if model and model.Parent then table.insert(items, model) end
+    end
+    if #items == 0 then return end
+
+    local anchorCF = previewPart.CFrame
+        * CFrame.new(-previewPart.Size.X/2, -previewPart.Size.Y/2, -previewPart.Size.Z/2)
+
+    sortSlots = calculateSlots(items, anchorCF, gridCols, gridLayers, gridRows)
+    sortTotal = #sortSlots; sortDone = 0; sortIndex = 1
+    isStopped = false; isSorting = true
+
+    pbContainer.Visible = true
+    pbFill.Size = UDim2.new(0,0,1,0)
+    pbFill.BackgroundColor3 = Color3.fromRGB(255,175,55)
+    pbLabel.Text = "Sorting... 0 / " .. sortTotal
+    refreshStatus()
+    runSortLoop(sortSlots, 1, sortTotal, 0)
 end)
 
--- Stop button — pauses mid-sort, preserves progress for resume
+-- Stop button — pause, preserve progress
 stopBtn = Instance.new("TextButton", sorterPage)
 stopBtn.Size = UDim2.new(1,-12,0,32)
 stopBtn.BackgroundColor3 = Color3.fromRGB(28,28,38)
@@ -1143,37 +1001,29 @@ stopBtn.Text = "⏹  Stop"; stopBtn.Font = Enum.Font.GothamBold
 stopBtn.TextSize = 13; stopBtn.TextColor3 = Color3.fromRGB(72,72,82)
 stopBtn.BorderSizePixel = 0
 Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0,6)
-
 stopBtn.MouseButton1Click:Connect(function()
     if not isSorting then return end
-    isSorting = false   -- sortThread will notice, set isStopped=true, and break
+    isSorting = false
     if currentItemConn then
         pcall(function() currentItemConn:Disconnect() end)
         currentItemConn = nil
     end
-    -- sortThread sets isStopped itself; just update UI immediately
     pbLabel.Text = "⏸  Stopping..."
     refreshStatus()
 end)
 
--- Cancel — stops sorting AND clears preview + selection entirely
+-- Cancel — stop + clear everything
 mkBtn("Cancel  (clear all)", Color3.fromRGB(70,20,20), function()
-    -- Stop any active sort
-    isSorting = false
-    isStopped = false
-    sortSlots = nil; sortIndex = 0; sortTotal = 0; sortDone = 0
+    isSorting = false; isStopped = false
+    sortSlots = nil; sortIndex = 1; sortTotal = 0; sortDone = 0
     if currentItemConn then
         pcall(function() currentItemConn:Disconnect() end)
         currentItemConn = nil
     end
     if sortThread then pcall(task.cancel, sortThread); sortThread = nil end
-    -- Clear preview and selection
-    destroyPreview()
-    unhighlightAll()
-    hideOverflow()
+    destroyPreview(); unhighlightAll(); hideOverflow()
     pbLabel.Text = "Cancelled."
-    hideProgress(1.0)
-    refreshStatus()
+    hideProgress(1.0); refreshStatus()
 end)
 
 mkBtn("Clear Selection", BTN_COLOR, function()
@@ -1195,7 +1045,14 @@ local mouseDownConn = mouse.Button1Down:Connect(function()
         return
     end
 
-    -- Normal item selection (left-click only when NOT placing preview)
+    -- Place preview (any left-click while preview is following)
+    if previewFollowing then
+        placePreview()
+        refreshStatus()
+        return
+    end
+
+    -- Normal item selection
     local target = mouse.Target
     if not target then return end
     local model = target:FindFirstAncestorOfClass("Model")
@@ -1227,33 +1084,18 @@ local mouseUpConn = mouse.Button1Up:Connect(function()
     lassoDragging = false
 end)
 
--- Right-click to place the preview box
-local mouseRightConn = mouse.Button2Down:Connect(function()
-    if previewFollowing then
-        placePreview()
-        refreshStatus()
-    end
-end)
-
 -- ════════════════════════════════════════════════════
 -- CLEANUP
 -- ════════════════════════════════════════════════════
 table.insert(cleanupTasks, function()
-    isSorting = false
-    isStopped = false
-    sortSlots = nil; sortIndex = 0; sortTotal = 0; sortDone = 0
+    isSorting = false; isStopped = false
+    sortSlots = nil; sortIndex = 1; sortTotal = 0; sortDone = 0
     if followConn      then followConn:Disconnect();      followConn = nil end
-    if currentItemConn then currentItemConn:Disconnect(); currentItemConn = nil end
+    if currentItemConn then pcall(function() currentItemConn:Disconnect() end); currentItemConn = nil end
     if sortThread      then pcall(task.cancel, sortThread); sortThread = nil end
     mouseDownConn:Disconnect()
     mouseMoveConn:Disconnect()
     mouseUpConn:Disconnect()
-    mouseRightConn:Disconnect()
-    for _, sc in ipairs(sliderConns) do
-        if sc.changed then pcall(function() sc.changed:Disconnect() end) end
-        if sc.ended   then pcall(function() sc.ended:Disconnect()   end) end
-    end
-    sliderConns = {}
     if lassoFrame and lassoFrame.Parent then lassoFrame:Destroy() end
     destroyPreview()
     unhighlightAll()
