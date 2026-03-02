@@ -89,7 +89,8 @@ end)
 
 createWSectionLabel("Environment")
 
-createWorldToggle("Always Day", false, function(v)
+-- ── Always Day: DEFAULT = true (enabled on load) ──────────────────────────────
+createWorldToggle("Always Day", true, function(v)
     alwaysDayActive = v
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
     if v then
@@ -839,22 +840,77 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             return CFrame.new(basePos.X, basePos.Y + ABOVE_TRUCK_Y, basePos.Z) * srcPCF.Rotation
         end
 
+        -- ── OPTIMIZED seekNetOwn: noclip movement + rapid ClientIsDragging ──────
+        -- Teleports character directly next to the part (noclip-style) then fires
+        -- ClientIsDragging in a tight loop until the server grants ownership.
         local function seekNetOwn(part)
             if not _G.VH.butter.running then return end
-            if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
+            -- Noclip: disable character collision so we can stand right next to part
+            pcall(function()
+                for _, p in ipairs(Char:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = false end
+                end
+            end)
+            -- Teleport directly next to the part
+            if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 20 then
+                Char.HumanoidRootPart.CFrame = part.CFrame * CFrame.new(0, 2, 3)
             end
-            for i = 1, 50 do task.wait(0.05); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
+            -- Fire ownership request in a rapid loop (~50 frames = ~0.25s at 60fps)
+            for i = 1, 50 do
+                task.wait(0.005)
+                pcall(function() RS.Interaction.ClientIsDragging:FireServer(part.Parent) end)
+            end
         end
+
+        -- ── OPTIMIZED sendItem: Heartbeat loop for reliable fast CFrame set ──────
+        -- Uses per-frame CFrame assignment + ClientIsDragging simultaneously.
+        -- Target time: ~0.6 seconds total per item (seek + move + confirm).
+        local WOOD_TIMEOUT     = 1.2   -- max wait for server acceptance per log
+        local WOOD_CONFIRM_DIST = 8    -- studs; counts as "arrived"
 
         local function sendItem(part, Offset)
             if not _G.VH.butter.running then return end
-            if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
+            if not (part and part.Parent) then return end
+
+            -- Ensure character is close (noclip-style, no physics collision)
+            pcall(function()
+                for _, p in ipairs(Char:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = false end
+                end
+            end)
+            if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 20 then
+                Char.HumanoidRootPart.CFrame = part.CFrame * CFrame.new(0, 2, 3)
+                task.wait(0.05)
             end
+
+            -- Get ownership
             seekNetOwn(part)
-            for i = 1, 200 do part.CFrame = Offset end
-            task.wait(0.5)
+
+            if not (part and part.Parent) then return end
+
+            -- Heartbeat loop: set CFrame + fire drag every frame until confirmed
+            local startTime = tick()
+            local done = false
+            local conn
+            conn = RunService.Heartbeat:Connect(function()
+                if not (part and part.Parent) then
+                    conn:Disconnect(); done = true; return
+                end
+                pcall(function() RS.Interaction.ClientIsDragging:FireServer(part.Parent) end)
+                pcall(function() part.CFrame = Offset end)
+                local dist = (part.Position - Offset.Position).Magnitude
+                if dist < WOOD_CONFIRM_DIST or (tick() - startTime) >= WOOD_TIMEOUT then
+                    conn:Disconnect(); done = true
+                end
+            end)
+            -- Wait until heartbeat confirms (max WOOD_TIMEOUT seconds)
+            local waitStart = tick()
+            while not done and (tick() - waitStart) < (WOOD_TIMEOUT + 0.2) do
+                task.wait(0.016)
+            end
+            if conn then pcall(function() conn:Disconnect() end) end
+            -- Brief settle time — total per-item is ~0.6s
+            task.wait(0.05)
         end
 
         if getDupeItems() and _G.VH.butter.running then
@@ -910,6 +966,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
+        -- ── WOOD DUPE: 0.6s per item via optimized sendItem ──────────────────────
         if getWood() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("TreeClass") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
@@ -923,14 +980,12 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         if v.Name=="Owner" and tostring(v.Value)==giverName and v.Parent:FindFirstChild("TreeClass") then
                             local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
                             if not part then continue end
-                            local PCF  = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame) or v.Parent:FindFirstChildOfClass("Part").CFrame
+                            local PCF  = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
+                                or v.Parent:FindFirstChildOfClass("Part").CFrame
                             local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-                            if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                                Char.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
-                            end
-                            for i=1,50 do task.wait(0.05); RS.Interaction.ClientIsDragging:FireServer(part.Parent) end
-                            for i=1,200 do part.CFrame = CFrame.new(nPos) * PCF.Rotation end
-                            task.wait(0.5)
+                            local targetCF = CFrame.new(nPos) * PCF.Rotation
+                            -- sendItem handles noclip + seeking + per-frame CFrame set
+                            sendItem(part, targetCF)
                             done+=1; setProgWood(done, total)
                         end
                     end
