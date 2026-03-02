@@ -335,9 +335,17 @@ local function unhighlightAllWood()
     woodSelected = {}
 end
 
--- ── Sell a single log (used by Sell Selected — no character teleport) ────────
--- Teleports the character next to the log to claim net ownership,
--- slams the log to SELL_POS, then stays put (caller handles timing).
+-- ── Shared ownership claim (no yielding inside) ───────────────────────────────
+-- Fires ClientIsDragging rapidly without task.wait so there is no stall.
+local function claimOwnership(dragger, model)
+    for _ = 1, 60 do
+        dragger:FireServer(model)
+    end
+end
+
+-- ── Sell a single log (used by Sell Selected) ────────────────────────────────
+-- Moves character next to the log, claims ownership, slams to SELL_POS.
+-- The 0.8s gap between logs is handled by the caller, not here.
 
 local function sellLog(model)
     if not (model and model.Parent) then return end
@@ -349,21 +357,17 @@ local function sellLog(model)
     local mainPart = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
     if not mainPart then return end
 
-    -- Move next to the log if we're too far away to claim ownership
+    -- Move next to the log if too far to claim ownership
     if (hrp.Position - mainPart.Position).Magnitude > 25 then
         hrp.CFrame = mainPart.CFrame * CFrame.new(0, 3, 4)
-        task.wait(0.08)
+        task.wait(0.05)
     end
 
-    -- Claim net ownership
     local dragger = RS:FindFirstChild("Interaction")
         and RS.Interaction:FindFirstChild("ClientIsDragging")
-    if dragger then
-        for _ = 1, 50 do
-            task.wait(0.05)
-            dragger:FireServer(model)
-        end
-    end
+
+    -- Fire ownership claim once, no loop delay
+    if dragger then claimOwnership(dragger, model) end
 
     -- Slam to sell point
     for _ = 1, 200 do
@@ -371,9 +375,9 @@ local function sellLog(model)
     end
 end
 
--- ── Click Sell: teleport to log, sell it, return player to origin ─────────────
--- Saves the player's standing position BEFORE moving, goes to the log,
--- fires net ownership + slams CFrame, then teleports the player back.
+-- ── Click Sell: save position → tp to log → claim → slam → return ────────────
+-- No waiting loops inside — ownership is claimed in a single burst,
+-- then the log is slammed and the player is snapped back immediately.
 
 local function clickSellLog(model)
     if not (model and model.Parent) then return end
@@ -385,31 +389,24 @@ local function clickSellLog(model)
     local mainPart = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
     if not mainPart then return end
 
-    -- 1. Save where the player is standing right now
+    -- 1. Save standing position
     local originCF = hrp.CFrame
 
     -- 2. Teleport next to the log
     hrp.CFrame = mainPart.CFrame * CFrame.new(0, 3, 4)
-    task.wait(0.08)
+    task.wait(0.05)
 
-    -- 3. Claim net ownership
+    -- 3. Claim ownership — single burst, no per-iteration wait
     local dragger = RS:FindFirstChild("Interaction")
         and RS.Interaction:FindFirstChild("ClientIsDragging")
-    if dragger then
-        for _ = 1, 50 do
-            task.wait(0.05)
-            dragger:FireServer(model)
-        end
-    end
+    if dragger then claimOwnership(dragger, model) end
 
     -- 4. Slam log to sell point
     for _ = 1, 200 do
         mainPart.CFrame = CFrame.new(SELL_POS)
     end
 
-    task.wait(0.1)
-
-    -- 5. Return the player to where they were standing before
+    -- 5. Return player immediately
     hrp.CFrame = originCF
 end
 
@@ -431,7 +428,7 @@ local function groupSelectLogs(targetModel)
     end
 end
 
--- ── Sell Selected: teleports one log every 0.8s, loops until all gone ────────
+-- ── Sell Selected: one log every 0.8s, loops until all gone ──────────────────
 
 local function sellSelected()
     if isSellRunning then return end
@@ -449,13 +446,12 @@ local function sellSelected()
     local done  = 0
 
     sellProgressContainer.Visible = true
-    sellProgressFill.Size = UDim2.new(0,0,1,0)
+    sellProgressFill.Size = UDim2.new(0, 0, 1, 0)
     sellProgressLabel.Text = "Selling Selected... 0 / " .. total
 
     task.spawn(function()
         local pass = 1
         while isSellRunning do
-            -- Rebuild remaining list each pass (models despawn as they're sold)
             local remaining = {}
             for _, model in ipairs(queue) do
                 if model and model.Parent then
@@ -467,6 +463,7 @@ local function sellSelected()
             for _, model in ipairs(remaining) do
                 if not isSellRunning then break end
 
+                -- Sell this log (instant — no waits inside sellLog's dragger call)
                 sellLog(model)
                 unhighlightWood(model)
                 done = done + 1
@@ -477,12 +474,12 @@ local function sellSelected()
                 }):Play()
                 sellProgressLabel.Text = "Selling Selected... " .. done .. " / " .. total
 
-                -- 0.8 second gap between each log
+                -- 0.8s gap between each log, nothing else
                 task.wait(0.8)
             end
 
-            -- After a full pass, wait briefly then check for any that bounced back
-            task.wait(1.2)
+            -- Short cooldown then retry any that bounced back
+            task.wait(1.0)
             pass = pass + 1
 
             local stillHere = 0
@@ -508,9 +505,9 @@ local function sellSelected()
 
         task.delay(2.5, function()
             if sellProgressContainer then
-                TweenService:Create(sellProgressContainer, TweenInfo.new(0.4), {BackgroundTransparency=1}):Play()
-                TweenService:Create(sellProgressFill, TweenInfo.new(0.4), {BackgroundTransparency=1}):Play()
-                TweenService:Create(sellProgressLabel, TweenInfo.new(0.4), {TextTransparency=1}):Play()
+                TweenService:Create(sellProgressContainer, TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
+                TweenService:Create(sellProgressFill,     TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
+                TweenService:Create(sellProgressLabel,    TweenInfo.new(0.4), {TextTransparency = 1}):Play()
                 task.delay(0.45, function()
                     if sellProgressContainer then
                         sellProgressContainer.Visible = false
