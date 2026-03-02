@@ -184,18 +184,20 @@ end)
 
 _G.VanillaHubCleanup = onExit
 
-local main = Instance.new("Frame", gui)
-main.Size = UDim2.new(0, 0, 0, 0)
-main.Position = UDim2.new(0.5, -260, 0.5, -170)
-main.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-main.BackgroundTransparency = 1
-main.BorderSizePixel = 0
-main.ClipsDescendants = true
-Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+-- ── OUTER WRAPPER: holds UICorner + glow UIStroke, no ClipsDescendants
+--    This is required so rounded corners are visible and the stroke doesn't
+--    bleed as a white line inside the clipped content area.
+local wrapper = Instance.new("Frame", gui)
+wrapper.Size = UDim2.new(0, 0, 0, 0)
+wrapper.Position = UDim2.new(0.5, -260, 0.5, -170)
+wrapper.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+wrapper.BackgroundTransparency = 1
+wrapper.BorderSizePixel = 0
+wrapper.ClipsDescendants = false
+Instance.new("UICorner", wrapper).CornerRadius = UDim.new(0, 12)
 
--- ── GLOWING OUTLINE AROUND MAIN GUI ──────────────────────────────────────────
--- Outer glow layer (soft, wide)
-local glowStroke = Instance.new("UIStroke", main)
+-- Glowing outline lives on the WRAPPER (not main) so it renders outside the clip boundary
+local glowStroke = Instance.new("UIStroke", wrapper)
 glowStroke.Color = Color3.fromRGB(210, 210, 220)
 glowStroke.Thickness = 2.2
 glowStroke.Transparency = 0.35
@@ -217,8 +219,23 @@ task.spawn(function()
     end
 end)
 
-TweenService:Create(main, TweenInfo.new(0.65, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+-- ── MAIN: inner frame that clips content, parented to wrapper
+local main = Instance.new("Frame", wrapper)
+main.Size = UDim2.new(1, 0, 1, 0)
+main.Position = UDim2.new(0, 0, 0, 0)
+main.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+main.BackgroundTransparency = 1
+main.BorderSizePixel = 0
+main.ClipsDescendants = true
+-- UICorner on main too so the background itself is rounded (matches wrapper)
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+
+-- Animate the wrapper (not main) for open/close
+TweenService:Create(wrapper, TweenInfo.new(0.65, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
     Size = UDim2.new(0, 520, 0, 340),
+    BackgroundTransparency = 0
+}):Play()
+TweenService:Create(main, TweenInfo.new(0.65, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
     BackgroundTransparency = 0
 }):Play()
 
@@ -338,7 +355,7 @@ local function showConfirmClose()
     confirmBtn2.MouseButton1Click:Connect(function()
         overlay:Destroy(); dialog:Destroy()
         onExit()
-        local t = TweenService:Create(main, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+        local t = TweenService:Create(wrapper, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0),
             BackgroundTransparency = 1
         })
@@ -355,13 +372,13 @@ closeBtn.MouseButton1Click:Connect(showConfirmClose)
 local dragging, dragStart, startPos = false, nil, nil
 topBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true; dragStart = input.Position; startPos = main.Position
+        dragging = true; dragStart = input.Position; startPos = wrapper.Position
     end
 end)
 UserInputService.InputChanged:Connect(function(input)
     if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
         local delta = input.Position - dragStart
-        main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        wrapper.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
 end)
 UserInputService.InputEnded:Connect(function(input)
@@ -553,8 +570,8 @@ for _, name in ipairs(tabs) do
             local ripple = Instance.new("Frame", rippleContainer)
             ripple.Size = UDim2.new(0, 8, 0, 8)
             ripple.Position = UDim2.new(0.5, -4, 0.5, -4)
-            ripple.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-            ripple.BackgroundTransparency = 0.6
+            ripple.BackgroundColor3 = Color3.fromRGB(200, 185, 200)
+            ripple.BackgroundTransparency = 0.75
             ripple.BorderSizePixel = 0
             Instance.new("UICorner", ripple).CornerRadius = UDim.new(1, 0)
 
