@@ -156,6 +156,16 @@ local function onExit()
         end
     end)
 
+    -- Restore water visibility on exit
+    pcall(function()
+        for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
+            if p:IsA("Part") and p.Name == "Water" then
+                p.Transparency = 0.5
+                p.CanCollide   = false
+            end
+        end
+    end)
+
     -- Destroy teleport circle marker if it survived
     pcall(function()
         if workspace:FindFirstChild("VanillaHubTpCircle") then
@@ -1149,7 +1159,7 @@ local function createPToggle(text, defaultState, callback)
     circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
     Instance.new("UICorner", circle).CornerRadius = UDim.new(1,0)
     local toggled = defaultState
-    if callback then callback(toggled) end
+    -- NOTE: We do NOT call callback on creation for Fly — it should be off at load
     local function setToggled(val)
         toggled = val
         TweenService:Create(tb, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
@@ -1265,7 +1275,8 @@ end
 
 table.insert(cleanupTasks, stopFly)
 
-local _, setFlyToggle = createPToggle("Fly", true, function(val)
+-- *** FLY TOGGLE: default = false so fly does NOT activate on script load ***
+local _, setFlyToggle = createPToggle("Fly", false, function(val)
     flyToggleEnabled = val
     if val then
         local char = Players.LocalPlayer.Character
