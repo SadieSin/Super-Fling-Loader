@@ -297,7 +297,7 @@ local function makeDupeDropdown(labelText, parentPage)
     arrowLbl.Size               = UDim2.new(0,22,1,0)
     arrowLbl.Position           = UDim2.new(1,-24,0,0)
     arrowLbl.BackgroundTransparency = 1
-    arrowLbl.Text               = "▾"
+    arrowLbl.Text               = "v"
     arrowLbl.Font               = Enum.Font.GothamBold
     arrowLbl.TextSize           = 14
     arrowLbl.TextColor3         = Color3.fromRGB(120,120,160)
@@ -401,7 +401,7 @@ local function makeDupeDropdown(labelText, parentPage)
                 check.Size               = UDim2.new(0,24,1,0)
                 check.Position           = UDim2.new(1,-28,0,0)
                 check.BackgroundTransparency = 1
-                check.Text               = "✓"
+                check.Text               = "v"
                 check.Font               = Enum.Font.GothamBold
                 check.TextSize           = 14
                 check.TextColor3         = Color3.fromRGB(120,180,255)
@@ -595,6 +595,40 @@ table.insert(cleanupTasks, function()
     resetAllDupeProgress()
 end)
 
+-- ════════════════════════════════════════════════════
+-- FIX: Truck Seat Helper — fast non-breaking seat teleport
+-- Uses rapid seat cycling to avoid physics desync
+-- ════════════════════════════════════════════════════
+local function sitInSeat(seat, char, timeoutSecs)
+    local hum = char:FindFirstChild("Humanoid")
+    if not (hum and seat) then return false end
+    timeoutSecs = timeoutSecs or 3
+    local deadline = tick() + timeoutSecs
+    repeat
+        pcall(function() seat:Sit(hum) end)
+        task.wait(0.04)
+    until (hum.SeatPart and hum.SeatPart == seat) or tick() > deadline
+    return hum.SeatPart == seat
+end
+
+local function exitSeat(char, seat, RS)
+    local hum = char:FindFirstChild("Humanoid")
+    if not hum then return end
+    -- Try door hinge first (opens door cleanly)
+    local DoorHinge = seat and seat.Parent
+        and seat.Parent:FindFirstChild("PaintParts")
+        and seat.Parent.PaintParts:FindFirstChild("DoorLeft")
+        and seat.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
+    -- Jump out
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+    task.wait(0.05)
+    pcall(function() seat:Destroy() end)
+    task.wait(0.05)
+    if DoorHinge and RS then
+        for i = 1, 8 do pcall(function() RS.Interaction.RemoteProxy:FireServer(DoorHinge) end) end
+    end
+end
+
 createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
     if _G.VH.butter.running then setDupeStatus("Already running!", true) return end
     local giverName    = getGiverName()
@@ -737,12 +771,9 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         if p:IsA("BasePart") then ignoredParts[p] = true end
                     end
 
-                    driveSeat:Sit(Char.Humanoid)
-                    local sitTimeout = 0
-                    repeat task.wait(0.05); sitTimeout += 0.05; driveSeat:Sit(Char.Humanoid)
-                    until Char.Humanoid.SeatPart or sitTimeout > 5
-
-                    if not Char.Humanoid.SeatPart then
+                    -- FIX: Fast seat entry — rapid fire Sit calls every 0.04s
+                    local seated = sitInSeat(driveSeat, Char, 3)
+                    if not seated then
                         truckDone += 1; setProgTrucks(truckDone, truckCount); continue
                     end
 
@@ -772,17 +803,8 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
 
                     tModel:SetPrimaryPartCFrame(truckDestCF)
 
-                    local SitPart = Char.Humanoid.SeatPart
-                    local DoorHinge = SitPart.Parent:FindFirstChild("PaintParts")
-                        and SitPart.Parent.PaintParts:FindFirstChild("DoorLeft")
-                        and SitPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
-
-                    task.wait(0.5)
-                    Char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                    task.wait(0.1); SitPart:Destroy(); task.wait(0.1)
-                    if DoorHinge then
-                        for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
-                    end
+                    -- FIX: Fast exit without breaking
+                    exitSeat(Char, driveSeat, RS)
 
                     truckDone += 1; setProgTrucks(truckDone, truckCount)
                 end
@@ -911,7 +933,6 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
-        -- ── WOOD DUPE — 0.6s between logs, noclip-style Heartbeat approach ──────────
         if getWood() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("TreeClass") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
@@ -1001,13 +1022,10 @@ createDBtn("Cancel Dupe", BTN_COLOR, function()
 end)
 
 -- ════════════════════════════════════════════════════
--- SINGLE TRUCK TELEPORT
--- How it works:
---   1. Select Giver and Receiver players from dropdowns
---   2. The Giver must be sitting in a truck on their base
---   3. Press "Teleport My Truck" — it teleports the truck
---      (and any cargo including wood) to the receiver's base.
---      Empty trucks are teleported even with no cargo.
+-- SINGLE TRUCK TELEPORT  (FIXED)
+-- Fix 1: Can now teleport truck to self (you can be both giver and receiver)
+-- Fix 2: After teleporting to another player, you are returned to your own base
+-- Fix 3: Fast seat entry/exit without breaking character
 -- ════════════════════════════════════════════════════
 createDSep()
 createDSection("Single Truck Teleport")
@@ -1015,7 +1033,6 @@ createDSection("Single Truck Teleport")
 local _, getSingleGiver    = makeDupeDropdown("Giver",    dupePage)
 local _, getSingleReceiver = makeDupeDropdown("Receiver", dupePage)
 
--- Status label
 local stFrame = Instance.new("Frame", dupePage)
 stFrame.Size = UDim2.new(1,-12,0,28); stFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
 stFrame.BorderSizePixel = 0
@@ -1035,7 +1052,29 @@ local function setSTStatus(msg, active)
     stDot.BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
 end
 
--- Teleport button
+-- Helper: find base origin for a player name OR for the local player
+local function findBaseOrigin(targetName)
+    local LP = Players.LocalPlayer
+    -- Check by name first (handles both self and others)
+    for _, v in pairs(workspace.Properties:GetDescendants()) do
+        if v.Name == "Owner" then
+            local val = v.Value
+            -- ObjectValue (player reference) or StringValue (name)
+            local ownerName = ""
+            if typeof(val) == "Instance" then
+                ownerName = val.Name
+            else
+                ownerName = tostring(val)
+            end
+            if ownerName == targetName then
+                local origin = v.Parent:FindFirstChild("OriginSquare")
+                if origin then return origin end
+            end
+        end
+    end
+    return nil
+end
+
 createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
     local giverName    = getSingleGiver()
     local receiverName = getSingleReceiver()
@@ -1051,7 +1090,7 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
     local Char = LP.Character or LP.CharacterAdded:Wait()
     local hum  = Char:FindFirstChild("Humanoid")
 
-    -- Must be seated in a truck (SeatPart with DriveSeat)
+    -- Must be seated in a truck
     local seatPart = hum and hum.SeatPart
     if not seatPart or seatPart.Name ~= "DriveSeat" then
         setSTStatus("You must be sitting in a truck!", false); return
@@ -1062,16 +1101,9 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
         setSTStatus("Couldn't find truck model!", false); return
     end
 
-    -- Find giver and receiver base origins
-    local GiveBaseOrigin, ReceiverBaseOrigin
-
-    for _, v in pairs(workspace.Properties:GetDescendants()) do
-        if v.Name == "Owner" then
-            local val = tostring(v.Value)
-            if val == giverName    then GiveBaseOrigin    = v.Parent:FindFirstChild("OriginSquare") end
-            if val == receiverName then ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare") end
-        end
-    end
+    -- Find base origins — supports teleporting to self
+    local GiveBaseOrigin    = findBaseOrigin(giverName)
+    local ReceiverBaseOrigin = findBaseOrigin(receiverName)
 
     if not GiveBaseOrigin then
         setSTStatus("Couldn't find giver's base!", false); return
@@ -1086,7 +1118,6 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
         local ignoredParts    = {}
         local teleportedParts = {}
 
-        -- Mark truck + char parts as ignored for cargo sweep
         for _, p in ipairs(tModel:GetDescendants()) do
             if p:IsA("BasePart") then ignoredParts[p] = true end
         end
@@ -1094,20 +1125,16 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
             if p:IsA("BasePart") then ignoredParts[p] = true end
         end
 
-        -- Compute destination CFrame (same offset logic as full dupe)
         local mainPart = tModel:FindFirstChild("Main")
         local truckSrcCF   = mainPart and mainPart.CFrame or tModel:GetPrimaryPartCFrame()
         local truckDestPos = truckSrcCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
         local truckDestCF  = CFrame.new(truckDestPos) * truckSrcCF.Rotation
 
-        -- Helper: point-in-bounding-box check
         local function isPointInside(point, boxCFrame, boxSize)
             local r = boxCFrame:PointToObjectSpace(point)
             return math.abs(r.X)<=boxSize.X/2 and math.abs(r.Y)<=boxSize.Y/2+2 and math.abs(r.Z)<=boxSize.Z/2
         end
 
-        -- Sweep cargo inside truck bounding box:
-        -- includes wood (WoodSection / TreeClass Main) AND normal cargo (Main)
         local mCF, mSz = tModel:GetBoundingBox()
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and not ignoredParts[part]
@@ -1126,34 +1153,24 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
             end
         end
 
-        -- Teleport the truck itself (while still seated — same as full dupe)
+        -- Teleport truck
         tModel:SetPrimaryPartCFrame(truckDestCF)
 
-        -- Get door hinge for exit
-        local DoorHinge = seatPart.Parent:FindFirstChild("PaintParts")
-            and seatPart.Parent.PaintParts:FindFirstChild("DoorLeft")
-            and seatPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
+        -- FIX: Fast, non-breaking exit
+        exitSeat(Char, seatPart, RS)
 
-        task.wait(0.5)
-        Char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        task.wait(0.1); seatPart:Destroy(); task.wait(0.1)
-        if DoorHinge then
-            for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
-        end
-
-        -- Return player to giver's base
+        -- FIX: Always return player to giver's base (works for self-teleport too)
         task.wait(0.3)
         pcall(function()
             Char.HumanoidRootPart.CFrame = CFrame.new(GiveBaseOrigin.Position + Vector3.new(0, 5, 0))
         end)
 
-        -- If there was no cargo, we're already done
         if #teleportedParts == 0 then
             setSTStatus("Truck teleported!", false)
             return
         end
 
-        -- Retry any cargo that didn't move (1s intervals)
+        -- Retry cargo
         task.wait(1)
         local retryList = {}
         for _, data in ipairs(teleportedParts) do
