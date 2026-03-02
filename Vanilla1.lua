@@ -1022,14 +1022,117 @@ end
 local mouse = player:GetMouse()
 local mouseIsDragging = false
 
+-- Wood tab selection flags — set below when the Wood tab is built
+local woodClickSellOn   = false
+local woodGroupSellOn   = false
+local woodSelectedItems = {}    -- model -> SelectionBox
+local SELL_CF           = CFrame.new(315.22, -0.40 + 3, 85.54)
+
+local function isWoodLog(model)
+    if not model or model == workspace then return false end
+    if not model:FindFirstChild("TreeClass")  then return false end
+    if not model:FindFirstChild("Owner")      then return false end
+    local mp = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+    return mp ~= nil
+end
+
+local function getWoodOwnerName(model)
+    local ov = model:FindFirstChild("Owner")
+    if not ov then return "" end
+    if ov:IsA("ObjectValue") and ov.Value then return ov.Value.Name end
+    if ov:IsA("StringValue") then return ov.Value end
+    return ""
+end
+
+local woodCountLbl  -- forward-declared; assigned when Wood tab is built
+
+local function updateWoodCount()
+    if not woodCountLbl then return end
+    local n = 0; for _ in pairs(woodSelectedItems) do n += 1 end
+    woodCountLbl.Text = "Selected: " .. n .. " piece" .. (n == 1 and "" or "s")
+end
+
+local function highlightWood(model)
+    if woodSelectedItems[model] then return end
+    local hl = Instance.new("SelectionBox")
+    hl.Color3 = Color3.fromRGB(0,220,100); hl.LineThickness = 0.05
+    hl.SurfaceTransparency = 0.6
+    hl.Adornee = model; hl.Parent = workspace
+    woodSelectedItems[model] = hl
+    updateWoodCount()
+end
+
+local function unhighlightWood(model)
+    if woodSelectedItems[model] then
+        woodSelectedItems[model]:Destroy()
+        woodSelectedItems[model] = nil
+        updateWoodCount()
+    end
+end
+
+local function unhighlightAllWood()
+    for model, hl in pairs(woodSelectedItems) do
+        if hl and hl.Parent then hl:Destroy() end
+    end
+    woodSelectedItems = {}
+    updateWoodCount()
+end
+
+-- Instant sell: teleport a wood log's Main part to the sell CFrame
+local function sellWoodNow(model)
+    local RS = game:GetService("ReplicatedStorage")
+    local dragger = RS:FindFirstChild("Interaction")
+        and RS.Interaction:FindFirstChild("ClientIsDragging")
+    local part = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+    if not part then return end
+    local char = player.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    -- Get net-ownership so server accepts the move
+    if dragger then
+        hrp.CFrame = part.CFrame * CFrame.new(0, 4, 2)
+        task.wait(0.08)
+        for _ = 1, 40 do task.wait(0.04); dragger:FireServer(model) end
+    end
+    -- Fling to sell point
+    for _ = 1, 150 do part.CFrame = SELL_CF end
+    task.wait(0.3)
+    if dragger then dragger:FireServer(model) end
+end
+
 mouse.Button1Down:Connect(function()
     mouseIsDragging = true
+    -- Item tab handling
     if lassoTool then
         lassoStartPos = Vector2.new(mouse.X, mouse.Y)
         lassoFrame.Size = UDim2.new(0,0,0,0)
         lassoFrame.Visible = true
     elseif clickSelection or groupSelection then
         handleSelection(mouse.Target, false)
+    end
+    -- Wood tab handling
+    if woodClickSellOn or woodGroupSellOn then
+        local target = mouse.Target
+        if not target then return end
+        local model = target:FindFirstAncestorOfClass("Model")
+        if not model or not isWoodLog(model) then return end
+        -- Only select/sell wood owned by the local player
+        if getWoodOwnerName(model) ~= player.Name then return end
+
+        if woodClickSellOn then
+            -- Click Sell: instantly sell this one log right now
+            task.spawn(function() sellWoodNow(model) end)
+        elseif woodGroupSellOn then
+            -- Group Selection: select all logs with the same TreeClass owned by this player
+            local targetClass = model:FindFirstChild("TreeClass").Value
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") and isWoodLog(obj)
+                    and getWoodOwnerName(obj) == player.Name
+                    and obj:FindFirstChild("TreeClass").Value == targetClass then
+                    highlightWood(obj)
+                end
+            end
+        end
     end
 end)
 
@@ -1046,6 +1149,176 @@ mouse.Move:Connect(function()
     if mouseIsDragging and lassoTool and lassoStartPos then
         updateLassoFrame(lassoStartPos, Vector2.new(mouse.X, mouse.Y))
     end
+end)
+
+-- ════════════════════════════════════════════════════
+-- WOOD TAB
+-- ════════════════════════════════════════════════════
+local woodPage = pages["WoodTab"]
+
+local function createWoodSectionLabel(text)
+    local lbl = Instance.new("TextLabel", woodPage)
+    lbl.Size = UDim2.new(1,-12,0,22); lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 11
+    lbl.TextColor3 = Color3.fromRGB(120,120,150); lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = string.upper(text)
+    Instance.new("UIPadding", lbl).PaddingLeft = UDim.new(0, 4)
+end
+
+local function createWoodSep()
+    local s = Instance.new("Frame", woodPage)
+    s.Size = UDim2.new(1,-12,0,1); s.BackgroundColor3 = Color3.fromRGB(40,40,55); s.BorderSizePixel = 0
+end
+
+local function createWoodToggle(text, defaultState, callback)
+    local frame = Instance.new("Frame", woodPage)
+    frame.Size = UDim2.new(1,-12,0,32); frame.BackgroundColor3 = Color3.fromRGB(24,24,30)
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+    local lbl = Instance.new("TextLabel", frame)
+    lbl.Size = UDim2.new(1,-50,1,0); lbl.Position = UDim2.new(0,10,0,0)
+    lbl.BackgroundTransparency = 1; lbl.Text = text; lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 13; lbl.TextColor3 = Color3.fromRGB(220,220,220); lbl.TextXAlignment = Enum.TextXAlignment.Left
+    local tb = Instance.new("TextButton", frame)
+    tb.Size = UDim2.new(0,34,0,18); tb.Position = UDim2.new(1,-44,0.5,-9)
+    tb.BackgroundColor3 = defaultState and Color3.fromRGB(60,180,60) or BTN_COLOR
+    tb.Text = ""; Instance.new("UICorner", tb).CornerRadius = UDim.new(1,0)
+    local circle = Instance.new("Frame", tb)
+    circle.Size = UDim2.new(0,14,0,14)
+    circle.Position = UDim2.new(0, defaultState and 18 or 2, 0.5, -7)
+    circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    Instance.new("UICorner", circle).CornerRadius = UDim.new(1,0)
+    local toggled = defaultState
+    local function setT(v)
+        toggled = v
+        TweenService:Create(tb, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
+            BackgroundColor3 = toggled and Color3.fromRGB(60,180,60) or BTN_COLOR
+        }):Play()
+        TweenService:Create(circle, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
+            Position = UDim2.new(0, toggled and 18 or 2, 0.5, -7)
+        }):Play()
+    end
+    tb.MouseButton1Click:Connect(function()
+        toggled = not toggled; setT(toggled)
+        if callback then callback(toggled) end
+    end)
+    return frame, setT, function() return toggled end
+end
+
+local function createWoodBtn(text, color, callback)
+    color = color or BTN_COLOR
+    local btn = Instance.new("TextButton", woodPage)
+    btn.Size = UDim2.new(1,-12,0,32); btn.BackgroundColor3 = color
+    btn.Text = text; btn.Font = Enum.Font.GothamSemibold; btn.TextSize = 13
+    btn.TextColor3 = Color3.fromRGB(210,210,220); btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+    local hov = Color3.fromRGB(
+        math.min(color.R*255+20,255)/255,
+        math.min(color.G*255+8, 255)/255,
+        math.min(color.B*255+20,255)/255)
+    btn.MouseEnter:Connect(function() TweenService:Create(btn,TweenInfo.new(0.12),{BackgroundColor3=hov}):Play() end)
+    btn.MouseLeave:Connect(function() TweenService:Create(btn,TweenInfo.new(0.12),{BackgroundColor3=color}):Play() end)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+-- Status row
+local woodStatusFrame = Instance.new("Frame", woodPage)
+woodStatusFrame.Size = UDim2.new(1,-12,0,28); woodStatusFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
+woodStatusFrame.BorderSizePixel = 0
+Instance.new("UICorner", woodStatusFrame).CornerRadius = UDim.new(0,6)
+local woodDot = Instance.new("Frame", woodStatusFrame)
+woodDot.Size = UDim2.new(0,7,0,7); woodDot.Position = UDim2.new(0,10,0.5,-3)
+woodDot.BackgroundColor3 = Color3.fromRGB(80,80,100); woodDot.BorderSizePixel = 0
+Instance.new("UICorner", woodDot).CornerRadius = UDim.new(1,0)
+local woodStatusLbl = Instance.new("TextLabel", woodStatusFrame)
+woodStatusLbl.Size = UDim2.new(1,-28,1,0); woodStatusLbl.Position = UDim2.new(0,24,0,0)
+woodStatusLbl.BackgroundTransparency = 1; woodStatusLbl.Font = Enum.Font.Gotham; woodStatusLbl.TextSize = 12
+woodStatusLbl.TextColor3 = Color3.fromRGB(150,150,170); woodStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+woodStatusLbl.Text = "Ready"
+
+local function setWoodStatus(msg, active)
+    woodStatusLbl.Text = msg
+    woodDot.BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
+end
+
+-- Count row
+local woodCountFrame = Instance.new("Frame", woodPage)
+woodCountFrame.Size = UDim2.new(1,-12,0,24); woodCountFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
+woodCountFrame.BorderSizePixel = 0
+Instance.new("UICorner", woodCountFrame).CornerRadius = UDim.new(0,6)
+woodCountLbl = Instance.new("TextLabel", woodCountFrame)   -- assigns the forward-declared upvalue
+woodCountLbl.Size = UDim2.new(1,-12,1,0); woodCountLbl.Position = UDim2.new(0,10,0,0)
+woodCountLbl.BackgroundTransparency = 1; woodCountLbl.Font = Enum.Font.Gotham; woodCountLbl.TextSize = 12
+woodCountLbl.TextColor3 = Color3.fromRGB(150,150,170); woodCountLbl.TextXAlignment = Enum.TextXAlignment.Left
+woodCountLbl.Text = "Selected: 0 pieces"
+
+createWoodSectionLabel("Selection Mode")
+
+-- Click Sell — each click immediately teleports that log to the sell point
+createWoodToggle("Click Sell", false, function(val)
+    woodClickSellOn = val
+    if val then woodGroupSellOn = false end
+    setWoodStatus(val and "Click a wood log to sell it instantly" or "Ready", false)
+end)
+
+-- Group Selection — click one log to select all of the same type you own
+createWoodToggle("Group Selection", false, function(val)
+    woodGroupSellOn = val
+    if val then woodClickSellOn = false end
+    setWoodStatus(val and "Click a wood log to group-select by type" or "Ready", false)
+end)
+
+createWoodSep()
+createWoodSectionLabel("Actions")
+
+-- Running flag + thread for sell-selected
+local woodSellRunning = false
+local woodSellThread  = nil
+
+createWoodBtn("Sell Selected Wood", Color3.fromRGB(35,90,45), function()
+    if woodSellRunning then setWoodStatus("Already selling!", true) return end
+    local queue = {}
+    for model in pairs(woodSelectedItems) do
+        if model and model.Parent then table.insert(queue, model) end
+    end
+    if #queue == 0 then setWoodStatus("No wood selected!", false) return end
+    woodSellRunning = true
+    setWoodStatus("Selling " .. #queue .. " pieces...", true)
+    woodSellThread = task.spawn(function()
+        local total = #queue
+        local done  = 0
+        for _, model in ipairs(queue) do
+            if not woodSellRunning then break end
+            if not (model and model.Parent) then
+                unhighlightWood(model); done += 1; continue
+            end
+            sellWoodNow(model)
+            unhighlightWood(model)
+            done += 1
+            setWoodStatus("Selling... " .. done .. " / " .. total, true)
+        end
+        woodSellRunning = false; woodSellThread = nil
+        setWoodStatus("Done! Sold " .. done .. " piece" .. (done==1 and "" or "s"), false)
+    end)
+end)
+
+createWoodBtn("Cancel Sell", BTN_COLOR, function()
+    woodSellRunning = false
+    if woodSellThread then pcall(task.cancel, woodSellThread); woodSellThread = nil end
+    setWoodStatus("Cancelled", false)
+end)
+
+createWoodBtn("Clear Selection", BTN_COLOR, function()
+    unhighlightAllWood()
+    setWoodStatus("Selection cleared", false)
+end)
+
+table.insert(cleanupTasks, function()
+    woodClickSellOn  = false
+    woodGroupSellOn  = false
+    woodSellRunning  = false
+    if woodSellThread then pcall(task.cancel, woodSellThread); woodSellThread = nil end
+    unhighlightAllWood()
 end)
 
 -- ════════════════════════════════════════════════════
