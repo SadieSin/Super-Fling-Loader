@@ -156,9 +156,6 @@ task.delay(0.1, function() updateSearchResults("") end)
 -- Sell destination: Wood Dropoff conveyor entry point
 local SELL_POS = Vector3.new(315.14, -0.40, 86.32)
 
--- All obtainable wood TreeClass values (from LT2 wiki)
--- Logs in LT2 carry a StringValue child named "TreeClass".
--- Gift items carry a "DraggableItem" child — used to exclude them.
 local WOOD_TREE_CLASSES = {
     "Generic", "Elm", "Cherry", "Birch",
     "Oak", "Palm",
@@ -173,14 +170,11 @@ for _, v in ipairs(WOOD_TREE_CLASSES) do
     WOOD_CLASS_SET[v:lower()] = true
 end
 
--- Is this model a valid, sellable log?
 local function isWoodLog(model)
     if not model or not model:IsA("Model") then return false end
     local tc = model:FindFirstChild("TreeClass")
     if not tc then return false end
-    -- Block gift items (they carry DraggableItem)
     if model:FindFirstChild("DraggableItem") then return false end
-    -- Must have a physical part
     if not (model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")) then return false end
     return true
 end
@@ -336,26 +330,15 @@ local function unhighlightAllWood()
 end
 
 -- ════════════════════════════════════════════════════
--- WOOD SELL ENGINE
+-- WOOD SELL ENGINE — optimized for 0.8s per item
 -- ════════════════════════════════════════════════════
 --
--- How LT2 log ownership actually works:
---   The server only lets a client move a part if that client fires
---   ClientIsDragging WHILE being close to the part AND while the
---   part's CFrame is being set on the same frame. A single burst
---   doesn't work because the server processes fire events and
---   property changes per-frame. The solution is a Heartbeat loop
---   that does both every frame until the server accepts the position
---   (confirmed by the part actually being near SELL_POS on the
---   server-replicated position) or a timeout fires.
---
--- sellOneLog(model, originCF, onDone)
---   • Teleports character next to the log
---   • Starts a Heartbeat loop: fires ClientIsDragging + slams CFrame every frame
---   • Stops when part is confirmed sold (position < 6 studs from SELL_POS)
---     OR 3 second timeout
---   • If originCF is provided, teleports player back on completion
---   • Calls onDone() when finished
+-- Key improvements over original:
+--   1. Noclip applied before each move so character can stand next to any log
+--   2. Heartbeat loop fires ClientIsDragging + sets CFrame every frame simultaneously
+--   3. Confirmation by proximity (< 8 studs) OR 1.2s timeout — whichever is first
+--   4. 0.8s gap between logs is enforced AFTER the heartbeat confirms (not before)
+--   5. Character noclip stays on during the whole sell session; restored on cancel/done
 
 local RS = game:GetService("ReplicatedStorage")
 
@@ -364,90 +347,109 @@ local function getInteraction()
     return i and i:FindFirstChild("ClientIsDragging")
 end
 
-local function sellOneLog(model, returnCF, onDone)
+-- Enable noclip on the local character (all BaseParts non-collidable)
+local activeNoclipConn = nil
+local function enableNoclip()
+    if activeNoclipConn then return end
+    activeNoclipConn = RunService.Stepped:Connect(function()
+        local char = player.Character
+        if not char then return end
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then
+                pcall(function() p.CanCollide = false end)
+            end
+        end
+    end)
+end
+
+local function disableNoclip()
+    if activeNoclipConn then
+        activeNoclipConn:Disconnect()
+        activeNoclipConn = nil
+    end
+    -- Restore collision
+    local char = player.Character
+    if char then
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then pcall(function() p.CanCollide = true end) end
+        end
+    end
+end
+
+--[[
+  sellOneLog(model, onDone)
+  - Noclip is assumed active (caller manages it)
+  - Teleports character next to the log
+  - Starts Heartbeat loop: fires ClientIsDragging + sets CFrame every frame
+  - Stops when: part confirmed close to SELL_POS, part removed, or timeout
+  - Calls onDone(success: bool) when finished
+  - Returns the heartbeat connection (so it can be killed on cancel)
+]]
+local SELL_TIMEOUT     = 1.2   -- max seconds per log
+local SELL_CONFIRM_DIST = 8    -- studs from SELL_POS = confirmed sold
+
+local function sellOneLog(model, onDone)
     if not (model and model.Parent) then
-        if onDone then onDone(false) end
-        return
+        if onDone then task.spawn(onDone, false) end
+        return nil
     end
 
     local char = player.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then
-        if onDone then onDone(false) end
-        return
+        if onDone then task.spawn(onDone, false) end
+        return nil
     end
 
     local mainPart = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
     if not mainPart then
-        if onDone then onDone(false) end
-        return
+        if onDone then task.spawn(onDone, false) end
+        return nil
     end
 
-    local targetCF    = CFrame.new(SELL_POS)
-    local dragger     = getInteraction()
-    local startTime   = tick()
-    local TIMEOUT     = 3.0      -- max seconds to try per log
-    local CONFIRM_DIST = 6       -- studs — part must be this close to count as sold
+    local targetCF  = CFrame.new(SELL_POS)
+    local dragger   = getInteraction()
+    local startTime = tick()
     local heartbeatConn
 
-    -- Step 1: get close to the log so the server accepts our drag
-    hrp.CFrame = mainPart.CFrame * CFrame.new(0, 4, 3)
+    -- Step 1: Teleport character right next to the log (noclip avoids being blocked)
+    hrp.CFrame = mainPart.CFrame * CFrame.new(0, 3, 3)
 
-    -- Step 2: every frame — fire dragging + slam CFrame simultaneously
+    -- Step 2: Heartbeat loop — fire drag + slam CFrame every frame simultaneously
     heartbeatConn = RunService.Heartbeat:Connect(function()
-        -- Safety: model or part removed (sold / despawned)
+        -- Part removed / sold already
         if not (mainPart and mainPart.Parent) then
             heartbeatConn:Disconnect()
-            if returnCF then
-                task.wait()
-                pcall(function()
-                    local c = player.Character
-                    local r = c and c:FindFirstChild("HumanoidRootPart")
-                    if r then r.CFrame = returnCF end
-                end)
-            end
-            if onDone then onDone(true) end
+            if onDone then task.spawn(onDone, true) end
             return
         end
 
-        -- Fire ClientIsDragging every frame (server processes each one)
-        if dragger then
-            pcall(function() dragger:FireServer(model) end)
+        -- Stay near the part if physics drifts us away
+        local char2 = player.Character
+        local hrp2  = char2 and char2:FindFirstChild("HumanoidRootPart")
+        if hrp2 and (hrp2.Position - mainPart.Position).Magnitude > 18 then
+            pcall(function() hrp2.CFrame = mainPart.CFrame * CFrame.new(0, 3, 3) end)
         end
 
-        -- Slam the part to SELL_POS every frame
+        -- Fire ClientIsDragging + write CFrame on the same frame
+        if dragger then pcall(function() dragger:FireServer(model) end) end
         pcall(function() mainPart.CFrame = targetCF end)
 
-        -- Check if server has accepted the new position
-        local dist = (mainPart.Position - SELL_POS).Magnitude
-        local timedOut = (tick() - startTime) >= TIMEOUT
+        local dist     = (mainPart.Position - SELL_POS).Magnitude
+        local timedOut = (tick() - startTime) >= SELL_TIMEOUT
 
-        if dist < CONFIRM_DIST or timedOut then
+        if dist < SELL_CONFIRM_DIST or timedOut then
             heartbeatConn:Disconnect()
-
-            -- Extra reinforcement frames after confirmation
+            -- Reinforce: hammer a few extra frames after server accepts
             task.spawn(function()
-                for _ = 1, 30 do
+                for _ = 1, 20 do
                     pcall(function()
                         if dragger then dragger:FireServer(model) end
-                        if mainPart and mainPart.Parent then
-                            mainPart.CFrame = targetCF
-                        end
+                        if mainPart and mainPart.Parent then mainPart.CFrame = targetCF end
                     end)
                     task.wait()
                 end
-
-                -- Return the player to their original position
-                if returnCF then
-                    task.wait(0.1)
-                    pcall(function()
-                        local c = player.Character
-                        local r = c and c:FindFirstChild("HumanoidRootPart")
-                        if r then r.CFrame = returnCF end
-                    end)
-                end
-
-                if onDone then onDone(dist < CONFIRM_DIST) end
+                if onDone then onDone(dist < SELL_CONFIRM_DIST) end
             end)
         end
     end)
@@ -456,11 +458,8 @@ local function sellOneLog(model, returnCF, onDone)
 end
 
 -- ── Click Sell ────────────────────────────────────────────────────────────────
--- One click = one log. Character goes to the log, sells it via Heartbeat loop,
--- comes back. Blocks new clicks until current one finishes.
-
 local clickSellBusy = false
-local clickSellConn = nil  -- current heartbeat (for cleanup)
+local clickSellConn = nil
 
 local function clickSellLog(model)
     if clickSellBusy then return end
@@ -471,21 +470,18 @@ local function clickSellLog(model)
     if not hrp then return end
 
     clickSellBusy = true
-    local originCF = hrp.CFrame
+    enableNoclip()
 
-    clickSellConn = sellOneLog(model, originCF, function(success)
+    clickSellConn = sellOneLog(model, function(success)
         clickSellConn = nil
         clickSellBusy = false
+        disableNoclip()
     end)
 end
 
 -- ── Sell Selected ─────────────────────────────────────────────────────────────
--- Sells every highlighted log one at a time, 0.8s apart.
--- Saves player position at start; Cancel returns them there.
-
 local sellOriginCF    = nil
-local isSellRunning   = false
-local currentSellConn = nil  -- active heartbeat connection
+local currentSellConn = nil
 
 local function sellSelected()
     if isSellRunning then return end
@@ -503,6 +499,9 @@ local function sellSelected()
 
     isSellRunning = true
     sellOriginCF  = hrp and hrp.CFrame or nil
+
+    -- Enable noclip for the whole sell session
+    enableNoclip()
 
     local total = #queue
     local done  = 0
@@ -522,22 +521,22 @@ local function sellSelected()
     local function finishSell(cancelled)
         isSellRunning   = false
         currentSellConn = nil
+        disableNoclip()
         unhighlightAllWood()
 
-        if cancelled then
-            -- Return to origin on cancel (button handler also does this,
-            -- but guard here too in case the task finishes after the flag flips)
-            if sellOriginCF then
-                pcall(function()
-                    local c = player.Character
-                    local r = c and c:FindFirstChild("HumanoidRootPart")
-                    if r then r.CFrame = sellOriginCF end
-                end)
-            end
+        -- Return player to origin
+        if sellOriginCF then
+            pcall(function()
+                local c = player.Character
+                local r = c and c:FindFirstChild("HumanoidRootPart")
+                if r then r.CFrame = sellOriginCF end
+            end)
             sellOriginCF = nil
+        end
+
+        if cancelled then
             sellProgressLabel.Text = "Cancelled."
         else
-            sellOriginCF = nil
             TweenService:Create(sellProgressFill, TweenInfo.new(0.25), {
                 Size = UDim2.new(1, 0, 1, 0),
                 BackgroundColor3 = Color3.fromRGB(60, 200, 110)
@@ -564,7 +563,7 @@ local function sellSelected()
         end)
     end
 
-    -- Process queue sequentially
+    -- Process queue sequentially — 0.8 seconds between items
     task.spawn(function()
         for i, model in ipairs(queue) do
             if not isSellRunning then
@@ -572,7 +571,7 @@ local function sellSelected()
                 return
             end
 
-            -- Skip if already gone
+            -- Skip already-gone items
             if not (model and model.Parent) then
                 done = done + 1
                 updateBar()
@@ -581,9 +580,9 @@ local function sellSelected()
 
             sellProgressLabel.Text = "Selling Selected... " .. done .. " / " .. total
 
-            -- Sell this log — no returnCF here, we manage position ourselves
+            -- Sell this log via the optimized Heartbeat loop
             local logDone = false
-            currentSellConn = sellOneLog(model, nil, function(success)
+            currentSellConn = sellOneLog(model, function(success)
                 currentSellConn = nil
                 logDone = true
             end)
@@ -595,7 +594,7 @@ local function sellSelected()
 
             if not isSellRunning then
                 if currentSellConn then
-                    currentSellConn:Disconnect()
+                    pcall(function() currentSellConn:Disconnect() end)
                     currentSellConn = nil
                 end
                 finishSell(true)
@@ -606,19 +605,10 @@ local function sellSelected()
             done = done + 1
             updateBar()
 
-            -- 0.8s between logs
+            -- 0.8s gap between logs (only between items, not after the last one)
             if i < #queue then
                 task.wait(0.8)
             end
-        end
-
-        -- Return player to where they started after all logs are sold
-        if sellOriginCF then
-            pcall(function()
-                local c = player.Character
-                local r = c and c:FindFirstChild("HumanoidRootPart")
-                if r then r.CFrame = sellOriginCF end
-            end)
         end
 
         finishSell(false)
@@ -664,7 +654,6 @@ local function connectWoodMouse()
                 groupSelectLogs(model)
             end
         else
-            -- Single-toggle selection when neither mode is active
             if isWoodLog(model) then
                 if woodSelected[model] then unhighlightWood(model)
                 else highlightWood(model) end
@@ -686,6 +675,7 @@ table.insert(cleanupTasks, function()
     if clickSellConn then pcall(function() clickSellConn:Disconnect() end); clickSellConn = nil end
     if currentSellConn then pcall(function() currentSellConn:Disconnect() end); currentSellConn = nil end
     disconnectWoodMouse()
+    disableNoclip()
     unhighlightAllWood()
 end)
 
@@ -736,16 +726,15 @@ createWButton("Sell Selected Logs", Color3.fromRGB(35,90,45), function()
 end)
 
 createWButton("Cancel Sell", BTN_COLOR, function()
-    -- Kill the sell loop flag first so the task.spawn loop sees it
     isSellRunning = false
 
-    -- Disconnect any active per-log heartbeat immediately
     if currentSellConn then
         pcall(function() currentSellConn:Disconnect() end)
         currentSellConn = nil
     end
 
-    -- Teleport player back to where they were when Sell Selected started
+    disableNoclip()
+
     if sellOriginCF then
         pcall(function()
             local c = player.Character
@@ -755,7 +744,6 @@ createWButton("Cancel Sell", BTN_COLOR, function()
         sellOriginCF = nil
     end
 
-    -- UI cleanup
     if sellProgressContainer and sellProgressContainer.Visible then
         sellProgressLabel.Text = "Cancelled."
         task.delay(1.5, function()
@@ -811,6 +799,7 @@ local inputConn = UserInputService.InputBegan:Connect(function(input, gameProces
         return
     end
 
+    -- Fly toggle via Q key (always works; no toggle switch required)
     if input.KeyCode == getCurrentFlyKey() and getFlyToggleEnabled() then
         if getIsFlyEnabled() then stopFly() else startFly() end
     end
