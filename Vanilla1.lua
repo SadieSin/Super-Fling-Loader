@@ -193,6 +193,13 @@ main.BorderSizePixel = 0
 main.ClipsDescendants = true
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 
+-- ── WHITE/GREY GLOWING OUTLINE around the entire main frame ──────────────────
+local mainGlowStroke = Instance.new("UIStroke", main)
+mainGlowStroke.Color = Color3.fromRGB(200, 200, 210)
+mainGlowStroke.Thickness = 1.8
+mainGlowStroke.Transparency = 0.35
+mainGlowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
 TweenService:Create(main, TweenInfo.new(0.65, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
     Size = UDim2.new(0, 520, 0, 340),
     BackgroundTransparency = 0
@@ -460,6 +467,7 @@ local function switchTab(targetName)
     end
 end
 
+-- ── TAB BUTTONS with hover + click animations ─────────────────────────────────
 for _, name in ipairs(tabs) do
     local btn = Instance.new("TextButton", side)
     btn.Name = name
@@ -471,19 +479,43 @@ for _, name in ipairs(tabs) do
     btn.TextSize = 14
     btn.TextColor3 = Color3.fromRGB(160,160,160)
     btn.TextXAlignment = Enum.TextXAlignment.Left
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     local pad = Instance.new("UIPadding", btn)
     pad.PaddingLeft = UDim.new(0, 16)
+
+    -- Hover: lighten background + text brightens
     btn.MouseEnter:Connect(function()
         if activeTabButton ~= btn then
-            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(28,28,28), TextColor3 = THEME_TEXT}):Play()
+            TweenService:Create(btn, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {
+                BackgroundColor3 = Color3.fromRGB(32, 32, 38),
+                TextColor3 = THEME_TEXT
+            }):Play()
         end
     end)
     btn.MouseLeave:Connect(function()
         if activeTabButton ~= btn then
-            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(18,18,18), TextColor3 = Color3.fromRGB(160,160,160)}):Play()
+            TweenService:Create(btn, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {
+                BackgroundColor3 = Color3.fromRGB(18,18,18),
+                TextColor3 = Color3.fromRGB(160,160,160)
+            }):Play()
         end
     end)
-    btn.MouseButton1Click:Connect(function() switchTab(name.."Tab") end)
+
+    -- Click: quick flash/compress then release
+    btn.MouseButton1Down:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = Color3.fromRGB(55, 55, 65),
+            Size = UDim2.new(0.88, 0, 0, 36)
+        }):Play()
+    end)
+    btn.MouseButton1Up:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Size = UDim2.new(0.92, 0, 0, 38)
+        }):Play()
+    end)
+    btn.MouseButton1Click:Connect(function()
+        switchTab(name.."Tab")
+    end)
 end
 
 switchTab("HomeTab")
@@ -525,12 +557,10 @@ end
 local homePage = pages["HomeTab"]
 
 -- ── CHAT BUBBLE WELCOME CARD ──────────────────────────────────────────────────
--- Layout: hub icon on the left, speech bubble pointing left on the right
 local bubbleRow = Instance.new("Frame", homePage)
 bubbleRow.Size = UDim2.new(1, 0, 0, 100)
 bubbleRow.BackgroundTransparency = 1
 
--- Hub icon (avatar side)
 local bubbleIcon = Instance.new("ImageLabel", bubbleRow)
 bubbleIcon.Size     = UDim2.new(0, 52, 0, 52)
 bubbleIcon.Position = UDim2.new(0, 6, 0.5, -26)
@@ -539,13 +569,11 @@ bubbleIcon.BorderSizePixel  = 0
 bubbleIcon.ScaleType        = Enum.ScaleType.Fit
 bubbleIcon.Image            = "rbxassetid://97128823316544"
 Instance.new("UICorner", bubbleIcon).CornerRadius = UDim.new(1, 0)
--- Soft glow ring around icon
 local iconStroke = Instance.new("UIStroke", bubbleIcon)
 iconStroke.Color       = Color3.fromRGB(230, 206, 226)
 iconStroke.Thickness   = 1.8
 iconStroke.Transparency = 0.45
 
--- "VanillaHub" name under icon
 local iconName = Instance.new("TextLabel", bubbleRow)
 iconName.Size               = UDim2.new(0, 64, 0, 16)
 iconName.Position           = UDim2.new(0, 0, 0.5, 28)
@@ -556,15 +584,13 @@ iconName.TextColor3         = THEME_TEXT
 iconName.TextXAlignment     = Enum.TextXAlignment.Center
 iconName.Text               = "Vanilla"
 
--- Tail triangle (the little pointy bit of the bubble)
 local bubbleTail = Instance.new("ImageLabel", bubbleRow)
 bubbleTail.Size               = UDim2.new(0, 14, 0, 20)
 bubbleTail.Position           = UDim2.new(0, 62, 0.5, -10)
 bubbleTail.BackgroundTransparency = 1
-bubbleTail.Image              = "rbxassetid://0" -- transparent, we'll fake it with a rotated frame
-bubbleTail.Visible            = false -- hidden; we draw a rotated square below instead
+bubbleTail.Image              = "rbxassetid://0"
+bubbleTail.Visible            = false
 
--- Tail drawn as a rotated square peeking out from behind the bubble
 local tailShape = Instance.new("Frame", bubbleRow)
 tailShape.Size               = UDim2.new(0, 14, 0, 14)
 tailShape.Position           = UDim2.new(0, 64, 0.5, -7)
@@ -573,7 +599,6 @@ tailShape.BackgroundColor3   = Color3.fromRGB(36, 22, 38)
 tailShape.BorderSizePixel    = 0
 tailShape.ZIndex             = 1
 
--- Bubble body
 local bubbleBody = Instance.new("Frame", bubbleRow)
 bubbleBody.Size               = UDim2.new(1, -82, 0, 84)
 bubbleBody.Position           = UDim2.new(0, 72, 0.5, -42)
@@ -582,13 +607,11 @@ bubbleBody.BorderSizePixel    = 0
 bubbleBody.ZIndex             = 2
 Instance.new("UICorner", bubbleBody).CornerRadius = UDim.new(0, 14)
 
--- Glowy pink stroke on bubble
 local bubbleStroke = Instance.new("UIStroke", bubbleBody)
 bubbleStroke.Color       = Color3.fromRGB(230, 206, 226)
 bubbleStroke.Thickness   = 1.4
 bubbleStroke.Transparency = 0.55
 
--- Subtle inner glow gradient
 local bubbleGrad = Instance.new("UIGradient", bubbleBody)
 bubbleGrad.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0,  Color3.fromRGB(52, 30, 54)),
@@ -596,7 +619,6 @@ bubbleGrad.Color = ColorSequence.new({
 })
 bubbleGrad.Rotation = 135
 
--- Greeting line
 local bubbleGreeting = Instance.new("TextLabel", bubbleBody)
 bubbleGreeting.Size               = UDim2.new(1, -20, 0, 28)
 bubbleGreeting.Position           = UDim2.new(0, 14, 0, 10)
@@ -608,7 +630,6 @@ bubbleGreeting.TextXAlignment     = Enum.TextXAlignment.Left
 bubbleGreeting.Text               = "Hey " .. player.DisplayName .. "! 🌸"
 bubbleGreeting.ZIndex             = 3
 
--- Sub message line
 local bubbleMsg = Instance.new("TextLabel", bubbleBody)
 bubbleMsg.Size               = UDim2.new(1, -20, 0, 36)
 bubbleMsg.Position           = UDim2.new(0, 14, 0, 38)
@@ -1249,6 +1270,7 @@ end)
 local flySpeed = 100
 createPSlider("Fly Speed", 100, 500, 100, function(val) flySpeed = val end)
 
+-- ── FLY KEY BINDING ROW (toggle switch removed; Q key still fully functional) ──
 local flyKeyFrame = Instance.new("Frame", playerPage)
 flyKeyFrame.Size = UDim2.new(1,-12,0,32); flyKeyFrame.BackgroundColor3 = Color3.fromRGB(24,24,30)
 Instance.new("UICorner", flyKeyFrame).CornerRadius = UDim.new(0,6)
@@ -1273,8 +1295,9 @@ flyKeyBtn.MouseButton1Click:Connect(function()
     flyKeyBtn.BackgroundColor3 = Color3.fromRGB(60,100,60)
 end)
 
+-- Fly system (always available via Q key — no toggle switch UI)
 local isFlyEnabled = false
-local flyToggleEnabled = true
+local flyToggleEnabled = true  -- always true; key binding still works
 local flyBV, flyBG, flyConn
 
 local function stopFly()
@@ -1330,22 +1353,8 @@ end
 
 table.insert(cleanupTasks, stopFly)
 
-local _, setFlyToggle = createPToggle("Fly", true, function(val)
-    flyToggleEnabled = val
-    if val then
-        local char = Players.LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then
-            startFly()
-        else
-            Players.LocalPlayer.CharacterAdded:Wait()
-            task.wait(0.1)
-            startFly()
-        end
-    else
-        stopFly()
-    end
-end)
+-- NOTE: Fly toggle SWITCH removed from UI. Q key is fully functional via
+-- the unified input handler in Vanilla3. flyToggleEnabled stays true always.
 
 createPSep()
 createPSection("Character")
@@ -1421,7 +1430,7 @@ _G.VH = {
     stopFly          = stopFly,
     startFly         = startFly,
     butter           = { running = false, thread = nil },
-    flyToggleEnabled = true,
+    flyToggleEnabled = true,   -- always true; Q key binding works unconditionally
     isFlyEnabled     = false,
     currentFlyKey    = Enum.KeyCode.Q,
     waitingForFlyKey = false,
