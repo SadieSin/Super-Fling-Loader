@@ -375,9 +375,11 @@ local function sellLog(model)
     end
 end
 
--- ── Click Sell: save position → tp to log → claim → slam → return ────────────
--- No waiting loops inside — ownership is claimed in a single burst,
--- then the log is slammed and the player is snapped back immediately.
+-- ── Click Sell: full sequence in 1.5s total ───────────────────────────────────
+--   0.00s  save origin, tp next to log
+--   0.30s  claim ownership + slam log to sell point
+--   0.80s  wait so the server has time to register the position
+--   1.50s  tp player back to origin
 
 local function clickSellLog(model)
     if not (model and model.Parent) then return end
@@ -389,25 +391,27 @@ local function clickSellLog(model)
     local mainPart = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
     if not mainPart then return end
 
-    -- 1. Save standing position
+    -- 1. Save standing position, teleport next to log
     local originCF = hrp.CFrame
-
-    -- 2. Teleport next to the log
     hrp.CFrame = mainPart.CFrame * CFrame.new(0, 3, 4)
-    task.wait(0.05)
 
-    -- 3. Claim ownership — single burst, no per-iteration wait
+    task.wait(0.30)  -- give the server a moment to see us next to the log
+
+    -- 2. Claim ownership + slam (no waits inside)
     local dragger = RS:FindFirstChild("Interaction")
         and RS.Interaction:FindFirstChild("ClientIsDragging")
     if dragger then claimOwnership(dragger, model) end
-
-    -- 4. Slam log to sell point
     for _ = 1, 200 do
         mainPart.CFrame = CFrame.new(SELL_POS)
     end
 
-    -- 5. Return player immediately
+    task.wait(0.50)  -- allow server to process the position before we leave
+
+    -- 3. Snap back — total elapsed ≈ 0.30 + 0.50 = 0.80s before return,
+    --    leaving the remaining ~0.70s as buffer before the next click is responsive
     hrp.CFrame = originCF
+
+    task.wait(0.70)  -- cooldown so rapid clicks don't stack (total window = 1.5s)
 end
 
 -- ── Group select: all matching-class logs in workspace ────────────────────────
@@ -429,9 +433,16 @@ local function groupSelectLogs(targetModel)
 end
 
 -- ── Sell Selected: one log every 0.8s, loops until all gone ──────────────────
+-- sellOriginCF stores where the player was standing when the sell started
+-- so Cancel Sell can return them there.
+
+local sellOriginCF = nil
 
 local function sellSelected()
     if isSellRunning then return end
+
+    local char = player.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
 
     local queue = {}
     for model in pairs(woodSelected) do
@@ -442,6 +453,10 @@ local function sellSelected()
     if #queue == 0 then return end
 
     isSellRunning = true
+
+    -- Save the player's position the moment Sell Selected is pressed
+    sellOriginCF = hrp and hrp.CFrame or nil
+
     local total = #queue
     local done  = 0
 
@@ -495,6 +510,7 @@ local function sellSelected()
         end
 
         isSellRunning = false
+        sellOriginCF  = nil
         unhighlightAllWood()
 
         TweenService:Create(sellProgressFill, TweenInfo.new(0.2), {
@@ -615,10 +631,19 @@ end)
 
 createWButton("Cancel Sell", BTN_COLOR, function()
     isSellRunning = false
+
+    -- Teleport player back to where they were when Sell Selected started
+    local char = player.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp and sellOriginCF then
+        hrp.CFrame = sellOriginCF
+    end
+    sellOriginCF = nil
+
     if sellProgressContainer and sellProgressContainer.Visible then
         sellProgressLabel.Text = "Cancelled."
         task.delay(1.5, function()
-            TweenService:Create(sellProgressContainer, TweenInfo.new(0.4), {BackgroundTransparency=1}):Play()
+            TweenService:Create(sellProgressContainer, TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
             task.delay(0.45, function()
                 if sellProgressContainer then
                     sellProgressContainer.Visible = false
