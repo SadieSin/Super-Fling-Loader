@@ -193,6 +193,30 @@ main.BorderSizePixel = 0
 main.ClipsDescendants = true
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 
+-- ── GLOWING OUTLINE AROUND MAIN GUI ──────────────────────────────────────────
+-- Outer glow layer (soft, wide)
+local glowStroke = Instance.new("UIStroke", main)
+glowStroke.Color = Color3.fromRGB(210, 210, 220)
+glowStroke.Thickness = 2.2
+glowStroke.Transparency = 0.35
+
+-- Pulsing glow effect
+task.spawn(function()
+    while gui and gui.Parent do
+        TweenService:Create(glowStroke, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+            Transparency = 0.15,
+            Thickness = 2.8
+        }):Play()
+        task.wait(2.0)
+        if not (gui and gui.Parent) then break end
+        TweenService:Create(glowStroke, TweenInfo.new(2.0, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+            Transparency = 0.45,
+            Thickness = 1.8
+        }):Play()
+        task.wait(2.0)
+    end
+end)
+
 TweenService:Create(main, TweenInfo.new(0.65, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
     Size = UDim2.new(0, 520, 0, 340),
     BackgroundTransparency = 0
@@ -449,6 +473,11 @@ local function switchTab(targetName)
             BackgroundColor3 = Color3.fromRGB(18,18,18),
             TextColor3 = Color3.fromRGB(160,160,160)
         }):Play()
+        -- Remove active indicator
+        local indicator = activeTabButton:FindFirstChild("ActiveIndicator")
+        if indicator then
+            TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundTransparency = 1}):Play()
+        end
     end
     local btn = side:FindFirstChild(targetName:gsub("Tab",""))
     if btn then
@@ -457,6 +486,11 @@ local function switchTab(targetName)
             BackgroundColor3 = Color3.fromRGB(40,40,40),
             TextColor3 = THEME_TEXT
         }):Play()
+        -- Show active indicator
+        local indicator = btn:FindFirstChild("ActiveIndicator")
+        if indicator then
+            TweenService:Create(indicator, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
+        end
     end
 end
 
@@ -471,19 +505,69 @@ for _, name in ipairs(tabs) do
     btn.TextSize = 14
     btn.TextColor3 = Color3.fromRGB(160,160,160)
     btn.TextXAlignment = Enum.TextXAlignment.Left
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     local pad = Instance.new("UIPadding", btn)
     pad.PaddingLeft = UDim.new(0, 16)
+
+    -- Active indicator bar (left accent line)
+    local indicator = Instance.new("Frame", btn)
+    indicator.Name = "ActiveIndicator"
+    indicator.Size = UDim2.new(0, 3, 0.7, 0)
+    indicator.Position = UDim2.new(0, 4, 0.15, 0)
+    indicator.BackgroundColor3 = THEME_TEXT
+    indicator.BorderSizePixel = 0
+    indicator.BackgroundTransparency = 1
+    indicator.ZIndex = 3
+    Instance.new("UICorner", indicator).CornerRadius = UDim.new(1, 0)
+
+    -- Ripple effect container
+    local rippleContainer = Instance.new("Frame", btn)
+    rippleContainer.Size = UDim2.new(1, 0, 1, 0)
+    rippleContainer.BackgroundTransparency = 1
+    rippleContainer.BorderSizePixel = 0
+    rippleContainer.ZIndex = 2
+    rippleContainer.ClipsDescendants = true
+    Instance.new("UICorner", rippleContainer).CornerRadius = UDim.new(0, 6)
+
     btn.MouseEnter:Connect(function()
         if activeTabButton ~= btn then
-            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(28,28,28), TextColor3 = THEME_TEXT}):Play()
+            TweenService:Create(btn, TweenInfo.new(0.18), {
+                BackgroundColor3 = Color3.fromRGB(30,30,38),
+                TextColor3 = Color3.fromRGB(200, 185, 200)
+            }):Play()
         end
     end)
     btn.MouseLeave:Connect(function()
         if activeTabButton ~= btn then
-            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(18,18,18), TextColor3 = Color3.fromRGB(160,160,160)}):Play()
+            TweenService:Create(btn, TweenInfo.new(0.18), {
+                BackgroundColor3 = Color3.fromRGB(18,18,18),
+                TextColor3 = Color3.fromRGB(160,160,160)
+            }):Play()
         end
     end)
-    btn.MouseButton1Click:Connect(function() switchTab(name.."Tab") end)
+
+    -- Click ripple effect
+    btn.MouseButton1Click:Connect(function()
+        -- Spawn a ripple circle that expands and fades
+        task.spawn(function()
+            local ripple = Instance.new("Frame", rippleContainer)
+            ripple.Size = UDim2.new(0, 8, 0, 8)
+            ripple.Position = UDim2.new(0.5, -4, 0.5, -4)
+            ripple.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            ripple.BackgroundTransparency = 0.6
+            ripple.BorderSizePixel = 0
+            Instance.new("UICorner", ripple).CornerRadius = UDim.new(1, 0)
+
+            TweenService:Create(ripple, TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                Size = UDim2.new(0, 140, 0, 140),
+                Position = UDim2.new(0.5, -70, 0.5, -70),
+                BackgroundTransparency = 1.0
+            }):Play()
+            task.wait(0.4)
+            if ripple and ripple.Parent then ripple:Destroy() end
+        end)
+        switchTab(name.."Tab")
+    end)
 end
 
 switchTab("HomeTab")
@@ -525,12 +609,10 @@ end
 local homePage = pages["HomeTab"]
 
 -- ── CHAT BUBBLE WELCOME CARD ──────────────────────────────────────────────────
--- Layout: hub icon on the left, speech bubble pointing left on the right
 local bubbleRow = Instance.new("Frame", homePage)
 bubbleRow.Size = UDim2.new(1, 0, 0, 100)
 bubbleRow.BackgroundTransparency = 1
 
--- Hub icon (avatar side)
 local bubbleIcon = Instance.new("ImageLabel", bubbleRow)
 bubbleIcon.Size     = UDim2.new(0, 52, 0, 52)
 bubbleIcon.Position = UDim2.new(0, 6, 0.5, -26)
@@ -539,13 +621,11 @@ bubbleIcon.BorderSizePixel  = 0
 bubbleIcon.ScaleType        = Enum.ScaleType.Fit
 bubbleIcon.Image            = "rbxassetid://97128823316544"
 Instance.new("UICorner", bubbleIcon).CornerRadius = UDim.new(1, 0)
--- Soft glow ring around icon
 local iconStroke = Instance.new("UIStroke", bubbleIcon)
 iconStroke.Color       = Color3.fromRGB(230, 206, 226)
 iconStroke.Thickness   = 1.8
 iconStroke.Transparency = 0.45
 
--- "VanillaHub" name under icon
 local iconName = Instance.new("TextLabel", bubbleRow)
 iconName.Size               = UDim2.new(0, 64, 0, 16)
 iconName.Position           = UDim2.new(0, 0, 0.5, 28)
@@ -556,15 +636,6 @@ iconName.TextColor3         = THEME_TEXT
 iconName.TextXAlignment     = Enum.TextXAlignment.Center
 iconName.Text               = "Vanilla"
 
--- Tail triangle (the little pointy bit of the bubble)
-local bubbleTail = Instance.new("ImageLabel", bubbleRow)
-bubbleTail.Size               = UDim2.new(0, 14, 0, 20)
-bubbleTail.Position           = UDim2.new(0, 62, 0.5, -10)
-bubbleTail.BackgroundTransparency = 1
-bubbleTail.Image              = "rbxassetid://0" -- transparent, we'll fake it with a rotated frame
-bubbleTail.Visible            = false -- hidden; we draw a rotated square below instead
-
--- Tail drawn as a rotated square peeking out from behind the bubble
 local tailShape = Instance.new("Frame", bubbleRow)
 tailShape.Size               = UDim2.new(0, 14, 0, 14)
 tailShape.Position           = UDim2.new(0, 64, 0.5, -7)
@@ -573,7 +644,6 @@ tailShape.BackgroundColor3   = Color3.fromRGB(36, 22, 38)
 tailShape.BorderSizePixel    = 0
 tailShape.ZIndex             = 1
 
--- Bubble body
 local bubbleBody = Instance.new("Frame", bubbleRow)
 bubbleBody.Size               = UDim2.new(1, -82, 0, 84)
 bubbleBody.Position           = UDim2.new(0, 72, 0.5, -42)
@@ -582,13 +652,11 @@ bubbleBody.BorderSizePixel    = 0
 bubbleBody.ZIndex             = 2
 Instance.new("UICorner", bubbleBody).CornerRadius = UDim.new(0, 14)
 
--- Glowy pink stroke on bubble
 local bubbleStroke = Instance.new("UIStroke", bubbleBody)
 bubbleStroke.Color       = Color3.fromRGB(230, 206, 226)
 bubbleStroke.Thickness   = 1.4
 bubbleStroke.Transparency = 0.55
 
--- Subtle inner glow gradient
 local bubbleGrad = Instance.new("UIGradient", bubbleBody)
 bubbleGrad.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0,  Color3.fromRGB(52, 30, 54)),
@@ -596,7 +664,6 @@ bubbleGrad.Color = ColorSequence.new({
 })
 bubbleGrad.Rotation = 135
 
--- Greeting line
 local bubbleGreeting = Instance.new("TextLabel", bubbleBody)
 bubbleGreeting.Size               = UDim2.new(1, -20, 0, 28)
 bubbleGreeting.Position           = UDim2.new(0, 14, 0, 10)
@@ -608,7 +675,6 @@ bubbleGreeting.TextXAlignment     = Enum.TextXAlignment.Left
 bubbleGreeting.Text               = "Hey " .. player.DisplayName .. "! 🌸"
 bubbleGreeting.ZIndex             = 3
 
--- Sub message line
 local bubbleMsg = Instance.new("TextLabel", bubbleBody)
 bubbleMsg.Size               = UDim2.new(1, -20, 0, 36)
 bubbleMsg.Position           = UDim2.new(0, 14, 0, 38)
@@ -1104,7 +1170,7 @@ mouse.Move:Connect(function()
 end)
 
 -- ════════════════════════════════════════════════════
--- PLAYER TAB
+-- PLAYER TAB  (Fly toggle REMOVED — fly still works via Q key)
 -- ════════════════════════════════════════════════════
 local playerPage = pages["PlayerTab"]
 
@@ -1249,6 +1315,7 @@ end)
 local flySpeed = 100
 createPSlider("Fly Speed", 100, 500, 100, function(val) flySpeed = val end)
 
+-- Fly key button (kept — no toggle above it)
 local flyKeyFrame = Instance.new("Frame", playerPage)
 flyKeyFrame.Size = UDim2.new(1,-12,0,32); flyKeyFrame.BackgroundColor3 = Color3.fromRGB(24,24,30)
 Instance.new("UICorner", flyKeyFrame).CornerRadius = UDim.new(0,6)
@@ -1273,8 +1340,20 @@ flyKeyBtn.MouseButton1Click:Connect(function()
     flyKeyBtn.BackgroundColor3 = Color3.fromRGB(60,100,60)
 end)
 
+-- Fly hint label
+local flyHint = Instance.new("TextLabel", playerPage)
+flyHint.Size = UDim2.new(1,-12,0,22)
+flyHint.BackgroundColor3 = Color3.fromRGB(18,18,24)
+flyHint.BorderSizePixel = 0
+flyHint.Font = Enum.Font.Gotham; flyHint.TextSize = 11
+flyHint.TextColor3 = Color3.fromRGB(100,100,130)
+flyHint.TextWrapped = true; flyHint.TextXAlignment = Enum.TextXAlignment.Left
+flyHint.Text = "  Press your Fly Key (Q) to toggle fly on/off"
+Instance.new("UICorner", flyHint).CornerRadius = UDim.new(0,6)
+Instance.new("UIPadding", flyHint).PaddingLeft = UDim.new(0,6)
+
 local isFlyEnabled = false
-local flyToggleEnabled = true
+local flyToggleEnabled = true   -- always true now (no toggle to disable it)
 local flyBV, flyBG, flyConn
 
 local function stopFly()
@@ -1329,23 +1408,6 @@ local function startFly()
 end
 
 table.insert(cleanupTasks, stopFly)
-
-local _, setFlyToggle = createPToggle("Fly", true, function(val)
-    flyToggleEnabled = val
-    if val then
-        local char = Players.LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then
-            startFly()
-        else
-            Players.LocalPlayer.CharacterAdded:Wait()
-            task.wait(0.1)
-            startFly()
-        end
-    else
-        stopFly()
-    end
-end)
 
 createPSep()
 createPSection("Character")
@@ -1421,7 +1483,7 @@ _G.VH = {
     stopFly          = stopFly,
     startFly         = startFly,
     butter           = { running = false, thread = nil },
-    flyToggleEnabled = true,
+    flyToggleEnabled = true,   -- always true, Q toggles fly directly
     isFlyEnabled     = false,
     currentFlyKey    = Enum.KeyCode.Q,
     waitingForFlyKey = false,
