@@ -17,4 +17,7 @@ loadstring(game:HttpGet(BASE .. "Vanilla3.lua"))()
 print("[VanillaHub] Loading Part 4...")
 loadstring(game:HttpGet(BASE .. "Vanilla4.lua"))()
 
+print("[VanillaHub] Loading Part 5...")
+loadstring(game:HttpGet(BASE .. "Vanilla5.lua"))()
+
 print("[VanillaHub] All parts loaded!")
