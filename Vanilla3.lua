@@ -335,7 +335,9 @@ local function unhighlightAllWood()
     woodSelected = {}
 end
 
--- ── Sell a single log model ───────────────────────────────────────────────────
+-- ── Sell a single log (used by Sell Selected — no character teleport) ────────
+-- Teleports the character next to the log to claim net ownership,
+-- slams the log to SELL_POS, then stays put (caller handles timing).
 
 local function sellLog(model)
     if not (model and model.Parent) then return end
@@ -347,15 +349,13 @@ local function sellLog(model)
     local mainPart = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
     if not mainPart then return end
 
-    local targetCF = CFrame.new(SELL_POS)
-
-    -- Walk close if needed
+    -- Move next to the log if we're too far away to claim ownership
     if (hrp.Position - mainPart.Position).Magnitude > 25 then
         hrp.CFrame = mainPart.CFrame * CFrame.new(0, 3, 4)
-        task.wait(0.1)
+        task.wait(0.08)
     end
 
-    -- Claim net ownership (same pattern as Vanilla2 wood section)
+    -- Claim net ownership
     local dragger = RS:FindFirstChild("Interaction")
         and RS.Interaction:FindFirstChild("ClientIsDragging")
     if dragger then
@@ -367,10 +367,50 @@ local function sellLog(model)
 
     -- Slam to sell point
     for _ = 1, 200 do
-        mainPart.CFrame = targetCF
+        mainPart.CFrame = CFrame.new(SELL_POS)
+    end
+end
+
+-- ── Click Sell: teleport to log, sell it, return player to origin ─────────────
+-- Saves the player's standing position BEFORE moving, goes to the log,
+-- fires net ownership + slams CFrame, then teleports the player back.
+
+local function clickSellLog(model)
+    if not (model and model.Parent) then return end
+    local RS   = game:GetService("ReplicatedStorage")
+    local char = player.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local mainPart = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
+    if not mainPart then return end
+
+    -- 1. Save where the player is standing right now
+    local originCF = hrp.CFrame
+
+    -- 2. Teleport next to the log
+    hrp.CFrame = mainPart.CFrame * CFrame.new(0, 3, 4)
+    task.wait(0.08)
+
+    -- 3. Claim net ownership
+    local dragger = RS:FindFirstChild("Interaction")
+        and RS.Interaction:FindFirstChild("ClientIsDragging")
+    if dragger then
+        for _ = 1, 50 do
+            task.wait(0.05)
+            dragger:FireServer(model)
+        end
     end
 
-    task.wait(0.5)
+    -- 4. Slam log to sell point
+    for _ = 1, 200 do
+        mainPart.CFrame = CFrame.new(SELL_POS)
+    end
+
+    task.wait(0.1)
+
+    -- 5. Return the player to where they were standing before
+    hrp.CFrame = originCF
 end
 
 -- ── Group select: all matching-class logs in workspace ────────────────────────
@@ -391,7 +431,7 @@ local function groupSelectLogs(targetModel)
     end
 end
 
--- ── Sell Selected: loops until all logs are gone ──────────────────────────────
+-- ── Sell Selected: teleports one log every 0.8s, loops until all gone ────────
 
 local function sellSelected()
     if isSellRunning then return end
@@ -410,11 +450,12 @@ local function sellSelected()
 
     sellProgressContainer.Visible = true
     sellProgressFill.Size = UDim2.new(0,0,1,0)
-    sellProgressLabel.Text = "Selling... 0 / " .. total
+    sellProgressLabel.Text = "Selling Selected... 0 / " .. total
 
     task.spawn(function()
         local pass = 1
         while isSellRunning do
+            -- Rebuild remaining list each pass (models despawn as they're sold)
             local remaining = {}
             for _, model in ipairs(queue) do
                 if model and model.Parent then
@@ -423,24 +464,27 @@ local function sellSelected()
             end
             if #remaining == 0 then break end
 
-            sellProgressLabel.Text = "Pass " .. pass .. " — selling " .. #remaining .. " log(s)..."
-
             for _, model in ipairs(remaining) do
                 if not isSellRunning then break end
+
                 sellLog(model)
                 unhighlightWood(model)
                 done = done + 1
-                local pct = math.clamp(done / math.max(total,1), 0, 1)
+
+                local pct = math.clamp(done / math.max(total, 1), 0, 1)
                 TweenService:Create(sellProgressFill, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {
-                    Size = UDim2.new(pct,0,1,0)
+                    Size = UDim2.new(pct, 0, 1, 0)
                 }):Play()
-                sellProgressLabel.Text = "Selling... " .. done .. " / " .. total
+                sellProgressLabel.Text = "Selling Selected... " .. done .. " / " .. total
+
+                -- 0.8 second gap between each log
+                task.wait(0.8)
             end
 
-            task.wait(1.5)
+            -- After a full pass, wait briefly then check for any that bounced back
+            task.wait(1.2)
             pass = pass + 1
 
-            -- Check if anything survived (network lag / bounced back)
             local stillHere = 0
             for _, model in ipairs(queue) do
                 if model and model.Parent then
@@ -457,10 +501,10 @@ local function sellSelected()
         unhighlightAllWood()
 
         TweenService:Create(sellProgressFill, TweenInfo.new(0.2), {
-            Size = UDim2.new(1,0,1,0),
-            BackgroundColor3 = Color3.fromRGB(60,200,110)
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundColor3 = Color3.fromRGB(60, 200, 110)
         }):Play()
-        sellProgressLabel.Text = "Done! All logs sent to dropoff."
+        sellProgressLabel.Text = "Selling Selected... Done!"
 
         task.delay(2.5, function()
             if sellProgressContainer then
@@ -472,8 +516,8 @@ local function sellSelected()
                         sellProgressContainer.Visible = false
                         sellProgressContainer.BackgroundTransparency = 0
                         sellProgressFill.BackgroundTransparency = 0
-                        sellProgressFill.BackgroundColor3 = Color3.fromRGB(80,200,120)
-                        sellProgressFill.Size = UDim2.new(0,0,1,0)
+                        sellProgressFill.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+                        sellProgressFill.Size = UDim2.new(0, 0, 1, 0)
                         sellProgressLabel.TextTransparency = 0
                     end
                 end)
@@ -497,7 +541,7 @@ local function connectWoodMouse()
 
         if clickSellEnabled then
             if isWoodLog(model) then
-                task.spawn(function() sellLog(model) end)
+                task.spawn(function() clickSellLog(model) end)
             end
         elseif groupSelectEnabled then
             if isWoodLog(model) then
