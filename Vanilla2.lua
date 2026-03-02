@@ -3,6 +3,7 @@
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
 
+-- Guard: if _G.VH is missing, Vanilla1 wasn't executed first (or was already cleaned up)
 if not _G.VH then
     warn("[VanillaHub] Vanilla2: _G.VH not found. Execute Vanilla1 first.")
     return
@@ -46,7 +47,7 @@ local function createWorldToggle(text, defaultState, callback)
     local lbl = Instance.new("TextLabel", frame)
     lbl.Size = UDim2.new(1,-50,1,0); lbl.Position = UDim2.new(0,10,0,0)
     lbl.BackgroundTransparency = 1; lbl.Text = text; lbl.Font = Enum.Font.GothamSemibold
-    lbl.TextSize = 13; lbl.TextColor3 = Color3.fromRGB(253, 200, 255); lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextSize = 13; lbl.TextColor3 = Color3.fromRGB(220,220,220); lbl.TextXAlignment = Enum.TextXAlignment.Left
     local tb = Instance.new("TextButton", frame)
     tb.Size = UDim2.new(0,34,0,18); tb.Position = UDim2.new(1,-44,0.5,-9)
     tb.BackgroundColor3 = defaultState and Color3.fromRGB(60,180,60) or BTN_COLOR_W
@@ -159,6 +160,7 @@ createWorldToggle("Walk On Water", false, function(v)
 end)
 
 createWorldToggle("Remove Water", false, function(v)
+    -- Track state so onExit can restore water if gui is closed while active
     if _G.VH and _G.VH.setRemovedWater then _G.VH.setRemovedWater(v) end
     for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
         if p:IsA("Part") and p.Name == "Water" then
@@ -169,7 +171,7 @@ createWorldToggle("Remove Water", false, function(v)
 end)
 
 -- ════════════════════════════════════════════════════
--- DUPE TAB
+-- DUPE TAB  (Butter Leak system)
 -- ════════════════════════════════════════════════════
 local dupePage = pages["DupeTab"]
 
@@ -192,7 +194,7 @@ local function createDBtn(text, color, callback)
     local btn = Instance.new("TextButton", dupePage)
     btn.Size = UDim2.new(1,-12,0,32); btn.BackgroundColor3 = color
     btn.Text = text; btn.Font = Enum.Font.GothamSemibold; btn.TextSize = 13
-    btn.TextColor3 = Color3.fromRGB(253, 200, 255); btn.BorderSizePixel = 0
+    btn.TextColor3 = Color3.fromRGB(210,210,220); btn.BorderSizePixel = 0
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
     local hov = Color3.fromRGB(math.min(color.R*255+20,255)/255, math.min(color.G*255+8,255)/255, math.min(color.B*255+20,255)/255)
     btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3=hov}):Play() end)
@@ -208,7 +210,7 @@ local function createDToggle(text, default, callback)
     local lbl = Instance.new("TextLabel", frame)
     lbl.Size = UDim2.new(1,-50,1,0); lbl.Position = UDim2.new(0,10,0,0)
     lbl.BackgroundTransparency = 1; lbl.Text = text; lbl.Font = Enum.Font.GothamSemibold
-    lbl.TextSize = 13; lbl.TextColor3 = Color3.fromRGB(253, 200, 255); lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextSize = 13; lbl.TextColor3 = Color3.fromRGB(220,220,220); lbl.TextXAlignment = Enum.TextXAlignment.Left
     local tb = Instance.new("TextButton", frame)
     tb.Size = UDim2.new(0,34,0,18); tb.Position = UDim2.new(1,-44,0.5,-9)
     tb.BackgroundColor3 = default and Color3.fromRGB(60,180,60) or BTN_COLOR
@@ -261,7 +263,7 @@ local function makeDupeDropdown(labelText)
     lbl.Text               = labelText
     lbl.Font               = Enum.Font.GothamBold
     lbl.TextSize           = 12
-    lbl.TextColor3         = Color3.fromRGB(253, 200, 255)
+    lbl.TextColor3         = Color3.fromRGB(140,140,170)
     lbl.TextXAlignment     = Enum.TextXAlignment.Left
 
     local selFrame = Instance.new("Frame", header)
@@ -289,7 +291,7 @@ local function makeDupeDropdown(labelText)
     selLbl.Text               = "Select a player..."
     selLbl.Font               = Enum.Font.GothamSemibold
     selLbl.TextSize           = 12
-    selLbl.TextColor3         = Color3.fromRGB(253, 200, 255)
+    selLbl.TextColor3         = Color3.fromRGB(110,110,140)
     selLbl.TextXAlignment     = Enum.TextXAlignment.Left
     selLbl.TextTruncate       = Enum.TextTruncate.AtEnd
 
@@ -300,7 +302,7 @@ local function makeDupeDropdown(labelText)
     arrowLbl.Text               = "▾"
     arrowLbl.Font               = Enum.Font.GothamBold
     arrowLbl.TextSize           = 14
-    arrowLbl.TextColor3         = Color3.fromRGB(253, 200, 255)
+    arrowLbl.TextColor3         = Color3.fromRGB(120,120,160)
     arrowLbl.TextXAlignment     = Enum.TextXAlignment.Center
 
     local headerBtn = Instance.new("TextButton", selFrame)
@@ -341,8 +343,8 @@ local function makeDupeDropdown(labelText)
     local function setSelected(name, userId)
         selected = name
         selLbl.Text      = name
-        selLbl.TextColor3 = Color3.fromRGB(253, 200, 255)
-        arrowLbl.TextColor3 = Color3.fromRGB(253, 200, 255)
+        selLbl.TextColor3 = Color3.fromRGB(220,225,255)
+        arrowLbl.TextColor3 = Color3.fromRGB(160,160,210)
         outerStroke.Color = Color3.fromRGB(90,90,160)
         if userId then
             pcall(function()
@@ -354,9 +356,9 @@ local function makeDupeDropdown(labelText)
     local function clearSelected()
         selected = ""
         selLbl.Text       = "Select a player..."
-        selLbl.TextColor3 = Color3.fromRGB(253, 200, 255)
+        selLbl.TextColor3 = Color3.fromRGB(110,110,140)
         avatar.Image      = ""
-        arrowLbl.TextColor3 = Color3.fromRGB(253, 200, 255)
+        arrowLbl.TextColor3 = Color3.fromRGB(120,120,160)
         outerStroke.Color = Color3.fromRGB(60,60,90)
     end
 
@@ -393,7 +395,7 @@ local function makeDupeDropdown(labelText)
             nameLbl.Text               = plr.Name
             nameLbl.Font               = Enum.Font.GothamSemibold
             nameLbl.TextSize           = 13
-            nameLbl.TextColor3         = Color3.fromRGB(253, 200, 255)
+            nameLbl.TextColor3         = isSelected and Color3.fromRGB(210,215,255) or Color3.fromRGB(200,200,215)
             nameLbl.TextXAlignment     = Enum.TextXAlignment.Left
             nameLbl.TextTruncate       = Enum.TextTruncate.AtEnd
             if isSelected then
@@ -518,7 +520,7 @@ Instance.new("UICorner", sdot).CornerRadius = UDim.new(1,0)
 local dupeStatusLbl = Instance.new("TextLabel", dupeStatusFrame)
 dupeStatusLbl.Size = UDim2.new(1,-28,1,0); dupeStatusLbl.Position = UDim2.new(0,24,0,0)
 dupeStatusLbl.BackgroundTransparency = 1; dupeStatusLbl.Font = Enum.Font.Gotham; dupeStatusLbl.TextSize = 12
-dupeStatusLbl.TextColor3 = Color3.fromRGB(253, 200, 255); dupeStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+dupeStatusLbl.TextColor3 = Color3.fromRGB(150,150,170); dupeStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
 dupeStatusLbl.Text = "Ready"
 
 local function setDupeStatus(msg, active)
@@ -534,7 +536,7 @@ local function makeDupeProgress(labelText)
     local topLbl = Instance.new("TextLabel", container)
     topLbl.Size = UDim2.new(0.6,0,0,18); topLbl.Position = UDim2.new(0,10,0,4)
     topLbl.BackgroundTransparency = 1; topLbl.Font = Enum.Font.GothamSemibold; topLbl.TextSize = 11
-    topLbl.TextColor3 = Color3.fromRGB(253, 200, 255); topLbl.TextXAlignment = Enum.TextXAlignment.Left
+    topLbl.TextColor3 = Color3.fromRGB(180,180,220); topLbl.TextXAlignment = Enum.TextXAlignment.Left
     topLbl.Text = labelText
     local cntLbl = Instance.new("TextLabel", container)
     cntLbl.Size = UDim2.new(0.4,-10,0,18); cntLbl.Position = UDim2.new(0.6,0,0,4)
@@ -700,9 +702,11 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
         local teleportedParts  = {}
         local ignoredParts     = {}
         local truckDestPositions = {}
+
         local ABOVE_TRUCK_Y = 2.70
 
         if getTrucks() and _G.VH.butter.running then
+
             local giverTrucks = {}
             for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
                 if v.Name == "Owner" and tostring(v.Value) == giverName then
@@ -787,6 +791,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                     truckDone += 1; setProgTrucks(truckDone, truckCount)
                 end
 
+                -- First retry pass after initial wait
                 task.wait(5)
                 local retryList = {}
                 for _, data in ipairs(teleportedParts) do
@@ -816,7 +821,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                                 Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
                             end
                             RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                            task.wait(0.6)
+                            task.wait(0.6) -- ← updated from 0.1
                             item.CFrame = data.TargetCFrame
                             cargoDone = cargoTotal - #retryList
                             setProgTrucks(cargoDone, cargoTotal)
