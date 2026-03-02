@@ -156,16 +156,6 @@ local function onExit()
         end
     end)
 
-    -- Restore water visibility on exit
-    pcall(function()
-        for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
-            if p:IsA("Part") and p.Name == "Water" then
-                p.Transparency = 0.5
-                p.CanCollide   = false
-            end
-        end
-    end)
-
     -- Destroy teleport circle marker if it survived
     pcall(function()
         if workspace:FindFirstChild("VanillaHubTpCircle") then
@@ -1024,7 +1014,6 @@ local mouseIsDragging = false
 
 mouse.Button1Down:Connect(function()
     mouseIsDragging = true
-    -- Item tab handling
     if lassoTool then
         lassoStartPos = Vector2.new(mouse.X, mouse.Y)
         lassoFrame.Size = UDim2.new(0,0,0,0)
@@ -1160,7 +1149,7 @@ local function createPToggle(text, defaultState, callback)
     circle.BackgroundColor3 = Color3.fromRGB(255,255,255)
     Instance.new("UICorner", circle).CornerRadius = UDim.new(1,0)
     local toggled = defaultState
-    -- NOTE: We do NOT call callback on creation for Fly — it should be off at load
+    if callback then callback(toggled) end
     local function setToggled(val)
         toggled = val
         TweenService:Create(tb, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {
@@ -1190,6 +1179,107 @@ createPSlider("Jumpower", 50, 300, 50, function(val)
     savedJumpPower = val
     local char = player.Character
     if char and char:FindFirstChild("Humanoid") then char.Humanoid.JumpPower = val end
+end)
+
+local flySpeed = 100
+createPSlider("Fly Speed", 100, 500, 100, function(val) flySpeed = val end)
+
+local flyKeyFrame = Instance.new("Frame", playerPage)
+flyKeyFrame.Size = UDim2.new(1,-12,0,32); flyKeyFrame.BackgroundColor3 = Color3.fromRGB(24,24,30)
+Instance.new("UICorner", flyKeyFrame).CornerRadius = UDim.new(0,6)
+local flyKeyLabel = Instance.new("TextLabel", flyKeyFrame)
+flyKeyLabel.Size = UDim2.new(0.6,0,1,0); flyKeyLabel.Position = UDim2.new(0,10,0,0)
+flyKeyLabel.BackgroundTransparency = 1; flyKeyLabel.Font = Enum.Font.GothamSemibold; flyKeyLabel.TextSize = 13
+flyKeyLabel.TextColor3 = Color3.fromRGB(220,220,220); flyKeyLabel.TextXAlignment = Enum.TextXAlignment.Left
+flyKeyLabel.Text = "Fly Key"
+local currentFlyKey = Enum.KeyCode.Q
+local waitingForFlyKey = false
+local flyKeyBtn = Instance.new("TextButton", flyKeyFrame)
+flyKeyBtn.Size = UDim2.new(0,60,0,22); flyKeyBtn.Position = UDim2.new(1,-68,0.5,-11)
+flyKeyBtn.BackgroundColor3 = BTN_COLOR; flyKeyBtn.Font = Enum.Font.GothamSemibold
+flyKeyBtn.TextSize = 12; flyKeyBtn.TextColor3 = Color3.fromRGB(210,210,220); flyKeyBtn.Text = "Q"
+flyKeyBtn.BorderSizePixel = 0; Instance.new("UICorner", flyKeyBtn).CornerRadius = UDim.new(0,6)
+flyKeyBtn.MouseEnter:Connect(function() TweenService:Create(flyKeyBtn, TweenInfo.new(0.15), {BackgroundColor3 = BTN_HOVER}):Play() end)
+flyKeyBtn.MouseLeave:Connect(function() TweenService:Create(flyKeyBtn, TweenInfo.new(0.15), {BackgroundColor3 = BTN_COLOR}):Play() end)
+flyKeyBtn.MouseButton1Click:Connect(function()
+    if _G.VH and _G.VH.waitingForFlyKey then return end
+    if _G.VH then _G.VH.waitingForFlyKey = true end
+    flyKeyBtn.Text = "..."
+    flyKeyBtn.BackgroundColor3 = Color3.fromRGB(60,100,60)
+end)
+
+local isFlyEnabled = false
+local flyToggleEnabled = true
+local flyBV, flyBG, flyConn
+
+local function stopFly()
+    isFlyEnabled = false
+    if _G.VH then _G.VH.isFlyEnabled = false end
+    if flyConn then flyConn:Disconnect(); flyConn = nil end
+    if flyBV and flyBV.Parent then flyBV:Destroy(); flyBV = nil end
+    if flyBG and flyBG.Parent then flyBG:Destroy(); flyBG = nil end
+    local char = player.Character
+    if char and char:FindFirstChild("Humanoid") then
+        char.Humanoid.PlatformStand = false
+    end
+end
+
+local function startFly()
+    stopFly()
+    isFlyEnabled = true
+    if _G.VH then _G.VH.isFlyEnabled = true end
+    local char = player.Character
+    if not char then isFlyEnabled = false; return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not root or not hum then isFlyEnabled = false; return end
+    hum.PlatformStand = true
+    flyBV = Instance.new("BodyVelocity", root)
+    flyBV.MaxForce = Vector3.new(1e5,1e5,1e5)
+    flyBV.Velocity = Vector3.zero
+    flyBG = Instance.new("BodyGyro", root)
+    flyBG.MaxTorque = Vector3.new(1e5,1e5,1e5)
+    flyBG.P = 1e4; flyBG.D = 100
+    flyConn = RunService.Heartbeat:Connect(function()
+        if not (flyBV and flyBV.Parent and flyBG and flyBG.Parent) then return end
+        local char = player.Character
+        local hum = char and char:FindFirstChild("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not (hum and root) then return end
+        local cam = workspace.CurrentCamera
+        local cf = cam.CFrame
+        local UIS = UserInputService
+        local dir = Vector3.zero
+        if UIS:IsKeyDown(Enum.KeyCode.W) then dir = dir + cf.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then dir = dir - cf.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then dir = dir - cf.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then dir = dir + cf.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0,1,0) end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0,1,0) end
+        hum.PlatformStand = true
+        flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        flyBV.Velocity = dir.Magnitude > 0 and dir.Unit * flySpeed or Vector3.zero
+        flyBG.CFrame = cf
+    end)
+end
+
+table.insert(cleanupTasks, stopFly)
+
+local _, setFlyToggle = createPToggle("Fly", true, function(val)
+    flyToggleEnabled = val
+    if val then
+        local char = Players.LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            startFly()
+        else
+            Players.LocalPlayer.CharacterAdded:Wait()
+            task.wait(0.1)
+            startFly()
+        end
+    else
+        stopFly()
+    end
 end)
 
 createPSep()
@@ -1262,7 +1352,14 @@ _G.VH = {
     BTN_HOVER        = BTN_HOVER,
     switchTab        = switchTab,
     toggleGUI        = toggleGUI,
+    stopFly          = stopFly,
+    startFly         = startFly,
     butter           = { running = false, thread = nil },
+    flyToggleEnabled = true,
+    isFlyEnabled     = false,
+    currentFlyKey    = Enum.KeyCode.Q,
+    waitingForFlyKey = false,
+    flyKeyBtn        = flyKeyBtn,
     currentToggleKey = currentToggleKey,
     waitingForKeyGUI = waitingForKeyGUI,
     keybindButtonGUI = nil,
