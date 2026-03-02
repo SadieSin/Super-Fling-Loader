@@ -554,7 +554,7 @@ iconName.Font               = Enum.Font.GothamBold
 iconName.TextSize           = 10
 iconName.TextColor3         = THEME_TEXT
 iconName.TextXAlignment     = Enum.TextXAlignment.Center
-iconName.Text               = "VanillaHub"
+iconName.Text               = "Vanilla"
 
 -- Tail triangle (the little pointy bit of the bubble)
 local bubbleTail = Instance.new("ImageLabel", bubbleRow)
