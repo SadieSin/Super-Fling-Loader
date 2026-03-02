@@ -297,7 +297,7 @@ local function makeDupeDropdown(labelText, parentPage)
     arrowLbl.Size               = UDim2.new(0,22,1,0)
     arrowLbl.Position           = UDim2.new(1,-24,0,0)
     arrowLbl.BackgroundTransparency = 1
-    arrowLbl.Text               = "v"
+    arrowLbl.Text               = "▾"
     arrowLbl.Font               = Enum.Font.GothamBold
     arrowLbl.TextSize           = 14
     arrowLbl.TextColor3         = Color3.fromRGB(120,120,160)
@@ -401,7 +401,7 @@ local function makeDupeDropdown(labelText, parentPage)
                 check.Size               = UDim2.new(0,24,1,0)
                 check.Position           = UDim2.new(1,-28,0,0)
                 check.BackgroundTransparency = 1
-                check.Text               = "v"
+                check.Text               = "✓"
                 check.Font               = Enum.Font.GothamBold
                 check.TextSize           = 14
                 check.TextColor3         = Color3.fromRGB(120,180,255)
@@ -595,40 +595,6 @@ table.insert(cleanupTasks, function()
     resetAllDupeProgress()
 end)
 
--- ════════════════════════════════════════════════════
--- FIX: Truck Seat Helper — fast non-breaking seat teleport
--- Uses rapid seat cycling to avoid physics desync
--- ════════════════════════════════════════════════════
-local function sitInSeat(seat, char, timeoutSecs)
-    local hum = char:FindFirstChild("Humanoid")
-    if not (hum and seat) then return false end
-    timeoutSecs = timeoutSecs or 3
-    local deadline = tick() + timeoutSecs
-    repeat
-        pcall(function() seat:Sit(hum) end)
-        task.wait(0.04)
-    until (hum.SeatPart and hum.SeatPart == seat) or tick() > deadline
-    return hum.SeatPart == seat
-end
-
-local function exitSeat(char, seat, RS)
-    local hum = char:FindFirstChild("Humanoid")
-    if not hum then return end
-    -- Try door hinge first (opens door cleanly)
-    local DoorHinge = seat and seat.Parent
-        and seat.Parent:FindFirstChild("PaintParts")
-        and seat.Parent.PaintParts:FindFirstChild("DoorLeft")
-        and seat.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
-    -- Jump out
-    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-    task.wait(0.05)
-    pcall(function() seat:Destroy() end)
-    task.wait(0.05)
-    if DoorHinge and RS then
-        for i = 1, 8 do pcall(function() RS.Interaction.RemoteProxy:FireServer(DoorHinge) end) end
-    end
-end
-
 createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
     if _G.VH.butter.running then setDupeStatus("Already running!", true) return end
     local giverName    = getGiverName()
@@ -736,6 +702,33 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
         local truckDestPositions = {}
         local ABOVE_TRUCK_Y = 2.70
 
+        -- helpers: noclip char on/off
+        local function setCharNoclip(state)
+            pcall(function()
+                for _, p in ipairs(Char:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = not state end
+                end
+            end)
+        end
+
+        -- anchor/unanchor a list of parts
+        local function setPartsAnchored(list, state)
+            for _, data in ipairs(list) do
+                local inst = data.Instance
+                if inst and inst.Parent then
+                    pcall(function() inst.Anchored = state end)
+                    -- also anchor all parts in the parent model
+                    if inst.Parent then
+                        for _, p in ipairs(inst.Parent:GetDescendants()) do
+                            if p:IsA("BasePart") then
+                                pcall(function() p.Anchored = state end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
         if getTrucks() and _G.VH.butter.running then
             local giverTrucks = {}
             for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
@@ -753,7 +746,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 setDupeStatus("Sending trucks...", true)
                 local truckDone = 0
 
-                for _, tModel in ipairs(giverTrucks) do
+                for tIdx, tModel in ipairs(giverTrucks) do
                     if not _G.VH.butter.running then break end
                     if not (tModel and tModel.Parent) then
                         truckDone += 1; setProgTrucks(truckDone, truckCount); continue
@@ -764,6 +757,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         truckDone += 1; setProgTrucks(truckDone, truckCount); continue
                     end
 
+                    -- mark truck + char parts as ignored for cargo sweep
                     for _, p in ipairs(tModel:GetDescendants()) do
                         if p:IsA("BasePart") then ignoredParts[p] = true end
                     end
@@ -771,87 +765,130 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         if p:IsA("BasePart") then ignoredParts[p] = true end
                     end
 
-                    -- FIX: Fast seat entry — rapid fire Sit calls every 0.04s
-                    local seated = sitInSeat(driveSeat, Char, 3)
-                    if not seated then
+                    -- teleport char next to truck so Sit works
+                    setCharNoclip(true)
+                    Char.HumanoidRootPart.CFrame = driveSeat.CFrame * CFrame.new(0, 0, 0)
+                    task.wait(0.05)
+
+                    driveSeat:Sit(Char.Humanoid)
+                    local sitTimeout = 0
+                    repeat task.wait(0.05); sitTimeout += 0.05
+                        if not Char.Humanoid.SeatPart then driveSeat:Sit(Char.Humanoid) end
+                    until Char.Humanoid.SeatPart or sitTimeout > 3
+
+                    setCharNoclip(false)
+
+                    if not Char.Humanoid.SeatPart then
                         truckDone += 1; setProgTrucks(truckDone, truckCount); continue
                     end
 
+                    -- compute destination
                     local mainPart = tModel:FindFirstChild("Main")
                     local truckSrcCF = mainPart and mainPart.CFrame or tModel:GetPrimaryPartCFrame()
                     local truckDestPos = truckSrcCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                     local truckDestCF  = CFrame.new(truckDestPos) * truckSrcCF.Rotation
                     table.insert(truckDestPositions, truckDestPos)
 
+                    -- sweep cargo inside truck bounding box
+                    local thisTruckCargo = {}
                     local mCF, mSz = tModel:GetBoundingBox()
                     for _, part in ipairs(workspace:GetDescendants()) do
                         if part:IsA("BasePart") and not ignoredParts[part]
                             and (part.Name == "Main" or part.Name == "WoodSection") then
                             if part:FindFirstChild("Weld") and part.Weld.Part1
                                 and part.Weld.Part1.Parent ~= part.Parent then continue end
-                            task.spawn(function()
-                                if isPointInside(part.Position, mCF, mSz) then
-                                    local PCF  = part.CFrame
-                                    local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-                                    local tOff = CFrame.new(nPos) * PCF.Rotation
-                                    part.CFrame = tOff
-                                    table.insert(teleportedParts, {Instance=part, OldPos=PCF.Position, TargetCFrame=tOff})
-                                end
-                            end)
+                            if isPointInside(part.Position, mCF, mSz) then
+                                local PCF  = part.CFrame
+                                local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                                local tOff = CFrame.new(nPos) * PCF.Rotation
+                                -- anchor + noclip cargo so it won't fall during transit
+                                pcall(function()
+                                    part.Anchored  = true
+                                    part.CanCollide = false
+                                    -- also freeze all parts in same model
+                                    for _, mp in ipairs(part.Parent:GetDescendants()) do
+                                        if mp:IsA("BasePart") then
+                                            mp.Anchored   = true
+                                            mp.CanCollide = false
+                                        end
+                                    end
+                                end)
+                                -- park cargo at destination immediately (anchored, so it stays)
+                                pcall(function() part.CFrame = tOff end)
+                                local entry = {Instance=part, OldPos=PCF.Position, TargetCFrame=tOff}
+                                table.insert(thisTruckCargo, entry)
+                                table.insert(teleportedParts, entry)
+                            end
                         end
                     end
 
+                    -- move the truck while seated (no mid-air freeze)
                     tModel:SetPrimaryPartCFrame(truckDestCF)
+                    task.wait(0.05) -- one frame settle
 
-                    -- FIX: Fast exit without breaking
-                    exitSeat(Char, driveSeat, RS)
+                    -- eject immediately into next truck or giver base
+                    local SitPart = Char.Humanoid.SeatPart
+                    local DoorHinge = SitPart and SitPart.Parent:FindFirstChild("PaintParts")
+                        and SitPart.Parent.PaintParts:FindFirstChild("DoorLeft")
+                        and SitPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
+
+                    local nextTruck = giverTrucks[tIdx + 1]
+                    local nextSeat  = nextTruck and nextTruck:FindFirstChild("DriveSeat")
+
+                    setCharNoclip(true)
+                    if SitPart then pcall(function() SitPart:Destroy() end) end
+                    task.wait(0.05)
+
+                    if nextSeat then
+                        -- teleport straight into next seat — no floating
+                        Char.HumanoidRootPart.CFrame = nextSeat.CFrame
+                    else
+                        -- last truck — go back to giver base
+                        Char.HumanoidRootPart.CFrame = CFrame.new(GiveBaseOrigin.Position + Vector3.new(0, 5, 0))
+                    end
+                    setCharNoclip(false)
+
+                    if DoorHinge then
+                        task.spawn(function()
+                            for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
+                        end)
+                    end
+
+                    -- 2 seconds after truck landed: release cargo (unanchor, re-enable collision)
+                    local capturedCargo = thisTruckCargo
+                    task.spawn(function()
+                        task.wait(2)
+                        for _, data in ipairs(capturedCargo) do
+                            local inst = data.Instance
+                            if inst and inst.Parent then
+                                pcall(function()
+                                    -- make sure it's at the right place one final time
+                                    inst.CFrame = data.TargetCFrame
+                                    inst.Anchored   = false
+                                    inst.CanCollide = true
+                                    for _, mp in ipairs(inst.Parent:GetDescendants()) do
+                                        if mp:IsA("BasePart") then
+                                            mp.Anchored   = false
+                                            mp.CanCollide = true
+                                        end
+                                    end
+                                end)
+                            end
+                        end
+                    end)
 
                     truckDone += 1; setProgTrucks(truckDone, truckCount)
                 end
 
-                task.wait(1)
-                local retryList = {}
-                for _, data in ipairs(teleportedParts) do
-                    if data.Instance and data.Instance.Parent
-                        and (data.Instance.Position - data.OldPos).Magnitude < 5 then
-                        ignoredParts[data.Instance] = nil
-                        table.insert(retryList, data)
-                    end
-                end
-                local cargoTotal = #teleportedParts
-                local cargoDone  = cargoTotal - #retryList
-                if cargoTotal > 0 then setProgTrucks(cargoDone, cargoTotal) end
-                repeat
-                    task.wait(1); retryList = {}
-                    for _, data in ipairs(teleportedParts) do
-                        if data.Instance and data.Instance.Parent
-                            and (data.Instance.Position - data.OldPos).Magnitude < 25 then
-                            table.insert(retryList, data)
-                        end
-                    end
-                    if #retryList > 0 then
-                        setDupeStatus("Retrying " .. #retryList .. " cargo...", true)
-                        for _, data in ipairs(retryList) do
-                            if not _G.VH.butter.running then break end
-                            local item = data.Instance
-                            while (Char.HumanoidRootPart.Position - item.Position).Magnitude > 25 do
-                                Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
-                            end
-                            RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                            task.wait(0.6)
-                            item.CFrame = data.TargetCFrame
-                            cargoDone = cargoTotal - #retryList
-                            setProgTrucks(cargoDone, cargoTotal)
-                        end
-                    end
-                until #retryList == 0 or not _G.VH.butter.running
-                setProgTrucks(cargoTotal, cargoTotal)
+                -- wait for all deferred cargo releases to finish then update bar
+                task.wait(2.1)
+                setProgTrucks(#teleportedParts, #teleportedParts)
             end
 
             if _G.VH.butter.running and Char:FindFirstChild("HumanoidRootPart") then
                 setDupeStatus("Returning to giver slot...", true)
                 Char.HumanoidRootPart.CFrame = CFrame.new(GiveBaseOrigin.Position + Vector3.new(0, 5, 0))
-                task.wait(0.5)
+                task.wait(0.3)
             end
         end
 
@@ -933,6 +970,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
             end
         end
 
+        -- ── WOOD DUPE — 0.6s between logs, noclip-style Heartbeat approach ──────────
         if getWood() and _G.VH.butter.running then
             local total = countItems(function(p)
                 return p:FindFirstChild("TreeClass") and (p:FindFirstChild("Main") or p:FindFirstChildOfClass("Part"))
@@ -1022,10 +1060,13 @@ createDBtn("Cancel Dupe", BTN_COLOR, function()
 end)
 
 -- ════════════════════════════════════════════════════
--- SINGLE TRUCK TELEPORT  (FIXED)
--- Fix 1: Can now teleport truck to self (you can be both giver and receiver)
--- Fix 2: After teleporting to another player, you are returned to your own base
--- Fix 3: Fast seat entry/exit without breaking character
+-- SINGLE TRUCK TELEPORT
+-- How it works:
+--   1. Select Giver and Receiver players from dropdowns
+--   2. The Giver must be sitting in a truck on their base
+--   3. Press "Teleport My Truck" — it teleports the truck
+--      (and any cargo including wood) to the receiver's base.
+--      Empty trucks are teleported even with no cargo.
 -- ════════════════════════════════════════════════════
 createDSep()
 createDSection("Single Truck Teleport")
@@ -1033,6 +1074,7 @@ createDSection("Single Truck Teleport")
 local _, getSingleGiver    = makeDupeDropdown("Giver",    dupePage)
 local _, getSingleReceiver = makeDupeDropdown("Receiver", dupePage)
 
+-- Status label
 local stFrame = Instance.new("Frame", dupePage)
 stFrame.Size = UDim2.new(1,-12,0,28); stFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
 stFrame.BorderSizePixel = 0
@@ -1052,29 +1094,7 @@ local function setSTStatus(msg, active)
     stDot.BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
 end
 
--- Helper: find base origin for a player name OR for the local player
-local function findBaseOrigin(targetName)
-    local LP = Players.LocalPlayer
-    -- Check by name first (handles both self and others)
-    for _, v in pairs(workspace.Properties:GetDescendants()) do
-        if v.Name == "Owner" then
-            local val = v.Value
-            -- ObjectValue (player reference) or StringValue (name)
-            local ownerName = ""
-            if typeof(val) == "Instance" then
-                ownerName = val.Name
-            else
-                ownerName = tostring(val)
-            end
-            if ownerName == targetName then
-                local origin = v.Parent:FindFirstChild("OriginSquare")
-                if origin then return origin end
-            end
-        end
-    end
-    return nil
-end
-
+-- Teleport button
 createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
     local giverName    = getSingleGiver()
     local receiverName = getSingleReceiver()
@@ -1090,7 +1110,7 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
     local Char = LP.Character or LP.CharacterAdded:Wait()
     local hum  = Char:FindFirstChild("Humanoid")
 
-    -- Must be seated in a truck
+    -- Must be seated in a truck (SeatPart with DriveSeat)
     local seatPart = hum and hum.SeatPart
     if not seatPart or seatPart.Name ~= "DriveSeat" then
         setSTStatus("You must be sitting in a truck!", false); return
@@ -1101,9 +1121,16 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
         setSTStatus("Couldn't find truck model!", false); return
     end
 
-    -- Find base origins — supports teleporting to self
-    local GiveBaseOrigin    = findBaseOrigin(giverName)
-    local ReceiverBaseOrigin = findBaseOrigin(receiverName)
+    -- Find giver and receiver base origins
+    local GiveBaseOrigin, ReceiverBaseOrigin
+
+    for _, v in pairs(workspace.Properties:GetDescendants()) do
+        if v.Name == "Owner" then
+            local val = tostring(v.Value)
+            if val == giverName    then GiveBaseOrigin    = v.Parent:FindFirstChild("OriginSquare") end
+            if val == receiverName then ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare") end
+        end
+    end
 
     if not GiveBaseOrigin then
         setSTStatus("Couldn't find giver's base!", false); return
@@ -1118,6 +1145,7 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
         local ignoredParts    = {}
         local teleportedParts = {}
 
+        -- Mark truck + char parts as ignored for cargo sweep
         for _, p in ipairs(tModel:GetDescendants()) do
             if p:IsA("BasePart") then ignoredParts[p] = true end
         end
@@ -1125,81 +1153,102 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
             if p:IsA("BasePart") then ignoredParts[p] = true end
         end
 
+        -- Compute destination CFrame
         local mainPart = tModel:FindFirstChild("Main")
         local truckSrcCF   = mainPart and mainPart.CFrame or tModel:GetPrimaryPartCFrame()
         local truckDestPos = truckSrcCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
         local truckDestCF  = CFrame.new(truckDestPos) * truckSrcCF.Rotation
 
+        -- Helper: point-in-bounding-box check
         local function isPointInside(point, boxCFrame, boxSize)
             local r = boxCFrame:PointToObjectSpace(point)
             return math.abs(r.X)<=boxSize.X/2 and math.abs(r.Y)<=boxSize.Y/2+2 and math.abs(r.Z)<=boxSize.Z/2
         end
 
+        -- Sweep + anchor + noclip cargo so it stays frozen during transit
         local mCF, mSz = tModel:GetBoundingBox()
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and not ignoredParts[part]
                 and (part.Name == "Main" or part.Name == "WoodSection") then
                 if part:FindFirstChild("Weld") and part.Weld.Part1
                     and part.Weld.Part1.Parent ~= part.Parent then continue end
-                task.spawn(function()
-                    if isPointInside(part.Position, mCF, mSz) then
-                        local PCF  = part.CFrame
-                        local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-                        local tOff = CFrame.new(nPos) * PCF.Rotation
-                        part.CFrame = tOff
-                        table.insert(teleportedParts, {Instance=part, OldPos=PCF.Position, TargetCFrame=tOff})
-                    end
-                end)
+                if isPointInside(part.Position, mCF, mSz) then
+                    local PCF  = part.CFrame
+                    local nPos = PCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                    local tOff = CFrame.new(nPos) * PCF.Rotation
+                    -- anchor + disable collision so cargo won't drift or fall
+                    pcall(function()
+                        part.Anchored   = true
+                        part.CanCollide = false
+                        for _, mp in ipairs(part.Parent:GetDescendants()) do
+                            if mp:IsA("BasePart") then
+                                mp.Anchored   = true
+                                mp.CanCollide = false
+                            end
+                        end
+                    end)
+                    -- teleport cargo to destination while anchored
+                    pcall(function() part.CFrame = tOff end)
+                    table.insert(teleportedParts, {Instance=part, TargetCFrame=tOff})
+                end
             end
         end
 
-        -- Teleport truck
+        -- Teleport the truck itself (still seated — smooth, no hang)
         tModel:SetPrimaryPartCFrame(truckDestCF)
+        task.wait(0.05)
 
-        -- FIX: Fast, non-breaking exit
-        exitSeat(Char, seatPart, RS)
+        -- Eject instantly — no mid-air freeze
+        local DoorHinge = seatPart.Parent:FindFirstChild("PaintParts")
+            and seatPart.Parent.PaintParts:FindFirstChild("DoorLeft")
+            and seatPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
 
-        -- FIX: Always return player to giver's base (works for self-teleport too)
-        task.wait(0.3)
+        -- noclip char so ejection is instant, no physics hiccup
+        pcall(function()
+            for _, p in ipairs(Char:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
+            end
+        end)
+        pcall(function() seatPart:Destroy() end)
+        task.wait(0.05)
+
+        -- return to giver base immediately
         pcall(function()
             Char.HumanoidRootPart.CFrame = CFrame.new(GiveBaseOrigin.Position + Vector3.new(0, 5, 0))
         end)
+        task.wait(0.1)
+        -- re-enable collision on char
+        pcall(function()
+            for _, p in ipairs(Char:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = true end
+            end
+        end)
 
-        if #teleportedParts == 0 then
-            setSTStatus("Truck teleported!", false)
-            return
+        if DoorHinge then
+            task.spawn(function()
+                for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
+            end)
         end
 
-        -- Retry cargo
-        task.wait(1)
-        local retryList = {}
-        for _, data in ipairs(teleportedParts) do
-            if data.Instance and data.Instance.Parent
-                and (data.Instance.Position - data.OldPos).Magnitude < 5 then
-                table.insert(retryList, data)
-            end
-        end
-
-        local attempts = 0
-        while #retryList > 0 and attempts < 4 do
-            attempts += 1
-            setSTStatus("Retrying " .. #retryList .. " cargo...", true)
-            for _, data in ipairs(retryList) do
-                local item = data.Instance
-                if not (item and item.Parent) then continue end
-                while (Char.HumanoidRootPart.Position - item.Position).Magnitude > 25 do
-                    Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
-                end
-                RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                task.wait(0.6)
-                item.CFrame = data.TargetCFrame
-            end
-            task.wait(1)
-            retryList = {}
+        -- 2 seconds after truck landed: unanchor cargo so it settles naturally into truck
+        if #teleportedParts > 0 then
+            setSTStatus("Truck teleported! Releasing cargo in 2s...", true)
+            task.wait(2)
             for _, data in ipairs(teleportedParts) do
-                if data.Instance and data.Instance.Parent
-                    and (data.Instance.Position - data.OldPos).Magnitude < 25 then
-                    table.insert(retryList, data)
+                local inst = data.Instance
+                if inst and inst.Parent then
+                    pcall(function()
+                        -- snap to final position one last time, then release
+                        inst.CFrame     = data.TargetCFrame
+                        inst.Anchored   = false
+                        inst.CanCollide = true
+                        for _, mp in ipairs(inst.Parent:GetDescendants()) do
+                            if mp:IsA("BasePart") then
+                                mp.Anchored   = false
+                                mp.CanCollide = true
+                            end
+                        end
+                    end)
                 end
             end
         end
