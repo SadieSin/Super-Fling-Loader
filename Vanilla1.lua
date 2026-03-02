@@ -414,7 +414,7 @@ end)
 -- ════════════════════════════════════════════════════
 -- TABS
 -- ════════════════════════════════════════════════════
-local tabs = {"Home","Player","World","Teleport","Wood","Slot","Dupe","Item","Sorter","AutoBuy","Build","Vehicle","Search","Settings"}
+local tabs = {"Home","Player","World","Teleport","Wood","Slot","Dupe","Item","Sorter","AutoBuy","Pixel Art","Build","Vehicle","Search","Settings"}
 local pages = {}
 
 for _, name in ipairs(tabs) do
