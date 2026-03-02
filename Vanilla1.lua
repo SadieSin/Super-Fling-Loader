@@ -223,7 +223,7 @@ titleLbl.BackgroundTransparency = 1
 titleLbl.Text = "VanillaHub"
 titleLbl.Font = Enum.Font.GothamBold
 titleLbl.TextSize = 17
-titleLbl.TextColor3 = Color3.fromRGB(250, 190, 255)
+titleLbl.TextColor3 = Color3.fromRGB(253, 200, 255)
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 titleLbl.ZIndex = 5
 
@@ -542,7 +542,7 @@ textArea.BackgroundTransparency = 1
 local greeting = Instance.new("TextLabel", textArea)
 greeting.Size = UDim2.new(1,0,0,30); greeting.Position = UDim2.new(0,0,0,12)
 greeting.BackgroundTransparency = 1; greeting.Font = Enum.Font.GothamBold; greeting.TextSize = 22
-greeting.TextColor3 = Color3.fromRGB(200,60,60); greeting.TextXAlignment = Enum.TextXAlignment.Left
+greeting.TextColor3 = Color3.fromRGB(253, 200, 255); greeting.TextXAlignment = Enum.TextXAlignment.Left
 greeting.Text = "Hey " .. player.DisplayName .. "!"
 local usernameLabel = Instance.new("TextLabel", textArea)
 usernameLabel.Size = UDim2.new(1,0,0,20); usernameLabel.Position = UDim2.new(0,0,0,42)
