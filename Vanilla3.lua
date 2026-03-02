@@ -375,14 +375,16 @@ local function sellLog(model)
     end
 end
 
--- ── Click Sell: full sequence in 1.5s total ───────────────────────────────────
---   0.00s  save origin, tp next to log
---   0.30s  claim ownership + slam log to sell point
---   0.80s  wait so the server has time to register the position
---   1.50s  tp player back to origin
+-- ── Click Sell: tp to log → claim → slam confirmed → return ──────────────────
+-- The player does NOT return until the log's position is confirmed at SELL_POS.
+-- A busy-flag prevents overlapping clicks from stacking.
+
+local clickSellBusy = false
 
 local function clickSellLog(model)
+    if clickSellBusy then return end
     if not (model and model.Parent) then return end
+
     local RS   = game:GetService("ReplicatedStorage")
     local char = player.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
@@ -391,27 +393,43 @@ local function clickSellLog(model)
     local mainPart = model:FindFirstChild("Main") or model:FindFirstChildWhichIsA("BasePart")
     if not mainPart then return end
 
-    -- 1. Save standing position, teleport next to log
+    clickSellBusy = true
+
+    -- 1. Save origin, teleport next to log
     local originCF = hrp.CFrame
     hrp.CFrame = mainPart.CFrame * CFrame.new(0, 3, 4)
+    task.wait(0.30)  -- let server see us next to it
 
-    task.wait(0.30)  -- give the server a moment to see us next to the log
-
-    -- 2. Claim ownership + slam (no waits inside)
+    -- 2. Claim ownership burst
     local dragger = RS:FindFirstChild("Interaction")
         and RS.Interaction:FindFirstChild("ClientIsDragging")
     if dragger then claimOwnership(dragger, model) end
-    for _ = 1, 200 do
-        mainPart.CFrame = CFrame.new(SELL_POS)
+
+    -- 3. Slam loop — keep slamming until the part is confirmed at SELL_POS
+    --    or a timeout of 2s is reached, so we never get stuck
+    local deadline = tick() + 2.0
+    repeat
+        if mainPart and mainPart.Parent then
+            mainPart.CFrame = CFrame.new(SELL_POS)
+        end
+        task.wait()  -- one frame between each slam attempt
+    until not (mainPart and mainPart.Parent)
+        or (mainPart.Position - SELL_POS).Magnitude < 4
+        or tick() > deadline
+
+    -- Extra burst after confirmation to help server-side registration
+    if mainPart and mainPart.Parent then
+        for _ = 1, 60 do
+            mainPart.CFrame = CFrame.new(SELL_POS)
+        end
     end
 
-    task.wait(0.50)  -- allow server to process the position before we leave
+    task.wait(0.15)  -- tiny settle before returning
 
-    -- 3. Snap back — total elapsed ≈ 0.30 + 0.50 = 0.80s before return,
-    --    leaving the remaining ~0.70s as buffer before the next click is responsive
+    -- 4. Return player only now that the log is sold
     hrp.CFrame = originCF
 
-    task.wait(0.70)  -- cooldown so rapid clicks don't stack (total window = 1.5s)
+    clickSellBusy = false
 end
 
 -- ── Group select: all matching-class logs in workspace ────────────────────────
@@ -553,7 +571,7 @@ local function connectWoodMouse()
         if not model then return end
 
         if clickSellEnabled then
-            if isWoodLog(model) then
+            if isWoodLog(model) and not clickSellBusy then
                 task.spawn(function() clickSellLog(model) end)
             end
         elseif groupSelectEnabled then
