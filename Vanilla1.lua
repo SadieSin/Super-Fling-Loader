@@ -223,7 +223,7 @@ titleLbl.BackgroundTransparency = 1
 titleLbl.Text = "VanillaHub"
 titleLbl.Font = Enum.Font.GothamBold
 titleLbl.TextSize = 17
-titleLbl.TextColor3 = Color3.fromRGB(245, 180, 255)
+titleLbl.TextColor3 = Color3.fromRGB(250, 190, 255)
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 titleLbl.ZIndex = 5
 
