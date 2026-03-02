@@ -155,7 +155,6 @@ local function calculateSlots(items, anchorCF, colCount, layerCount, rowCount)
 
     -- Determine per-layer capacity
     local total       = #entries
-    local slotPerRow  = colCount
     -- rowsPerLayer: if rowCount=0, distribute items evenly across layers
     local rpl
     if rowCount > 0 then
@@ -385,55 +384,82 @@ end
 -- ════════════════════════════════════════════════════
 -- SORT ENGINE
 -- ════════════════════════════════════════════════════
-local function getInteraction()
-    local i = RS:FindFirstChild("Interaction")
-    return i and i:FindFirstChild("ClientIsDragging")
+
+-- Discover all remotes we might need at sort-start (not cached globally so
+-- we always get the freshest references).
+local function getRemotes()
+    local interaction = RS:FindFirstChild("Interaction")
+    local remotes = {
+        -- Primary drag signal: tells server "I own this drag"
+        clientIsDragging  = interaction and interaction:FindFirstChild("ClientIsDragging"),
+        -- Some LT2-style games send the target CFrame as a second argument
+        -- or have a dedicated placement remote — find whatever is available
+        placePart         = interaction and (
+            interaction:FindFirstChild("PlacePart")
+            or interaction:FindFirstChild("MoveItem")
+            or interaction:FindFirstChild("SetPartCFrame")
+            or interaction:FindFirstChild("DropItem")
+        ),
+        -- Fallback: look in RS root level
+        moveRemote        = RS:FindFirstChild("MoveItem")
+                         or RS:FindFirstChild("PlacePart")
+                         or RS:FindFirstChild("SetPartCFrame"),
+    }
+    return remotes
 end
 
--- Teleport character right next to a model's main part
-local function goToItem(model)
-    local mp   = getMainPart(model)
-    local char = player.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if mp and hrp then
-        hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
+-- Attempt every known server-replication path for moving a part.
+-- Priority:
+--   1. placePart/moveRemote:FireServer(model, targetCF)  ← server sets CFrame directly
+--   2. clientIsDragging:FireServer(model) + client CFrame write
+--      (works when the server grants network ownership to the dragger)
+-- Both are fired every frame so whichever the server responds to wins.
+local function fireMove(remotes, model, mp, targetCF)
+    -- Path 1: explicit placement remote with CFrame argument
+    if remotes.placePart then
+        pcall(function() remotes.placePart:FireServer(model, targetCF) end)
     end
+    if remotes.moveRemote then
+        pcall(function() remotes.moveRemote:FireServer(model, targetCF) end)
+    end
+
+    -- Path 2: drag ownership signal + local CFrame write
+    -- When the server grants us network ownership the local write replicates.
+    if remotes.clientIsDragging then
+        pcall(function() remotes.clientIsDragging:FireServer(model) end)
+    end
+    pcall(function()
+        mp.CFrame                  = targetCF
+        mp.AssemblyLinearVelocity  = Vector3.zero
+        mp.AssemblyAngularVelocity = Vector3.zero
+    end)
 end
 
--- Move one item to targetCF via per-frame Heartbeat.
--- Calls onDone() when confirmed or timed out. Returns the connection.
+-- Move one item to targetCF. Calls onDone() when arrived or timed out.
+-- Returns the Heartbeat connection (caller must Disconnect if aborting early).
 local function moveItemTo(model, targetCF, onDone)
     if not (model and model.Parent) then
-        if onDone then task.spawn(onDone, false) end
-        return nil
+        if onDone then task.spawn(onDone, false) end; return nil
     end
     local mp = getMainPart(model)
     if not mp then
-        if onDone then task.spawn(onDone, false) end
-        return nil
+        if onDone then task.spawn(onDone, false) end; return nil
     end
     local char = player.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then
-        if onDone then task.spawn(onDone, false) end
-        return nil
+        if onDone then task.spawn(onDone, false) end; return nil
     end
 
-    local dragger   = getInteraction()
+    local remotes   = getRemotes()
     local startTime = tick()
     local conn
 
-    -- Safe hover offset: always stay 5 studs above the TARGET position
-    -- (not item position) so we don't clip through tall stacks
+    -- Hover 5 studs above the target slot so we never clip into stacked items
     local hoverCF = CFrame.new(targetCF.Position + Vector3.new(0, 5, 4))
-
     local function stayNear()
-        if hrp and hrp.Parent then
-            hrp.CFrame = hoverCF
-        end
+        if hrp and hrp.Parent then hrp.CFrame = hoverCF end
     end
-
-    -- Teleport to hover point immediately
     stayNear()
 
     conn = RunService.Heartbeat:Connect(function()
@@ -443,35 +469,21 @@ local function moveItemTo(model, targetCF, onDone)
             return
         end
 
-        -- Stay within drag range every frame, using the hover point
-        if (hrp.Position - targetCF.Position).Magnitude > 18 then
-            stayNear()
-        end
+        -- Keep character within pickup range every frame
+        if (hrp.Position - targetCF.Position).Magnitude > 18 then stayNear() end
 
-        -- Fire drag + force CFrame every frame
-        if dragger then pcall(function() dragger:FireServer(model) end) end
-        pcall(function()
-            mp.CFrame        = targetCF
-            mp.AssemblyLinearVelocity  = Vector3.zero
-            mp.AssemblyAngularVelocity = Vector3.zero
-        end)
+        -- Fire all replication paths every frame
+        fireMove(remotes, model, mp, targetCF)
 
         local arrived  = (mp.Position - targetCF.Position).Magnitude < CONFIRM_DIST
         local timedOut = (tick() - startTime) >= SORT_TIMEOUT
 
         if arrived or timedOut then
             conn:Disconnect()
-            -- Reinforce for more frames to fight physics/network
+            -- Reinforce for 60 more frames (~1 s) to let server confirm position
             task.spawn(function()
-                for _ = 1, 40 do
-                    pcall(function()
-                        if dragger then dragger:FireServer(model) end
-                        if mp and mp.Parent then
-                            mp.CFrame        = targetCF
-                            mp.AssemblyLinearVelocity  = Vector3.zero
-                            mp.AssemblyAngularVelocity = Vector3.zero
-                        end
-                    end)
+                for _ = 1, 60 do
+                    pcall(function() fireMove(remotes, model, mp, targetCF) end)
                     task.wait()
                 end
                 if onDone then onDone(arrived) end
