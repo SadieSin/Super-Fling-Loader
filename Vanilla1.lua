@@ -113,11 +113,9 @@ local butterRunning = false
 local butterThread  = nil
 
 local function onExit()
-    -- Stop dupe if running
     butterRunning = false
     if butterThread then pcall(task.cancel, butterThread); butterThread = nil end
 
-    -- Cancel butter via _G.VH if Vanilla2 set it
     if _G.VH and _G.VH.butter then
         _G.VH.butter.running = false
         if _G.VH.butter.thread then
@@ -126,13 +124,11 @@ local function onExit()
         end
     end
 
-    -- Run all registered cleanup functions
     for _, fn in ipairs(cleanupTasks) do
         pcall(fn)
     end
     cleanupTasks = {}
 
-    -- Hard-restore humanoid state
     pcall(function()
         local lp = game:GetService("Players").LocalPlayer
         local char = lp and lp.Character
@@ -156,21 +152,18 @@ local function onExit()
         end
     end)
 
-    -- Destroy teleport circle marker if it survived
     pcall(function()
         if workspace:FindFirstChild("VanillaHubTpCircle") then
             workspace.VanillaHubTpCircle:Destroy()
         end
     end)
 
-    -- Nuke walk-on-water planes left by Vanilla2
     pcall(function()
         for _, obj in ipairs(workspace:GetChildren()) do
             if obj.Name == "WalkWaterPlane" then obj:Destroy() end
         end
     end)
 
-    -- Nuke the shared globals table so Vanilla2/3 can't fire stale references
     _G.VH = nil
     _G.VanillaHubCleanup = nil
 end
@@ -186,7 +179,6 @@ table.insert(cleanupTasks, function()
     if gui and gui.Parent then gui:Destroy() end
 end)
 
--- Register cleanup in _G immediately so a second execute can kill this run
 _G.VanillaHubCleanup = onExit
 
 local main = Instance.new("Frame", gui)
@@ -208,14 +200,20 @@ local topBar = Instance.new("Frame", main)
 topBar.Size = UDim2.new(1, 0, 0, 38)
 topBar.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
 topBar.BorderSizePixel = 0
+topBar.ZIndex = 4
 
+-- ════════════════════════════════════════════════════
+-- HUB ICON FIX: valid asset ID + proper ZIndex so it
+-- renders in front of the top bar background
+-- ════════════════════════════════════════════════════
 local hubIcon = Instance.new("ImageLabel", topBar)
-hubIcon.Size               = UDim2.new(0, 30, 0, 30)
-hubIcon.Position           = UDim2.new(0, 6, 0.5, -15)
+hubIcon.Size               = UDim2.new(0, 26, 0, 26)
+hubIcon.Position           = UDim2.new(0, 7, 0.5, -13)
 hubIcon.BackgroundTransparency = 1
 hubIcon.BorderSizePixel    = 0
 hubIcon.ScaleType          = Enum.ScaleType.Fit
-hubIcon.Image = "rbxassetid://91848271495779"
+hubIcon.ZIndex             = 6
+hubIcon.Image              = "rbxassetid://6031280882"  -- valid generic Roblox icon
 Instance.new("UICorner", hubIcon).CornerRadius = UDim.new(0, 5)
 
 local titleLbl = Instance.new("TextLabel", topBar)
@@ -227,6 +225,7 @@ titleLbl.Font = Enum.Font.GothamBold
 titleLbl.TextSize = 17
 titleLbl.TextColor3 = Color3.fromRGB(220, 220, 220)
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.ZIndex = 5
 
 local closeBtn = Instance.new("TextButton", topBar)
 closeBtn.Size = UDim2.new(0, 32, 0, 32)
@@ -237,6 +236,7 @@ closeBtn.Font = Enum.Font.Gotham
 closeBtn.TextSize = 20
 closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 closeBtn.BorderSizePixel = 0
+closeBtn.ZIndex = 5
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
 
 -- CONFIRM CLOSE DIALOG
@@ -314,9 +314,7 @@ local function showConfirmClose()
     cancelBtn2.MouseButton1Click:Connect(function() overlay:Destroy(); dialog:Destroy() end)
     confirmBtn2.MouseButton1Click:Connect(function()
         overlay:Destroy(); dialog:Destroy()
-        -- Full cleanup first (stops fly, noclip, dupe, clears _G.VH, etc.)
         onExit()
-        -- Animate GUI out then destroy it
         local t = TweenService:Create(main, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0),
             BackgroundTransparency = 1
@@ -1365,8 +1363,6 @@ _G.VH = {
     keybindButtonGUI = nil,
 }
 
--- Point _G.VanillaHubCleanup at onExit so any future execute or re-execute
--- will fully tear down this instance before starting fresh.
 _G.VanillaHubCleanup = onExit
 
 print("[VanillaHub] Vanilla1 loaded")
