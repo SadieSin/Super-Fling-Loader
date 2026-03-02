@@ -3,6 +3,7 @@
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
 
+-- Guard: if _G.VH is missing, Vanilla1 wasn't executed first (or was already cleaned up)
 if not _G.VH then
     warn("[VanillaHub] Vanilla2: _G.VH not found. Execute Vanilla1 first.")
     return
@@ -77,10 +78,6 @@ local alwaysNightActive = false
 local walkOnWaterConn = nil
 local walkOnWaterParts = {}
 
--- Track whether water was hidden so onExit can restore it
-local waterRemoved = false
-_G.VH.setRemovedWater = function(v) waterRemoved = v end
-
 table.insert(cleanupTasks, function()
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
     if walkOnWaterConn then walkOnWaterConn:Disconnect(); walkOnWaterConn = nil end
@@ -90,18 +87,6 @@ table.insert(cleanupTasks, function()
     walkOnWaterParts = {}
     alwaysDayActive = false
     alwaysNightActive = false
-    -- Restore water if it was removed
-    if waterRemoved then
-        pcall(function()
-            for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
-                if p:IsA("Part") and p.Name == "Water" then
-                    p.Transparency = 0.5
-                    p.CanCollide   = false
-                end
-            end
-        end)
-        waterRemoved = false
-    end
 end)
 
 createWSectionLabel("Environment")
@@ -175,7 +160,7 @@ createWorldToggle("Walk On Water", false, function(v)
 end)
 
 createWorldToggle("Remove Water", false, function(v)
-    waterRemoved = v
+    -- Track state so onExit can restore water if gui is closed while active
     if _G.VH and _G.VH.setRemovedWater then _G.VH.setRemovedWater(v) end
     for _, p in ipairs(game:GetService("Workspace"):GetDescendants()) do
         if p:IsA("Part") and p.Name == "Water" then
@@ -184,8 +169,6 @@ createWorldToggle("Remove Water", false, function(v)
         end
     end
 end)
-
--- Wood Tab is handled in Vanilla1 (shares the same mouse object)
 
 -- ════════════════════════════════════════════════════
 -- DUPE TAB  (Butter Leak system)
@@ -808,6 +791,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                     truckDone += 1; setProgTrucks(truckDone, truckCount)
                 end
 
+                -- First retry pass after initial wait
                 task.wait(5)
                 local retryList = {}
                 for _, data in ipairs(teleportedParts) do
@@ -837,7 +821,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                                 Char.HumanoidRootPart.CFrame = item.CFrame; task.wait(0.1)
                             end
                             RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                            task.wait(0.6)
+                            task.wait(0.6) -- ← updated from 0.1
                             item.CFrame = data.TargetCFrame
                             cargoDone = cargoTotal - #retryList
                             setProgTrucks(cargoDone, cargoTotal)
