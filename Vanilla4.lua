@@ -43,7 +43,9 @@ local isSorting        = false
 local sortThread       = nil
 local currentItemConn  = nil
 
-local gridCols = 3
+local gridCols   = 3   -- X  (items per row, left→right)
+local gridLayers = 1   -- Y  (vertical layers, bottom→top)
+local gridRows   = 0   -- Z  (0 = auto, front→back)
 
 local clickSelEnabled = false
 local lassoEnabled    = false
@@ -122,50 +124,113 @@ end
 
 -- ════════════════════════════════════════════════════
 -- SORT SLOT CALCULATOR
--- Fills left→right (X), front→back (Z), then up (Y).
--- colCount controls items per X row.
 -- ════════════════════════════════════════════════════
-local function calculateSlots(items, anchorCF, colCount)
-    colCount = math.max(1, colCount)
+-- calculateSlots
+-- Fills a 3-D grid: left→right (X cols), front→back (Z rows), bottom→top (Y layers).
+-- colCount  = items per X column  (gridCols,   ≥1)
+-- layerCount= vertical layers     (gridLayers, ≥1; 1 = single layer, original behaviour)
+-- rowCount  = rows per layer      (gridRows,   0 = auto)
+-- Items sorted tallest-first so tall items sit in row 0 and short ones fill later rows.
+-- The bottom layer is filled completely before moving up to the next layer.
+local function calculateSlots(items, anchorCF, colCount, layerCount, rowCount)
+    colCount   = math.max(1, colCount)
+    layerCount = math.max(1, layerCount)
+    rowCount   = math.max(0, rowCount)   -- 0 = unlimited / auto
 
     local entries = {}
     for _, model in ipairs(items) do
-        local ok, _, sz = pcall(function() return model:GetBoundingBox() end)
+        local ok, _cf, sz = pcall(function() return model:GetBoundingBox() end)
         local s = (ok and sz) or Vector3.new(2, 2, 2)
         table.insert(entries, { model = model, w = s.X, h = s.Y, d = s.Z })
     end
 
+    -- Sort tallest first so tall items claim the bottom layer row-0 slots
     table.sort(entries, function(a, b) return a.h > b.h end)
 
-    local slots     = {}
-    local curX      = 0
-    local curZ      = 0
-    local curY      = 0
-    local rowMaxD   = 0
-    local shelfMaxH = 0
-    local colIdx    = 0
+    -- Determine per-layer capacity
+    local total       = #entries
+    local slotPerRow  = colCount
+    -- rowsPerLayer: if rowCount=0, distribute items evenly across layers
+    local rpl
+    if rowCount > 0 then
+        rpl = rowCount
+    else
+        local slotsPerLayer = math.ceil(total / layerCount)
+        rpl = math.ceil(slotsPerLayer / colCount)
+        rpl = math.max(1, rpl)
+    end
+    -- slotPerLayer = cols × rows
+    local slotPerLayer = colCount * rpl
 
+    -- Pre-compute per-row max depth and per-layer max height for proper spacing
+    -- We do a two-pass approach: first assign grid positions, then convert to world offsets
+
+    -- Pass 1: assign (layer, row, col) index to each entry
+    for i, e in ipairs(entries) do
+        local idx   = i - 1                          -- 0-based
+        local layer = math.floor(idx / slotPerLayer) -- 0-based layer (bottom first)
+        local rem   = idx % slotPerLayer
+        local row   = math.floor(rem / colCount)     -- 0-based row within layer
+        local col   = rem % colCount                 -- 0-based col within row
+        e.layer = layer; e.row = row; e.col = col
+    end
+
+    -- Pass 2: compute per-row max-D and per-layer max-H for gap offsets
+    -- layerMaxH[layer] = tallest item in that layer
+    -- rowMaxD[layer][row] = deepest item in that row
+    local layerMaxH = {}
+    local rowMaxD   = {}
     for _, e in ipairs(entries) do
-        if colIdx >= colCount then
-            curX      = 0
-            curZ      = curZ + rowMaxD + ITEM_GAP
-            rowMaxD   = 0
-            colIdx    = 0
+        local l, r = e.layer, e.row
+        layerMaxH[l] = math.max(layerMaxH[l] or 0, e.h)
+        if not rowMaxD[l] then rowMaxD[l] = {} end
+        rowMaxD[l][r] = math.max(rowMaxD[l][r] or 0, e.d)
+    end
+
+    -- Cumulative layer Y offsets (bottom of each layer)
+    local layerY = {}
+    local accY   = 0
+    local maxLayer = 0
+    for _, e in ipairs(entries) do if e.layer > maxLayer then maxLayer = e.layer end end
+    for l = 0, maxLayer do
+        layerY[l] = accY
+        accY = accY + (layerMaxH[l] or 0) + ITEM_GAP
+    end
+
+    -- Cumulative row Z offsets within each layer
+    local rowZ = {}
+    for l = 0, maxLayer do
+        rowZ[l] = {}
+        local accZ = 0
+        local maxRow = 0
+        for _, e in ipairs(entries) do
+            if e.layer == l and e.row > maxRow then maxRow = e.row end
         end
+        for r = 0, maxRow do
+            rowZ[l][r] = accZ
+            accZ = accZ + (rowMaxD[l] and rowMaxD[l][r] or 0) + ITEM_GAP
+        end
+    end
 
-        local halfW = e.w / 2
-        local halfH = e.h / 2
-        local halfD = e.d / 2
+    -- Per-col max width (shared across all layers/rows for alignment)
+    local colMaxW = {}
+    for _, e in ipairs(entries) do
+        colMaxW[e.col] = math.max(colMaxW[e.col] or 0, e.w)
+    end
+    local colX = {}; local accX = 0
+    for c = 0, colCount - 1 do
+        colX[c] = accX
+        accX = accX + (colMaxW[c] or 0) + ITEM_GAP
+    end
 
-        local localPos = Vector3.new(curX + halfW, curY + halfH, curZ + halfD)
-        local worldCF  = anchorCF * CFrame.new(localPos)
-
+    -- Pass 3: build slot list
+    local slots = {}
+    for _, e in ipairs(entries) do
+        local lx = colX[e.col]   + e.w / 2
+        local ly = layerY[e.layer] + e.h / 2
+        local lz = (rowZ[e.layer] and rowZ[e.layer][e.row] or 0) + e.d / 2
+        local worldCF = anchorCF * CFrame.new(Vector3.new(lx, ly, lz))
         table.insert(slots, { model = e.model, cf = worldCF })
-
-        curX    = curX + e.w + ITEM_GAP
-        colIdx  = colIdx + 1
-        if e.d > rowMaxD   then rowMaxD   = e.d end
-        if e.h > shelfMaxH then shelfMaxH = e.h end
     end
 
     return slots
@@ -185,15 +250,16 @@ end
 local function computePreviewSize()
     local entries = {}
     for model in pairs(selectedItems) do
-        local ok, _, sz = pcall(function() return model:GetBoundingBox() end)
+        local ok, _cf, sz = pcall(function() return model:GetBoundingBox() end)
         local s = (ok and sz) or Vector3.new(2, 2, 2)
         table.insert(entries, { w = s.X, h = s.Y, d = s.Z })
     end
     if #entries == 0 then return 4, 4, 4 end
 
-    table.sort(entries, function(a, b) return a.h > b.h end)
+    local cols   = math.max(1, gridCols)
+    local layers = math.max(1, gridLayers)
+    local rows   = math.max(0, gridRows)
 
-    local cols = math.max(1, gridCols)
     local maxW, maxH, maxD = 0, 0, 0
     for _, e in ipairs(entries) do
         if e.w > maxW then maxW = e.w end
@@ -201,10 +267,18 @@ local function computePreviewSize()
         if e.d > maxD then maxD = e.d end
     end
 
-    local rows = math.ceil(#entries / cols)
-    local boxW = cols * (maxW + ITEM_GAP) - ITEM_GAP
-    local boxH = maxH
-    local boxD = rows * (maxD + ITEM_GAP) - ITEM_GAP
+    local totalItems  = #entries
+    local slotPerLayer
+    if rows > 0 then
+        slotPerLayer = cols * rows
+    else
+        slotPerLayer = math.ceil(totalItems / layers)
+    end
+    local actualRows   = math.ceil(slotPerLayer / cols)
+
+    local boxW = cols   * (maxW + ITEM_GAP) - ITEM_GAP
+    local boxH = layers * (maxH + ITEM_GAP) - ITEM_GAP
+    local boxD = actualRows * (maxD + ITEM_GAP) - ITEM_GAP
     return math.max(boxW, 1), math.max(boxH, 1), math.max(boxD, 1)
 end
 
@@ -226,11 +300,14 @@ local function getMouseSurfaceCF(halfH)
     if result then
         hitPos = result.Position
     else
-        -- fallback: intersect with Y=0 plane
-        local t = unitRay.Origin.Y / -unitRay.Direction.Y
-        if t > 0 then
-            hitPos = unitRay.Origin + unitRay.Direction * t
-        else
+        -- fallback: intersect with Y=0 plane (guard against horizontal ray)
+        if math.abs(unitRay.Direction.Y) > 0.001 then
+            local t = unitRay.Origin.Y / -unitRay.Direction.Y
+            if t > 0 then
+                hitPos = unitRay.Origin + unitRay.Direction * t
+            end
+        end
+        if not hitPos then
             hitPos = unitRay.Origin + unitRay.Direction * 40
         end
     end
@@ -385,6 +462,12 @@ end
 -- ════════════════════════════════════════════════════
 -- UI HELPERS
 -- ════════════════════════════════════════════════════
+local AXIS_COLORS = {
+    X = Color3.fromRGB(220,70,70),
+    Y = Color3.fromRGB(70,200,70),
+    Z = Color3.fromRGB(70,120,255),
+}
+
 local function mkLabel(text)
     local lbl = Instance.new("TextLabel", sorterPage)
     lbl.Size = UDim2.new(1,-12,0,22)
@@ -462,11 +545,10 @@ local function mkBtn(text, color, cb)
     return btn
 end
 
-local AXIS_COLORS = {
-    X = Color3.fromRGB(220,70,70),
-    Y = Color3.fromRGB(70,200,70),
-    Z = Color3.fromRGB(70,120,255),
-}
+-- ════════════════════════════════════════════════════
+-- SLIDER CONNECTIONS (tracked for cleanup)
+-- ════════════════════════════════════════════════════
+local sliderConns = {}  -- holds { changed=conn, ended=conn } per slider
 
 local function mkIntSlider(label, axis, minV, maxV, defaultV, cb)
     local axCol = AXIS_COLORS[axis] or THEME_TEXT
@@ -532,16 +614,20 @@ local function mkIntSlider(label, axis, minV, maxV, defaultV, cb)
             dragging = true; apply(inp.Position.X)
         end
     end)
-    UserInputService.InputChanged:Connect(function(inp)
+
+    -- Track these connections so they can be cleaned up
+    local sc = {}
+    sc.changed = UserInputService.InputChanged:Connect(function(inp)
         if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
             apply(inp.Position.X)
         end
     end)
-    UserInputService.InputEnded:Connect(function(inp)
+    sc.ended = UserInputService.InputEnded:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = false
         end
     end)
+    table.insert(sliderConns, sc)
 
     return fr
 end
@@ -673,7 +759,7 @@ local function refreshStatus()
     elseif n == 0 then
         setStatus("👆  Select items with Click, Group, or Lasso.")
     elseif previewFollowing then
-        setStatus("🖱  Preview following mouse — left-click to place.", Color3.fromRGB(140,220,255))
+        setStatus("🖱  Preview following mouse — RIGHT-CLICK to place.", Color3.fromRGB(140,220,255))
     elseif previewPlaced then
         setStatus("✅  " .. n .. " item(s) ready. Hit Start Sorting!", Color3.fromRGB(100,220,120))
     elseif previewPart then
@@ -718,26 +804,38 @@ selHint.Text = "  Lasso: drag to box-select.  Group: click to select all of same
 Instance.new("UICorner", selHint).CornerRadius = UDim.new(0,6)
 Instance.new("UIPadding", selHint).PaddingLeft = UDim.new(0,6)
 
-mkSep(); mkLabel("Sort Grid  —  columns per row")
+mkSep(); mkLabel("Sort Grid  —  X  Width · Y  Height · Z  Depth")
 
-mkIntSlider("Columns  (items per row)", "X", 1, 12, 3, function(v)
+mkIntSlider("Width  (items per row)", "X", 1, 12, 3, function(v)
     gridCols = v
-    -- Update preview size live if the box is currently following the mouse
     if previewFollowing and previewPart and previewPart.Parent then
         local sX, sY, sZ = computePreviewSize()
-        previewPart.Size = Vector3.new(
-            math.max(sX,0.5),
-            math.max(sY,0.5),
-            math.max(sZ,0.5))
+        previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
+    end
+end)
+
+mkIntSlider("Height  (vertical layers)", "Y", 1, 8, 1, function(v)
+    gridLayers = v
+    if previewFollowing and previewPart and previewPart.Parent then
+        local sX, sY, sZ = computePreviewSize()
+        previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
+    end
+end)
+
+mkIntSlider("Depth  (rows per layer, 0=auto)", "Z", 0, 12, 0, function(v)
+    gridRows = v
+    if previewFollowing and previewPart and previewPart.Parent then
+        local sX, sY, sZ = computePreviewSize()
+        previewPart.Size = Vector3.new(math.max(sX,0.5), math.max(sY,0.5), math.max(sZ,0.5))
     end
 end)
 
 local gridHint = Instance.new("TextLabel", sorterPage)
-gridHint.Size = UDim2.new(1,-12,0,22); gridHint.BackgroundColor3 = Color3.fromRGB(18,18,24)
+gridHint.Size = UDim2.new(1,-12,0,28); gridHint.BackgroundColor3 = Color3.fromRGB(18,18,24)
 gridHint.BorderSizePixel = 0; gridHint.Font = Enum.Font.Gotham; gridHint.TextSize = 11
 gridHint.TextColor3 = Color3.fromRGB(100,100,130); gridHint.TextWrapped = true
 gridHint.TextXAlignment = Enum.TextXAlignment.Left
-gridHint.Text = "  Items fill left→right, then front→back. Tallest items sort first."
+gridHint.Text = "  Fills left→right (X), front→back (Z), bottom→top (Y).  Tallest items sort first.  Z=0 auto-distributes rows."
 Instance.new("UICorner", gridHint).CornerRadius = UDim.new(0,6)
 Instance.new("UIPadding", gridHint).PaddingLeft = UDim.new(0,6)
 
@@ -786,7 +884,7 @@ startBtn.MouseButton1Click:Connect(function()
     local anchorCF = previewPart.CFrame
         * CFrame.new(-previewPart.Size.X/2, -previewPart.Size.Y/2, -previewPart.Size.Z/2)
 
-    local slots = calculateSlots(items, anchorCF, gridCols)
+    local slots = calculateSlots(items, anchorCF, gridCols, gridLayers, gridRows)
     local total = #slots
     local done  = 0
 
@@ -878,14 +976,7 @@ local mouseDownConn = mouse.Button1Down:Connect(function()
         return
     end
 
-    -- Place preview (any left-click while preview is following)
-    if previewFollowing then
-        placePreview()
-        refreshStatus()
-        return
-    end
-
-    -- Normal item selection
+    -- Normal item selection (left-click only when NOT placing preview)
     local target = mouse.Target
     if not target then return end
     local model = target:FindFirstAncestorOfClass("Model")
@@ -917,6 +1008,14 @@ local mouseUpConn = mouse.Button1Up:Connect(function()
     lassoDragging = false
 end)
 
+-- Right-click to place the preview box
+local mouseRightConn = mouse.Button2Down:Connect(function()
+    if previewFollowing then
+        placePreview()
+        refreshStatus()
+    end
+end)
+
 -- ════════════════════════════════════════════════════
 -- CLEANUP
 -- ════════════════════════════════════════════════════
@@ -928,6 +1027,12 @@ table.insert(cleanupTasks, function()
     mouseDownConn:Disconnect()
     mouseMoveConn:Disconnect()
     mouseUpConn:Disconnect()
+    mouseRightConn:Disconnect()
+    for _, sc in ipairs(sliderConns) do
+        if sc.changed then pcall(function() sc.changed:Disconnect() end) end
+        if sc.ended   then pcall(function() sc.ended:Disconnect()   end) end
+    end
+    sliderConns = {}
     if lassoFrame and lassoFrame.Parent then lassoFrame:Destroy() end
     destroyPreview()
     unhighlightAll()
