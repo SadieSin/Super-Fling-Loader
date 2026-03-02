@@ -89,7 +89,6 @@ end)
 
 createWSectionLabel("Environment")
 
--- ── ALWAYS DAY — default ON ───────────────────────────────────────────────────
 createWorldToggle("Always Day", true, function(v)
     alwaysDayActive = v
     if worldClockConn then worldClockConn:Disconnect(); worldClockConn = nil end
@@ -233,14 +232,15 @@ local function createDToggle(text, default, callback)
     return frame, function() return toggled end
 end
 
-local function makeDupeDropdown(labelText)
+local function makeDupeDropdown(labelText, parentPage)
+    parentPage = parentPage or dupePage
     local selected  = ""
     local isOpen    = false
     local ITEM_H    = 34
     local MAX_SHOW  = 5
     local HEADER_H  = 40
 
-    local outer = Instance.new("Frame", dupePage)
+    local outer = Instance.new("Frame", parentPage)
     outer.Size             = UDim2.new(1,-12, 0, HEADER_H)
     outer.BackgroundColor3 = Color3.fromRGB(22,22,30)
     outer.BorderSizePixel  = 0
@@ -787,7 +787,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                     truckDone += 1; setProgTrucks(truckDone, truckCount)
                 end
 
-                task.wait(5)
+                task.wait(1)
                 local retryList = {}
                 for _, data in ipairs(teleportedParts) do
                     if data.Instance and data.Instance.Parent
@@ -800,7 +800,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                 local cargoDone  = cargoTotal - #retryList
                 if cargoTotal > 0 then setProgTrucks(cargoDone, cargoTotal) end
                 repeat
-                    task.wait(5); retryList = {}
+                    task.wait(1); retryList = {}
                     for _, data in ipairs(teleportedParts) do
                         if data.Instance and data.Instance.Parent
                             and (data.Instance.Position - data.OldPos).Magnitude < 25 then
@@ -936,17 +936,14 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         local targetCF = CFrame.new(nPos) * PCF.Rotation
                         local model = v.Parent
 
-                        -- Step 1: teleport character right next to the log
                         if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 20 then
                             Char.HumanoidRootPart.CFrame = part.CFrame * CFrame.new(0, 3, 3)
                             task.wait(0.08)
                         end
 
-                        -- Step 2: Heartbeat loop — fire drag + slam CFrame every frame
-                        --         until confirmed moved OR timeout (2s)
                         local startT = tick()
                         local TIMEOUT = 2.0
-                        local CONFIRM = 5  -- studs
+                        local CONFIRM = 5
 
                         local conn
                         local done2 = false
@@ -954,11 +951,9 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                             if not (part and part.Parent) then
                                 conn:Disconnect(); done2 = true; return
                             end
-                            -- Keep char close
                             if (Char.HumanoidRootPart.Position - part.Position).Magnitude > 20 then
                                 Char.HumanoidRootPart.CFrame = part.CFrame * CFrame.new(0, 3, 3)
                             end
-                            -- Disable collisions every frame so char doesn't get stuck on logs
                             pcall(function()
                                 for _, p in ipairs(Char:GetDescendants()) do
                                     if p:IsA("BasePart") then p.CanCollide = false end
@@ -972,14 +967,12 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                             end
                         end)
 
-                        -- Wait for this log's Heartbeat to confirm, max 2.5s safety
                         local waitStart = tick()
                         while not done2 and (tick() - waitStart) < 2.5 do
                             task.wait()
                         end
                         if conn then pcall(function() conn:Disconnect() end) end
 
-                        -- Restore collisions after each log
                         pcall(function()
                             for _, p in ipairs(Char:GetDescendants()) do
                                 if p:IsA("BasePart") then p.CanCollide = true end
@@ -987,7 +980,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
                         end)
 
                         done += 1; setProgWood(done, total)
-                        task.wait(0.6)   -- 0.6s between logs
+                        task.wait(0.6)
                     end
                 end)
                 setProgWood(total, total)
@@ -1010,18 +1003,17 @@ end)
 -- ════════════════════════════════════════════════════
 -- SINGLE TRUCK TELEPORT
 -- How it works:
---   1. Select a Receiver player from dropdown
---   2. Sit in a truck yourself (any truck on your base)
+--   1. Select Giver and Receiver players from dropdowns
+--   2. The Giver must be sitting in a truck on their base
 --   3. Press "Teleport My Truck" — it teleports the truck
---      you're currently sitting in to the receiver's base,
---      using the same offset-based system as full truck dupe.
+--      (and any cargo including wood) to the receiver's base.
+--      Empty trucks are teleported even with no cargo.
 -- ════════════════════════════════════════════════════
 createDSep()
 createDSection("Single Truck Teleport")
 
--- Receiver-only dropdown for single truck
-local singleTruckPage = pages["DupeTab"]  -- same page, just more elements
-local _, getSingleReceiver = makeDupeDropdown("Receiver")
+local _, getSingleGiver    = makeDupeDropdown("Giver",    dupePage)
+local _, getSingleReceiver = makeDupeDropdown("Receiver", dupePage)
 
 -- Status label
 local stFrame = Instance.new("Frame", dupePage)
@@ -1036,7 +1028,7 @@ local stLbl = Instance.new("TextLabel", stFrame)
 stLbl.Size = UDim2.new(1,-28,1,0); stLbl.Position = UDim2.new(0,24,0,0)
 stLbl.BackgroundTransparency = 1; stLbl.Font = Enum.Font.Gotham; stLbl.TextSize = 12
 stLbl.TextColor3 = THEME_TEXT; stLbl.TextXAlignment = Enum.TextXAlignment.Left
-stLbl.Text = "Sit in your truck, then press Teleport"
+stLbl.Text = "Select Giver & Receiver, then press Teleport"
 
 local function setSTStatus(msg, active)
     stLbl.Text = msg
@@ -1045,7 +1037,11 @@ end
 
 -- Teleport button
 createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
+    local giverName    = getSingleGiver()
     local receiverName = getSingleReceiver()
+    if giverName == "" then
+        setSTStatus("Select a giver first!", false); return
+    end
     if receiverName == "" then
         setSTStatus("Select a receiver first!", false); return
     end
@@ -1067,19 +1063,18 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
     end
 
     -- Find giver and receiver base origins
-    local myName = LP.Name
     local GiveBaseOrigin, ReceiverBaseOrigin
 
     for _, v in pairs(workspace.Properties:GetDescendants()) do
         if v.Name == "Owner" then
             local val = tostring(v.Value)
-            if val == myName       then GiveBaseOrigin    = v.Parent:FindFirstChild("OriginSquare") end
+            if val == giverName    then GiveBaseOrigin    = v.Parent:FindFirstChild("OriginSquare") end
             if val == receiverName then ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare") end
         end
     end
 
     if not GiveBaseOrigin then
-        setSTStatus("Couldn't find your base!", false); return
+        setSTStatus("Couldn't find giver's base!", false); return
     end
     if not ReceiverBaseOrigin then
         setSTStatus("Couldn't find receiver's base!", false); return
@@ -1088,7 +1083,7 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
     setSTStatus("Teleporting truck...", true)
 
     task.spawn(function()
-        local ignoredParts   = {}
+        local ignoredParts    = {}
         local teleportedParts = {}
 
         -- Mark truck + char parts as ignored for cargo sweep
@@ -1101,17 +1096,19 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
 
         -- Compute destination CFrame (same offset logic as full dupe)
         local mainPart = tModel:FindFirstChild("Main")
-        local truckSrcCF  = mainPart and mainPart.CFrame or tModel:GetPrimaryPartCFrame()
+        local truckSrcCF   = mainPart and mainPart.CFrame or tModel:GetPrimaryPartCFrame()
         local truckDestPos = truckSrcCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
         local truckDestCF  = CFrame.new(truckDestPos) * truckSrcCF.Rotation
 
-        -- Sweep cargo that's on/in the truck bounding box
-        local mCF, mSz = tModel:GetBoundingBox()
+        -- Helper: point-in-bounding-box check
         local function isPointInside(point, boxCFrame, boxSize)
             local r = boxCFrame:PointToObjectSpace(point)
             return math.abs(r.X)<=boxSize.X/2 and math.abs(r.Y)<=boxSize.Y/2+2 and math.abs(r.Z)<=boxSize.Z/2
         end
 
+        -- Sweep cargo inside truck bounding box:
+        -- includes wood (WoodSection / TreeClass Main) AND normal cargo (Main)
+        local mCF, mSz = tModel:GetBoundingBox()
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and not ignoredParts[part]
                 and (part.Name == "Main" or part.Name == "WoodSection") then
@@ -1129,10 +1126,10 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
             end
         end
 
-        -- Teleport the truck itself (while we're still seated — same as full dupe)
+        -- Teleport the truck itself (while still seated — same as full dupe)
         tModel:SetPrimaryPartCFrame(truckDestCF)
 
-        -- Get door hinge for exit (same as full dupe)
+        -- Get door hinge for exit
         local DoorHinge = seatPart.Parent:FindFirstChild("PaintParts")
             and seatPart.Parent.PaintParts:FindFirstChild("DoorLeft")
             and seatPart.Parent.PaintParts.DoorLeft:FindFirstChild("ButtonRemote_Hinge")
@@ -1144,14 +1141,20 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
             for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
         end
 
-        -- Return player to their own base
+        -- Return player to giver's base
         task.wait(0.3)
         pcall(function()
             Char.HumanoidRootPart.CFrame = CFrame.new(GiveBaseOrigin.Position + Vector3.new(0, 5, 0))
         end)
 
-        -- Retry any cargo that didn't move (same retry system as full dupe)
-        task.wait(5)
+        -- If there was no cargo, we're already done
+        if #teleportedParts == 0 then
+            setSTStatus("Truck teleported!", false)
+            return
+        end
+
+        -- Retry any cargo that didn't move (1s intervals)
+        task.wait(1)
         local retryList = {}
         for _, data in ipairs(teleportedParts) do
             if data.Instance and data.Instance.Parent
@@ -1174,7 +1177,7 @@ createDBtn("Teleport My Truck", Color3.fromRGB(60,40,100), function()
                 task.wait(0.6)
                 item.CFrame = data.TargetCFrame
             end
-            task.wait(5)
+            task.wait(1)
             retryList = {}
             for _, data in ipairs(teleportedParts) do
                 if data.Instance and data.Instance.Parent
