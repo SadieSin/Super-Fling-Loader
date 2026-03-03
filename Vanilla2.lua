@@ -418,7 +418,7 @@ createDSection("What to Transfer")
 
 local _, getStructures = createDToggle("Structures",      false)
 local _, getFurniture  = createDToggle("Furniture",       false)
-local _, getTrucks     = createDToggle("Truck Load",      false)
+local _, getTrucks     = createDToggle("Trucks",          false)
 local _, getDupeItems  = createDToggle("Purchased Items", false)
 local _, getGifs       = createDToggle("Gift Items",      false)
 local _, getWood       = createDToggle("Wood",            false)
@@ -615,7 +615,6 @@ function DupeBase()
                                 if part:FindFirstChild("Weld") and part.Weld.Part1.Parent ~= part.Parent then continue end
                                 task.spawn(function()
                                     if isPointInside(part.Position, modelCFrame, modelSize) then
-                                        TeleportTruck()
                                         local oldPos       = part.Position
                                         local PartCFrame   = part.CFrame
                                         local nPos         = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
@@ -628,12 +627,15 @@ function DupeBase()
                         end
                     end
 
+                    -- Always teleport the truck itself even if empty
+                    TeleportTruck()
+
                     local SitPart   = Character.Humanoid.SeatPart
                     local DoorHinge = SitPart.Parent:FindFirstChild("PaintParts").DoorLeft:FindFirstChild("ButtonRemote_Hinge")
                     wait()
                     Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                     task.wait(0.1); SitPart:Destroy()
-                    TeleportTruck(); getgenv().DidTruckTeleport = false
+                    getgenv().DidTruckTeleport = false
                     task.wait(0.1)
                     for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
                 end
@@ -642,20 +644,22 @@ function DupeBase()
     end
 
     -- ── Retry loop (items that didn't move) ──────────
-    task.wait(5)
+    -- Initial settle wait: reduced from 5s → 2s
+    task.wait(2)
     for _, data in ipairs(teleportedParts) do
-        if (data.Instance.Position - data.OldPos).Magnitude < 5 then
+        if (data.Instance.Position - data.TargetCFrame.Position).Magnitude > 5 then
             ignoredParts[data.Instance] = nil
             table.insert(retryTeleport, data)
         end
     end
 
     repeat
-        task.wait(5)
+        -- Cycle wait: reduced from 5s → 2s
+        task.wait(2)
         retryTeleport = {}
         for _, data in ipairs(teleportedParts) do
             if data.Instance and data.Instance.Parent
-                and (data.Instance.Position - data.OldPos).Magnitude < 25 then
+                and (data.Instance.Position - data.TargetCFrame.Position).Magnitude > 5 then
                 table.insert(retryTeleport, data)
             end
         end
@@ -675,19 +679,21 @@ function DupeBase()
                 if not hrp then continue end
 
                 -- Walk close and fire drag until item moves or we give up
+                -- Each attempt: 0.35s wait × up to 3 attempts = ~1.05s max per item
+                -- (was 0.6s × 20 attempts = up to 12s per item)
                 local attempts = 0
                 repeat
                     attempts += 1
-                    if attempts > 20 then break end
+                    if attempts > 3 then break end
                     pcall(function()
                         if (hrp.Position - item.Position).Magnitude > 25 then
                             hrp.CFrame = item.CFrame
                         end
                         RS.Interaction.ClientIsDragging:FireServer(item.Parent)
                     end)
-                    task.wait(0.6)
+                    task.wait(0.35)
                 until not (item and item.Parent)
-                    or (item.Position - data.OldPos).Magnitude >= 25
+                    or (item.Position - data.TargetCFrame.Position).Magnitude <= 5
 
                 pcall(function()
                     item.CFrame = data.TargetCFrame
