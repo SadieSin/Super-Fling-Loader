@@ -167,5 +167,267 @@ createWorldToggle("Remove Water", false, function(v)
     end
 end)
 
+-- ════════════════════════════════════════════════════
+-- BUTTER LEAK — DupeBase
+-- ════════════════════════════════════════════════════
+
+function DupeBase()
+    local RS          = game:GetService("ReplicatedStorage")
+    local LP          = Players.LocalPlayer
+    local Character   = LP.Character or LP.CharacterAdded:Wait()
+    local Humanoid    = Character:WaitForChild("Humanoid")
+
+    local GiveBase, ReceiverBase
+    local GiveBaseOrigin, ReceiverBaseOrigin
+    local teleportedParts = {}
+    local retryTeleport   = {}
+    local ignoredParts    = {}
+
+    local function isPointInside(point, boxCFrame, boxSize)
+        local r = boxCFrame:PointToObjectSpace(point)
+        return math.abs(r.X) <= boxSize.X / 2
+            and math.abs(r.Y) <= (boxSize.Y / 2 + 2)
+            and math.abs(r.Z) <= boxSize.Z / 2
+    end
+
+    -- Locate giver and receiver bases
+    for _, v in pairs(workspace.Properties:GetDescendants()) do
+        if v.Name == "Owner" then
+            local val = tostring(v.Value)
+            if val == getgenv().GiverPlayer    then GiveBase = v;     GiveBaseOrigin     = v.Parent:FindFirstChild("OriginSquare") end
+            if val == getgenv().ReceiverPlayer then ReceiverBase = v; ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare") end
+        end
+    end
+
+    -- ── Structures ──────────────────────────────────
+    if getgenv().Structures then
+        pcall(function()
+            for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
+                if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
+                    if v.Parent:FindFirstChild("Type") and tostring(v.Parent.Type.Value) == "Structure" then
+                        if v.Parent:FindFirstChildOfClass("Part") or v.Parent:FindFirstChildOfClass("WedgePart") then
+                            local PartCFrame = (v.Parent:FindFirstChild("MainCFrame") and v.Parent.MainCFrame.Value)
+                                or v.Parent:FindFirstChildOfClass("Part").CFrame
+                            local DumbassArg = v.Parent:FindFirstChild("BlueprintWoodClass") and v.Parent.BlueprintWoodClass.Value or nil
+                            local newPos = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                            local Offset = CFrame.new(newPos) * PartCFrame.Rotation
+                            repeat wait()
+                                pcall(function()
+                                    RS.PlaceStructure.ClientPlacedStructure:FireServer(
+                                        v.Parent:FindFirstChild("ItemName").Value, Offset, LP, DumbassArg, v.Parent, true)
+                                end)
+                            until not v.Parent
+                            print("Sent Structure")
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    -- ── Furniture ───────────────────────────────────
+    if getgenv().Furniture then
+        pcall(function()
+            for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
+                if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
+                    if v.Parent:FindFirstChild("Type") and tostring(v.Parent.Type.Value) == "Furniture" then
+                        if v.Parent:FindFirstChildOfClass("Part") then
+                            local PartCFrame = (v.Parent:FindFirstChild("MainCFrame") and v.Parent.MainCFrame.Value)
+                                or (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
+                                or v.Parent:FindFirstChildOfClass("Part").CFrame
+                            local DumbassArg = v.Parent:FindFirstChild("BlueprintWoodClass") and v.Parent.BlueprintWoodClass.Value or nil
+                            local newPos = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                            local Offset = CFrame.new(newPos) * PartCFrame.Rotation
+                            repeat wait()
+                                pcall(function()
+                                    RS.PlaceStructure.ClientPlacedStructure:FireServer(
+                                        v.Parent:FindFirstChild("ItemName").Value, Offset, LP, DumbassArg, v.Parent, true)
+                                end)
+                            until not v.Parent
+                            print("Sent Furniture")
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    -- ── Truck Load ──────────────────────────────────
+    getgenv().DidTruckTeleport = false
+
+    local function TeleportTruck()
+        if getgenv().DidTruckTeleport then return end
+        if not Character.Humanoid.SeatPart then return end
+        local TruckCFrame = Character.Humanoid.SeatPart.Parent:FindFirstChild("Main").CFrame
+        local newPos = TruckCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+        local Offset = CFrame.new(newPos) * TruckCFrame.Rotation
+        Character.Humanoid.SeatPart.Parent:SetPrimaryPartCFrame(Offset)
+        getgenv().DidTruckTeleport = true
+    end
+
+    if getgenv().TeleportTrucks then
+        for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
+            if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
+                if v.Parent:FindFirstChild("DriveSeat") then
+                    v.Parent.DriveSeat:Sit(Character.Humanoid)
+                    repeat wait() v.Parent.DriveSeat:Sit(Character.Humanoid) until Character.Humanoid.SeatPart
+
+                    local targetModel = Character.Humanoid.SeatPart.Parent
+                    local modelCFrame, modelSize = targetModel:GetBoundingBox()
+
+                    for _, p in ipairs(targetModel:GetDescendants()) do
+                        if p:IsA("BasePart") then ignoredParts[p] = true end
+                    end
+                    for _, p in ipairs(Character:GetDescendants()) do
+                        if p:IsA("BasePart") then ignoredParts[p] = true end
+                    end
+
+                    for _, part in ipairs(workspace:GetDescendants()) do
+                        if part:IsA("BasePart") and not ignoredParts[part] then
+                            if part.Name == "Main" or part.Name == "WoodSection" then
+                                if part:FindFirstChild("Weld") and part.Weld.Part1.Parent ~= part.Parent then continue end
+                                task.spawn(function()
+                                    if isPointInside(part.Position, modelCFrame, modelSize) then
+                                        TeleportTruck()
+                                        local oldPos      = part.Position
+                                        local PartCFrame  = part.CFrame
+                                        local nPos        = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                                        local targetOffset = CFrame.new(nPos) * PartCFrame.Rotation
+                                        part.CFrame = targetOffset
+                                        table.insert(teleportedParts, { Instance = part, OldPos = oldPos, TargetCFrame = targetOffset })
+                                    end
+                                end)
+                            end
+                        end
+                    end
+
+                    local SitPart   = Character.Humanoid.SeatPart
+                    local DoorHinge = SitPart.Parent:FindFirstChild("PaintParts").DoorLeft:FindFirstChild("ButtonRemote_Hinge")
+                    wait()
+                    Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    task.wait(0.1)
+                    SitPart:Destroy()
+                    TeleportTruck()
+                    getgenv().DidTruckTeleport = false
+                    task.wait(0.1)
+                    for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
+                end
+            end
+        end
+    end
+
+    -- ── Retry loop (cargo that didn't move) ─────────
+    task.wait(5)
+    for _, data in ipairs(teleportedParts) do
+        if (data.Instance.Position - data.OldPos).Magnitude < 5 then
+            ignoredParts[data.Instance] = nil
+            table.insert(retryTeleport, data)
+        end
+    end
+
+    repeat
+        task.wait(5)
+        retryTeleport = {}
+        for _, data in ipairs(teleportedParts) do
+            if (data.Instance.Position - data.OldPos).Magnitude < 25 then
+                table.insert(retryTeleport, data)
+            end
+        end
+        if #retryTeleport > 0 then
+            print("Misses detected: " .. #retryTeleport .. ". Retrying...")
+            for _, data in ipairs(retryTeleport) do
+                local item = data.Instance
+                print("RETRYING: " .. item:GetFullName())
+                while not isNetworkOwner2(item.Parent) do
+                    if (LP.Character.HumanoidRootPart.Position - item.Position).Magnitude > 25 then
+                        LP.Character.HumanoidRootPart.CFrame = item.CFrame
+                        task.wait(0.1)
+                    end
+                    RS.Interaction.ClientIsDragging:FireServer(item.Parent)
+                    task.wait(0.1)
+                end
+                item.CFrame = data.TargetCFrame
+                task.wait(0.1)
+            end
+        end
+    until #retryTeleport == 0
+    print("All items successfully moved to their targets!")
+
+    -- ── Purchased Items ─────────────────────────────
+    if getgenv().TeleportItems then
+        for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
+            if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
+                if v.Parent:FindFirstChild("PurchasedBoxItemName") then
+                    local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
+                    if part and teleportedParts and table.find(teleportedParts, part) then continue end
+                    local PartCFrame = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
+                        or v.Parent:FindFirstChildOfClass("Part").CFrame
+                    local newPos = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                    local Offset = CFrame.new(newPos) * PartCFrame.Rotation
+                    if (Character.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
+                        Character.HumanoidRootPart.CFrame = part.CFrame
+                        task.wait(0.1)
+                    end
+                    isitemownersecondary(part)
+                    for i = 1, 200 do part.CFrame = Offset end
+                    wait(GetPing())
+                    print("Sent Item")
+                end
+            end
+        end
+    end
+
+    -- ── Gift Items ───────────────────────────────────
+    if getgenv().TeleportGifs then
+        for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
+            if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
+                if v.Parent:FindFirstChildOfClass("Script") and v.Parent:FindFirstChild("DraggableItem") then
+                    local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
+                    if part and teleportedParts and table.find(teleportedParts, part) then continue end
+                    local PartCFrame = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
+                        or v.Parent:FindFirstChildOfClass("Part").CFrame
+                    local newPos = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                    local Offset = CFrame.new(newPos) * PartCFrame.Rotation
+                    if (Character.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
+                        Character.HumanoidRootPart.CFrame = part.CFrame
+                        task.wait(0.1)
+                    end
+                    isitemownersecondary(part)
+                    for i = 1, 200 do part.CFrame = Offset end
+                    wait(GetPing())
+                    print("Sent Item")
+                end
+            end
+        end
+    end
+
+    -- ── Wood ────────────────────────────────────────
+    if getgenv().TeleportWood then
+        for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
+            if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
+                if v.Parent:FindFirstChild("TreeClass") then
+                    local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
+                    if part and teleportedParts and table.find(teleportedParts, part) then continue end
+                    local PartCFrame = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
+                        or v.Parent:FindFirstChildOfClass("Part").CFrame
+                    local newPos = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                    local Offset = CFrame.new(newPos) * PartCFrame.Rotation
+                    if (Character.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
+                        Character.HumanoidRootPart.CFrame = part.CFrame
+                        task.wait(0.1)
+                    end
+                    for i = 1, 50 do
+                        task.wait(0.05)
+                        RS.Interaction.ClientIsDragging:FireServer(part.Parent)
+                    end
+                    isitemownersecondary(part)
+                    for i = 1, 200 do part.CFrame = Offset end
+                    wait(GetPing())
+                    print("Sent Item")
+                end
+            end
+        end
+    end
+end
 
 print("[VanillaHub] Vanilla2 loaded")
