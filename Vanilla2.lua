@@ -353,11 +353,10 @@ local function makeDupeDropdown(labelText)
             item.MouseLeave:Connect(function() TweenService:Create(item, TweenInfo.new(0.1), {BackgroundColor3=Color3.fromRGB(28,28,40)}):Play() end)
             item.MouseButton1Click:Connect(function()
                 setSelected(p.Name, p.UserId)
-                -- close
                 isOpen = false
-                TweenService:Create(arrowLbl, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=0}):Play()
-                TweenService:Create(outer, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
-                TweenService:Create(listScroll, TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
+                TweenService:Create(arrowLbl,  TweenInfo.new(0.2,  Enum.EasingStyle.Quint), {Rotation=0}):Play()
+                TweenService:Create(outer,     TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
+                TweenService:Create(listScroll,TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
                 divider.Visible = false
             end)
         end
@@ -368,14 +367,14 @@ local function makeDupeDropdown(labelText)
         local count = #Players:GetPlayers()
         local listH = math.min(count, MAX_SHOW) * (ITEM_H+3) + 8
         divider.Visible = true
-        TweenService:Create(arrowLbl, TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=180}):Play()
+        TweenService:Create(arrowLbl,  TweenInfo.new(0.2,  Enum.EasingStyle.Quint), {Rotation=180}):Play()
         TweenService:Create(outer,     TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H+2+listH)}):Play()
         TweenService:Create(listScroll,TweenInfo.new(0.25, Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,listH)}):Play()
     end
 
     local function closeList()
         isOpen = false
-        TweenService:Create(arrowLbl,  TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=0}):Play()
+        TweenService:Create(arrowLbl,  TweenInfo.new(0.2,  Enum.EasingStyle.Quint), {Rotation=0}):Play()
         TweenService:Create(outer,     TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
         TweenService:Create(listScroll,TweenInfo.new(0.22, Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
         divider.Visible = false
@@ -458,10 +457,9 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
 
     local giverName    = getGiverName()
     local receiverName = getReceiverName()
-    if giverName == "" then setDupeStatus("Select a Giver first!", false) return end
+    if giverName == ""    then setDupeStatus("Select a Giver first!",    false) return end
     if receiverName == "" then setDupeStatus("Select a Receiver first!", false) return end
 
-    -- Push settings into getgenv() so DupeBase() can read them
     getgenv().GiverPlayer    = giverName
     getgenv().ReceiverPlayer = receiverName
     getgenv().Structures     = getStructures()
@@ -486,10 +484,7 @@ createDBtn("Start Dupe", Color3.fromRGB(35,90,45), function()
 end)
 
 createDBtn("Stop Dupe", Color3.fromRGB(90,35,35), function()
-    if dupeThread then
-        pcall(task.cancel, dupeThread)
-        dupeThread = nil
-    end
+    if dupeThread then pcall(task.cancel, dupeThread); dupeThread = nil end
     dupeRunning = false
     setDupeStatus("Stopped", false)
 end)
@@ -510,7 +505,6 @@ function DupeBase()
     local Character = LP.Character or LP.CharacterAdded:Wait()
     local Humanoid  = Character:WaitForChild("Humanoid")
 
-    local GiveBase, ReceiverBase
     local GiveBaseOrigin, ReceiverBaseOrigin
     local teleportedParts = {}
     local retryTeleport   = {}
@@ -527,8 +521,8 @@ function DupeBase()
     for _, v in pairs(workspace.Properties:GetDescendants()) do
         if v.Name == "Owner" then
             local val = tostring(v.Value)
-            if val == getgenv().GiverPlayer    then GiveBase = v;     GiveBaseOrigin     = v.Parent:FindFirstChild("OriginSquare") end
-            if val == getgenv().ReceiverPlayer then ReceiverBase = v; ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare") end
+            if val == getgenv().GiverPlayer    then GiveBaseOrigin     = v.Parent:FindFirstChild("OriginSquare") end
+            if val == getgenv().ReceiverPlayer then ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare") end
         end
     end
 
@@ -647,7 +641,7 @@ function DupeBase()
         end
     end
 
-    -- ── Retry loop ───────────────────────────────────
+    -- ── Retry loop (items that didn't move) ──────────
     task.wait(5)
     for _, data in ipairs(teleportedParts) do
         if (data.Instance.Position - data.OldPos).Magnitude < 5 then
@@ -660,24 +654,44 @@ function DupeBase()
         task.wait(5)
         retryTeleport = {}
         for _, data in ipairs(teleportedParts) do
-            if (data.Instance.Position - data.OldPos).Magnitude < 25 then
+            if data.Instance and data.Instance.Parent
+                and (data.Instance.Position - data.OldPos).Magnitude < 25 then
                 table.insert(retryTeleport, data)
             end
         end
+
         if #retryTeleport > 0 then
             print("Misses detected: " .. #retryTeleport .. ". Retrying...")
             for _, data in ipairs(retryTeleport) do
                 local item = data.Instance
+
+                -- Skip if item was destroyed
+                if not (item and item.Parent) then continue end
                 print("RETRYING: " .. item:GetFullName())
-                while not isNetworkOwner2(item.Parent) do
-                    if (LP.Character.HumanoidRootPart.Position - item.Position).Magnitude > 25 then
-                        LP.Character.HumanoidRootPart.CFrame = item.CFrame
-                        task.wait(0.1)
-                    end
-                    RS.Interaction.ClientIsDragging:FireServer(item.Parent)
-                    task.wait(0.1)
-                end
-                item.CFrame = data.TargetCFrame
+
+                -- Safely re-fetch character and HumanoidRootPart
+                local char = LP.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                if not hrp then continue end
+
+                -- Walk close and fire drag until item moves or we give up
+                local attempts = 0
+                repeat
+                    attempts += 1
+                    if attempts > 20 then break end
+                    pcall(function()
+                        if (hrp.Position - item.Position).Magnitude > 25 then
+                            hrp.CFrame = item.CFrame
+                        end
+                        RS.Interaction.ClientIsDragging:FireServer(item.Parent)
+                    end)
+                    task.wait(0.6)
+                until not (item and item.Parent)
+                    or (item.Position - data.OldPos).Magnitude >= 25
+
+                pcall(function()
+                    item.CFrame = data.TargetCFrame
+                end)
                 task.wait(0.1)
             end
         end
@@ -690,15 +704,17 @@ function DupeBase()
             if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
                 if v.Parent:FindFirstChild("PurchasedBoxItemName") then
                     local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
-                    if part and table.find(teleportedParts, part) then continue end
+                    if not part then continue end
+                    if table.find(teleportedParts, part) then continue end
                     local PartCFrame = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
                         or v.Parent:FindFirstChildOfClass("Part").CFrame
                     local newPos = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                     local Offset = CFrame.new(newPos) * PartCFrame.Rotation
-                    if (Character.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                        Character.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
+                    local hrp = Character:FindFirstChild("HumanoidRootPart")
+                    if hrp and (hrp.Position - part.Position).Magnitude > 25 then
+                        hrp.CFrame = part.CFrame; task.wait(0.1)
                     end
-                    isitemownersecondary(part)
+                    pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
                     wait(GetPing())
                     print("Sent Item")
@@ -713,15 +729,17 @@ function DupeBase()
             if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
                 if v.Parent:FindFirstChildOfClass("Script") and v.Parent:FindFirstChild("DraggableItem") then
                     local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
-                    if part and table.find(teleportedParts, part) then continue end
+                    if not part then continue end
+                    if table.find(teleportedParts, part) then continue end
                     local PartCFrame = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
                         or v.Parent:FindFirstChildOfClass("Part").CFrame
                     local newPos = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                     local Offset = CFrame.new(newPos) * PartCFrame.Rotation
-                    if (Character.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                        Character.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
+                    local hrp = Character:FindFirstChild("HumanoidRootPart")
+                    if hrp and (hrp.Position - part.Position).Magnitude > 25 then
+                        hrp.CFrame = part.CFrame; task.wait(0.1)
                     end
-                    isitemownersecondary(part)
+                    pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
                     wait(GetPing())
                     print("Sent Item")
@@ -736,19 +754,21 @@ function DupeBase()
             if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
                 if v.Parent:FindFirstChild("TreeClass") then
                     local part = v.Parent:FindFirstChild("Main") or v.Parent:FindFirstChildOfClass("Part")
-                    if part and table.find(teleportedParts, part) then continue end
+                    if not part then continue end
+                    if table.find(teleportedParts, part) then continue end
                     local PartCFrame = (v.Parent:FindFirstChild("Main") and v.Parent.Main.CFrame)
                         or v.Parent:FindFirstChildOfClass("Part").CFrame
                     local newPos = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                     local Offset = CFrame.new(newPos) * PartCFrame.Rotation
-                    if (Character.HumanoidRootPart.Position - part.Position).Magnitude > 25 then
-                        Character.HumanoidRootPart.CFrame = part.CFrame; task.wait(0.1)
+                    local hrp = Character:FindFirstChild("HumanoidRootPart")
+                    if hrp and (hrp.Position - part.Position).Magnitude > 25 then
+                        hrp.CFrame = part.CFrame; task.wait(0.1)
                     end
                     for i = 1, 50 do
                         task.wait(0.05)
                         RS.Interaction.ClientIsDragging:FireServer(part.Parent)
                     end
-                    isitemownersecondary(part)
+                    pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
                     wait(GetPing())
                     print("Sent Item")
