@@ -1,10 +1,15 @@
 -- ═══════════════════════════════════════════════════════════════
--- VANILLA2 — TRUCK LOAD DUPE  (BULLETPROOF + WATCHDOG)
--- Appends to the existing DupeTab. Execute AFTER Vanilla2.
+-- VANILLA2 — TRUCK LOAD DUPE  (FINAL — AUTO-SEAT)
+-- Appends to DupeTab. Execute AFTER Vanilla2.
 --
--- KEY ADDITION: every operation has a 3-second watchdog.
--- If nothing moves for 3s the watchdog kicks the stuck part/truck
--- directly and forces the pipeline to continue.
+-- HOW IT WORKS:
+--   • AUTO-SEAT: Enable the toggle, pick Receiver, then just SIT
+--     in any DriveSeat. The warp fires instantly when you sit down.
+--   • MANUAL SINGLE: Sit in truck → pick Receiver → hit button.
+--   • MULTI: Scan once → Warp All sends every truck sequentially.
+--     Each truck fully completes (warp + confirm) before next starts.
+--   • warpTruck() has NO yields — freeze/teleport/unfreeze is one
+--     synchronous burst so it can never stall mid-operation.
 -- ═══════════════════════════════════════════════════════════════
 
 if not _G.VH then
@@ -12,19 +17,18 @@ if not _G.VH then
     return
 end
 
-local TweenService  = _G.VH.TweenService
-local Players       = _G.VH.Players
-local player        = _G.VH.player
-local cleanupTasks  = _G.VH.cleanupTasks
-local pages         = _G.VH.pages
-local BTN_COLOR     = _G.VH.BTN_COLOR
-local THEME_TEXT    = _G.VH.THEME_TEXT or Color3.fromRGB(230, 206, 226)
-local RunService    = game:GetService("RunService")
+local TweenService = _G.VH.TweenService
+local Players      = _G.VH.Players
+local player       = _G.VH.player
+local cleanupTasks = _G.VH.cleanupTasks
+local pages        = _G.VH.pages
+local BTN_COLOR    = _G.VH.BTN_COLOR
+local THEME_TEXT   = _G.VH.THEME_TEXT or Color3.fromRGB(230, 206, 226)
 
-local RS                = game:GetService("ReplicatedStorage")
-local Interaction       = RS:FindFirstChild("Interaction")
-local RemoteProxy       = Interaction and Interaction:FindFirstChild("RemoteProxy")
-local ClientIsDragging  = Interaction and Interaction:FindFirstChild("ClientIsDragging")
+local RS               = game:GetService("ReplicatedStorage")
+local Interaction      = RS:FindFirstChild("Interaction")
+local RemoteProxy      = Interaction and Interaction:FindFirstChild("RemoteProxy")
+local ClientIsDragging = Interaction and Interaction:FindFirstChild("ClientIsDragging")
 
 local page = pages["DupeTab"]
 if not page then
@@ -35,70 +39,18 @@ if not page then
     end
 end
 if not page then
-    warn("[VanillaHub] TruckDupe: cannot find DupeTab page")
-    return
+    warn("[VanillaHub] TruckDupe: cannot find DupeTab page"); return
 end
 
--- ═══════════════════════════════════════════════════
--- WATCHDOG SYSTEM
--- Every warp operation registers with the watchdog.
--- If lastActivity hasn't advanced in WATCHDOG_TIMEOUT seconds,
--- the watchdog fires forceKick() which force-moves everything
--- and marks the operation done so the pipeline continues.
--- ═══════════════════════════════════════════════════
-local WATCHDOG_TIMEOUT = 3   -- seconds of no progress before kick
+-- No watchdog needed — sequential blocking approach is used instead
 
-local watchdogConn  = nil
-local watchdogEntry = nil   -- { lastActivity, timeout, onKick }
-
-local function watchdogPulse()
-    -- Called every Heartbeat. Checks if the current entry has gone stale.
-    if not watchdogEntry then return end
-    local e = watchdogEntry
-    if tick() - e.lastActivity >= e.timeout then
-        watchdogEntry = nil   -- clear BEFORE calling kick so kick can register a new entry
-        pcall(e.onKick)
-    end
-end
-
-local function startWatchdog()
-    if watchdogConn then return end
-    watchdogConn = RunService.Heartbeat:Connect(watchdogPulse)
-end
-
-local function stopWatchdog()
-    if watchdogConn then watchdogConn:Disconnect(); watchdogConn = nil end
-    watchdogEntry = nil
-end
-
--- Register a watchdog entry. onKick() is called if nothing touches
--- lastActivity for `timeout` seconds.
--- Returns a "pulse" function — call it every time real progress happens
--- to reset the timer, and a "clear" function to cancel the watchdog entry.
-local function registerWatchdog(timeout, onKick)
-    startWatchdog()
-    local entry = {
-        lastActivity = tick(),
-        timeout      = timeout or WATCHDOG_TIMEOUT,
-        onKick       = onKick,
-    }
-    watchdogEntry = entry
-    local function pulse() entry.lastActivity = tick() end
-    local function clear()
-        if watchdogEntry == entry then watchdogEntry = nil end
-    end
-    return pulse, clear
-end
-
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 -- SAFE PRIMITIVES
--- ═══════════════════════════════════════════════════
-
+-- ───────────────────────────────────────────────────────────────
 local function safeSet(part, cf)
     if not (part and part.Parent) then return false end
     return pcall(function() part.CFrame = cf end)
 end
-
 local function freeze(part)
     if not (part and part.Parent) then return end
     pcall(function()
@@ -107,15 +59,14 @@ local function freeze(part)
         part.AssemblyAngularVelocity = Vector3.zero
     end)
 end
-
 local function thaw(part)
     if not (part and part.Parent) then return end
     pcall(function() part.Anchored = false end)
 end
 
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 -- BASE FINDER
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 local function findBase(playerName)
     local props = workspace:FindFirstChild("Properties")
     if not props then return nil end
@@ -128,9 +79,9 @@ local function findBase(playerName)
     return nil
 end
 
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 -- TRUCK SCANNER
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 local function scanTrucks(ownerName)
     local seen, trucks = {}, {}
     local pm = workspace:FindFirstChild("PlayerModels")
@@ -139,17 +90,16 @@ local function scanTrucks(ownerName)
         if v.Name == "Owner" and tostring(v.Value) == ownerName then
             local m = v.Parent
             if m and m:IsA("Model") and m:FindFirstChild("DriveSeat") and not seen[m] then
-                seen[m] = true
-                table.insert(trucks, m)
+                seen[m] = true; table.insert(trucks, m)
             end
         end
     end
     return trucks
 end
 
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 -- JOINT MANAGER
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 local JOINT_CLASSES = {
     "Motor6D","HingeConstraint","CylindricalConstraint",
     "PrismaticConstraint","RodConstraint","SpringConstraint",
@@ -177,9 +127,9 @@ local function enableJoints(list)
     end
 end
 
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 -- ANCHOR PART RESOLVER
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 local function getAnchorPart(model)
     local main = model:FindFirstChild("Main")
     if main and main:IsA("BasePart") then return main end
@@ -194,9 +144,9 @@ local function getAnchorPart(model)
     return best
 end
 
--- ═══════════════════════════════════════════════════
--- CROSS-WELD CHECK (both sides + parent descendants)
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
+-- CROSS-WELD CHECK
+-- ───────────────────────────────────────────────────────────────
 local function isCrossWelded(part)
     for _, v in ipairs(part:GetChildren()) do
         if v:IsA("WeldConstraint") then
@@ -218,16 +168,15 @@ local function isCrossWelded(part)
     return false
 end
 
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 -- CARGO SCANNER
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 local function isInsideBox(point, boxCF, boxSz)
     local lp = boxCF:PointToObjectSpace(point)
     return math.abs(lp.X) <= boxSz.X*0.5+0.5
        and math.abs(lp.Y) <= boxSz.Y*0.5+1.5
        and math.abs(lp.Z) <= boxSz.Z*0.5+0.5
 end
-
 local function scanCargo(truckModel)
     local cargo, seen, truckParts = {}, {}, {}
     for _, p in ipairs(truckModel:GetDescendants()) do
@@ -240,16 +189,15 @@ local function scanCargo(truckModel)
             and (obj.Name=="Main" or obj.Name=="WoodSection")
             and not isCrossWelded(obj)
             and isInsideBox(obj.Position, boxCF, boxSz) then
-            seen[obj] = true
-            table.insert(cargo, obj)
+            seen[obj] = true; table.insert(cargo, obj)
         end
     end
     return cargo
 end
 
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 -- SNAPSHOT
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 local function snapshotCargo(truckModel, cargoList)
     local anchorPart = getAnchorPart(truckModel)
     if not anchorPart then return {}, nil end
@@ -264,26 +212,24 @@ local function snapshotCargo(truckModel, cargoList)
     return snaps, anchor
 end
 
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 -- DESTINATION CFrame
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
 local function computeDestCF(sourceCF, giverOrigin, receiverOrigin)
     local delta = receiverOrigin.Position - giverOrigin.Position
     return CFrame.new(sourceCF.Position + delta) * sourceCF.Rotation
 end
 
--- ═══════════════════════════════════════════════════
--- WARP ENGINE  (with per-step watchdog pulses)
--- Each task.wait() step pulses the watchdog so a slow server
--- doesn't trigger a false kick.  If warpTruck itself gets stuck
--- for >3s mid-step, the watchdog fires and onKick is called.
--- ═══════════════════════════════════════════════════
-local function warpTruck(truckModel, destCF, snapshots, savedAnchor, wdPulse)
-    wdPulse = wdPulse or function() end
+-- ───────────────────────────────────────────────────────────────
+-- WARP ENGINE  (synchronous — no yields inside)
+-- Freeze → teleport → unfreeze all in one frame burst.
+-- Caller must yield AFTER calling this if they want to wait for physics.
+-- ───────────────────────────────────────────────────────────────
+local function warpTruck(truckModel, destCF, snapshots, savedAnchor)
     if not (truckModel and truckModel.Parent) then return end
     if not savedAnchor then return end
 
-    -- Capture relative CFrames before touching anything
+    -- Capture relative CFrames of all truck parts NOW before anything changes
     local relCFs = {}
     for _, p in ipairs(truckModel:GetDescendants()) do
         if p:IsA("BasePart") then
@@ -293,129 +239,84 @@ local function warpTruck(truckModel, destCF, snapshots, savedAnchor, wdPulse)
     end
     if not next(relCFs) then return end
 
-    wdPulse()
+    -- Disable joints before anchoring to prevent destruction
     local joints = disableJoints(truckModel)
 
-    for p in pairs(relCFs)   do freeze(p)    end
+    -- Freeze truck + cargo
+    for p in pairs(relCFs)       do freeze(p)    end
     for part in pairs(snapshots) do freeze(part) end
 
-    wdPulse(); task.wait(); wdPulse(); task.wait(); wdPulse(); task.wait()
-
-    -- Move truck
+    -- Teleport truck parts
     for p, rel in pairs(relCFs) do
         safeSet(p, destCF:ToWorldSpace(rel))
     end
-    wdPulse()
-
-    -- Move cargo
+    -- Teleport cargo
     for part, offset in pairs(snapshots) do
         safeSet(part, destCF:ToWorldSpace(offset))
     end
-    wdPulse()
 
-    task.wait(); wdPulse(); task.wait(); wdPulse()
-
-    -- Unanchor truck first, then cargo
+    -- Unfreeze truck first, then cargo
     for p in pairs(relCFs)       do thaw(p)    end
     for part in pairs(snapshots) do thaw(part) end
 
-    wdPulse()
-    task.wait()
+    -- Re-enable joints
     enableJoints(joints)
-    wdPulse()
+    -- (caller yields after this if needed)
 end
 
--- ═══════════════════════════════════════════════════
--- CONFIRM + CORRECT
--- After warp settles, fix any drifted cargo.
--- Now has its own per-piece watchdog: if a piece hasn't confirmed
--- within 3s, the watchdog force-sets it and marks it done so
--- the operation never hangs waiting for a physics-stuck piece.
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
+-- FORCE-UNANCHOR
+-- ───────────────────────────────────────────────────────────────
+local function forceUnanchor(truckModel, snapshots)
+    pcall(function()
+        if truckModel and truckModel.Parent then
+            for _, p in ipairs(truckModel:GetDescendants()) do
+                if p:IsA("BasePart") then p.Anchored = false end
+            end
+        end
+    end)
+    if snapshots then
+        for part in pairs(snapshots) do
+            if part and part.Parent then pcall(function() part.Anchored = false end) end
+        end
+    end
+end
+
+-- ───────────────────────────────────────────────────────────────
+-- CONFIRM + CORRECT  (simple blocking version)
+-- Waits 0.3s for physics to settle, then corrects any drifters.
+-- Calls onDone() when finished. Guaranteed to call onDone exactly once.
+-- ───────────────────────────────────────────────────────────────
 local CONFIRM_DIST = 3.0
 
-local function confirmCargo(snapshots, destCF, wdPulse, onDone)
-    wdPulse = wdPulse or function() end
+local function confirmCargo(snapshots, destCF, onDone)
     task.spawn(function()
-        -- Settle frames
-        task.wait(); task.wait(); task.wait(); task.wait()
-        task.wait(0.1)
-        wdPulse()
+        task.wait(0.3)   -- let physics settle
 
-        local drifters = {}
+        local corrections = 0
         for part, offset in pairs(snapshots) do
             if part and part.Parent then
                 local ok, expected = pcall(function() return destCF:ToWorldSpace(offset) end)
                 if ok and (part.Position - expected.Position).Magnitude > CONFIRM_DIST then
-                    table.insert(drifters, {part=part, target=expected})
-                end
-            end
-        end
-
-        wdPulse()
-
-        if #drifters == 0 then
-            if onDone then onDone(0) end
-            return
-        end
-
-        local corrTotal = #drifters
-        local corrDone  = {n=0}
-        local Char      = player.Character
-
-        local function onOneDone()
-            corrDone.n += 1
-            wdPulse()
-            if corrDone.n >= corrTotal and onDone then
-                onDone(corrTotal)
-            end
-        end
-
-        for _, d in ipairs(drifters) do
-            task.spawn(function()
-                -- Per-piece watchdog: if THIS piece hangs for 3s, force-complete it
-                local pieceWDPulse, pieceWDClear = registerWatchdog(WATCHDOG_TIMEOUT, function()
-                    -- Watchdog fired — force set the part and move on
+                    corrections += 1
                     pcall(function()
-                        if d.part and d.part.Parent then
-                            d.part.Anchored = true
-                            d.part.CFrame   = d.target
-                            d.part.Anchored = false
-                        end
+                        part.Anchored = true
+                        part.AssemblyLinearVelocity  = Vector3.zero
+                        part.AssemblyAngularVelocity = Vector3.zero
+                        part.CFrame   = expected
+                        part.Anchored = false
                     end)
-                    onOneDone()
-                end)
-
-                if d.part and d.part.Parent then
-                    -- Claim network ownership first (mirrors Vanilla2 retry logic)
-                    if ClientIsDragging and Char and Char:FindFirstChild("HumanoidRootPart") then
-                        local hrp = Char.HumanoidRootPart
-                        if (hrp.Position - d.part.Position).Magnitude > 25 then
-                            pcall(function() hrp.CFrame = d.part.CFrame end)
-                            pieceWDPulse(); task.wait(0.08); pieceWDPulse()
-                        end
-                        pcall(function() ClientIsDragging:FireServer(d.part.Parent) end)
-                        pieceWDPulse(); task.wait(0.1); pieceWDPulse()
-                    end
-
-                    freeze(d.part)
-                    pieceWDPulse(); task.wait(); pieceWDPulse(); task.wait(); pieceWDPulse()
-                    safeSet(d.part, d.target)
-                    pieceWDPulse(); task.wait(); pieceWDPulse(); task.wait(); pieceWDPulse()
-                    thaw(d.part)
-                    pieceWDPulse()
                 end
-
-                pieceWDClear()   -- cancel the watchdog — we finished normally
-                onOneDone()
-            end)
+            end
         end
+
+        if onDone then onDone(corrections) end
     end)
 end
 
--- ═══════════════════════════════════════════════════
--- PLAYER EJECTION
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
+-- EJECT FROM SEAT
+-- ───────────────────────────────────────────────────────────────
 local function ejectFromSeat(hum, seatPart, timeout)
     timeout = timeout or 2.0
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
@@ -435,120 +336,145 @@ local function ejectFromSeat(hum, seatPart, timeout)
     task.wait(0.1)
 end
 
--- ═══════════════════════════════════════════════════
--- UI HELPERS  (match Vanilla2's createD* style exactly)
--- ═══════════════════════════════════════════════════
+-- ───────────────────────────────────────────────────────────────
+-- SINGLE WARP CORE
+-- Shared by both the manual button and the auto-seat trigger.
+-- Returns immediately; all work happens in task.spawn.
+-- statusFn(msg, active, color) — optional UI callback
+-- onFinish() — called when fully done (or watchdog recovered)
+-- ───────────────────────────────────────────────────────────────
+local function doSingleWarp(truckModel, giverOrigin, receiverOrigin, statusFn, progFn, onFinish)
+    statusFn = statusFn or function() end
+    progFn   = progFn   or function() end
+    onFinish = onFinish or function() end
 
+    task.spawn(function()
+        local cargo = scanCargo(truckModel)
+        local snaps, anchor = snapshotCargo(truckModel, cargo)
+
+        if not anchor then
+            statusFn("ERROR: truck has no anchor part!", false)
+            onFinish(false); return
+        end
+
+        statusFn("Warping "..#cargo.." cargo...", true, Color3.fromRGB(140,210,255))
+        progFn(0, 1, "Warping...")
+
+        local destCF = computeDestCF(anchor, giverOrigin, receiverOrigin)
+
+        warpTruck(truckModel, destCF, snaps, anchor)
+
+        progFn(1, 1, "Confirming cargo...", Color3.fromRGB(255,175,55))
+
+        confirmCargo(snaps, destCF, function(corrections)
+            local msg = corrections > 0
+                and ("Done! ("..corrections.." corrected)")
+                or  "Done! Cargo landed clean."
+            statusFn(msg, false, Color3.fromRGB(90,220,110))
+            progFn(1, 1, msg, Color3.fromRGB(90,220,110))
+            onFinish(true)
+        end)
+
+        -- Return player to giver base
+        task.wait(0.2)
+        pcall(function()
+            local Char = player.Character
+            local hrp  = Char and Char:FindFirstChild("HumanoidRootPart")
+            if hrp then hrp.CFrame = CFrame.new(giverOrigin.Position + Vector3.new(0,6,0)) end
+        end)
+    end)
+end
+
+-- ───────────────────────────────────────────────────────────────
+-- UI HELPERS
+-- ───────────────────────────────────────────────────────────────
 local function mkSep()
-    local s = Instance.new("Frame", page)
-    s.Size = UDim2.new(1,-12,0,1)
-    s.BackgroundColor3 = Color3.fromRGB(40,40,55); s.BorderSizePixel=0
+    local s = Instance.new("Frame",page)
+    s.Size=UDim2.new(1,-12,0,1); s.BackgroundColor3=Color3.fromRGB(40,40,55); s.BorderSizePixel=0
 end
-
 local function mkLabel(text)
-    local lbl = Instance.new("TextLabel", page)
-    lbl.Size = UDim2.new(1,-12,0,22); lbl.BackgroundTransparency=1
-    lbl.Font = Enum.Font.GothamBold; lbl.TextSize=11
-    lbl.TextColor3 = Color3.fromRGB(120,120,150)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Text = string.upper(text)
-    Instance.new("UIPadding",lbl).PaddingLeft = UDim.new(0,4)
+    local lbl = Instance.new("TextLabel",page)
+    lbl.Size=UDim2.new(1,-12,0,22); lbl.BackgroundTransparency=1
+    lbl.Font=Enum.Font.GothamBold; lbl.TextSize=11
+    lbl.TextColor3=Color3.fromRGB(120,120,150); lbl.TextXAlignment=Enum.TextXAlignment.Left
+    lbl.Text=string.upper(text)
+    Instance.new("UIPadding",lbl).PaddingLeft=UDim.new(0,4)
 end
-
 local function mkHint(text)
-    local h = Instance.new("TextLabel",page)
-    h.Size = UDim2.new(1,-12,0,28); h.BackgroundColor3=Color3.fromRGB(16,16,22)
+    local h=Instance.new("TextLabel",page)
+    h.Size=UDim2.new(1,-12,0,28); h.BackgroundColor3=Color3.fromRGB(16,16,22)
     h.BorderSizePixel=0; h.Font=Enum.Font.Gotham; h.TextSize=11
     h.TextColor3=Color3.fromRGB(100,100,130); h.TextWrapped=true
     h.TextXAlignment=Enum.TextXAlignment.Left; h.Text="  "..text
     Instance.new("UICorner",h).CornerRadius=UDim.new(0,6)
     Instance.new("UIPadding",h).PaddingLeft=UDim.new(0,6)
 end
-
 local function mkBtn(text, color, cb)
     color = color or BTN_COLOR
-    local btn = Instance.new("TextButton",page)
+    local btn=Instance.new("TextButton",page)
     btn.Size=UDim2.new(1,-12,0,34); btn.BackgroundColor3=color
     btn.Text=text; btn.Font=Enum.Font.GothamSemibold; btn.TextSize=13
     btn.TextColor3=THEME_TEXT; btn.BorderSizePixel=0
     Instance.new("UICorner",btn).CornerRadius=UDim.new(0,6)
-    local base = color
-    local hov  = Color3.fromRGB(
-        math.min(color.R*255+20,255)/255,
-        math.min(color.G*255+8, 255)/255,
-        math.min(color.B*255+20,255)/255)
-    local locked = false
-    btn.MouseEnter:Connect(function()
-        if not locked then TweenService:Create(btn,TweenInfo.new(0.12),{BackgroundColor3=hov}):Play() end
-    end)
-    btn.MouseLeave:Connect(function()
-        if not locked then TweenService:Create(btn,TweenInfo.new(0.12),{BackgroundColor3=base}):Play() end
-    end)
+    local base=color
+    local hov=Color3.fromRGB(math.min(color.R*255+20,255)/255,math.min(color.G*255+8,255)/255,math.min(color.B*255+20,255)/255)
+    local locked=false
+    btn.MouseEnter:Connect(function() if not locked then TweenService:Create(btn,TweenInfo.new(0.12),{BackgroundColor3=hov}):Play() end end)
+    btn.MouseLeave:Connect(function() if not locked then TweenService:Create(btn,TweenInfo.new(0.12),{BackgroundColor3=base}):Play() end end)
     if cb then btn.MouseButton1Click:Connect(function() if not locked then cb() end end) end
     local function setLock(state)
-        locked = state
-        local dim = Color3.fromRGB(
-            math.max(base.R*255*0.35,0)/255,
-            math.max(base.G*255*0.35,0)/255,
-            math.max(base.B*255*0.35,0)/255)
-        TweenService:Create(btn,TweenInfo.new(0.15),{
-            BackgroundColor3 = state and dim or base,
-            TextTransparency = state and 0.5 or 0,
-        }):Play()
+        locked=state
+        local dim=Color3.fromRGB(math.max(base.R*255*0.35,0)/255,math.max(base.G*255*0.35,0)/255,math.max(base.B*255*0.35,0)/255)
+        TweenService:Create(btn,TweenInfo.new(0.15),{BackgroundColor3=state and dim or base,TextTransparency=state and 0.5 or 0}):Play()
     end
     return btn, setLock
 end
-
 local function mkStatus(default)
-    local card = Instance.new("Frame",page)
-    card.Size=UDim2.new(1,-12,0,32); card.BackgroundColor3=Color3.fromRGB(14,14,18)
-    card.BorderSizePixel=0
+    local card=Instance.new("Frame",page)
+    card.Size=UDim2.new(1,-12,0,32); card.BackgroundColor3=Color3.fromRGB(14,14,18); card.BorderSizePixel=0
     Instance.new("UICorner",card).CornerRadius=UDim.new(0,6)
-    local dot = Instance.new("Frame",card)
+    local dot=Instance.new("Frame",card)
     dot.Size=UDim2.new(0,7,0,7); dot.Position=UDim2.new(0,10,0.5,-3)
     dot.BackgroundColor3=Color3.fromRGB(80,80,100); dot.BorderSizePixel=0
     Instance.new("UICorner",dot).CornerRadius=UDim.new(1,0)
-    local lbl = Instance.new("TextLabel",card)
+    local lbl=Instance.new("TextLabel",card)
     lbl.Size=UDim2.new(1,-28,1,0); lbl.Position=UDim2.new(0,24,0,0)
     lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.Gotham; lbl.TextSize=12
     lbl.TextColor3=THEME_TEXT; lbl.TextXAlignment=Enum.TextXAlignment.Left
     lbl.TextWrapped=true; lbl.Text=default or "Ready"
-    local function set(msg, active, col)
+    local function set(msg,active,col)
         lbl.Text=msg; lbl.TextColor3=col or THEME_TEXT
         dot.BackgroundColor3=active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
     end
     return card, set
 end
-
 local function mkProg()
-    local cont = Instance.new("Frame",page)
+    local cont=Instance.new("Frame",page)
     cont.Size=UDim2.new(1,-12,0,44); cont.BackgroundColor3=Color3.fromRGB(18,18,24)
     cont.BorderSizePixel=0; cont.Visible=false
     Instance.new("UICorner",cont).CornerRadius=UDim.new(0,8)
-    local topLbl = Instance.new("TextLabel",cont)
+    local topLbl=Instance.new("TextLabel",cont)
     topLbl.Size=UDim2.new(1,-12,0,16); topLbl.Position=UDim2.new(0,6,0,4)
     topLbl.BackgroundTransparency=1; topLbl.Font=Enum.Font.GothamSemibold; topLbl.TextSize=11
     topLbl.TextColor3=THEME_TEXT; topLbl.TextXAlignment=Enum.TextXAlignment.Left; topLbl.Text=""
-    local track = Instance.new("Frame",cont)
+    local track=Instance.new("Frame",cont)
     track.Size=UDim2.new(1,-12,0,12); track.Position=UDim2.new(0,6,0,26)
     track.BackgroundColor3=Color3.fromRGB(28,28,38); track.BorderSizePixel=0
     Instance.new("UICorner",track).CornerRadius=UDim.new(1,0)
-    local fill = Instance.new("Frame",track)
+    local fill=Instance.new("Frame",track)
     fill.Size=UDim2.new(0,0,1,0); fill.BackgroundColor3=Color3.fromRGB(90,160,255)
     fill.BorderSizePixel=0; Instance.new("UICorner",fill).CornerRadius=UDim.new(1,0)
-    local token = 0
-    local function set(done, total, label, col)
+    local token=0
+    local function set(done,total,label,col)
         token+=1; cont.BackgroundTransparency=0; fill.BackgroundTransparency=0
         topLbl.TextTransparency=0; cont.Visible=true
         topLbl.Text=label or (done.." / "..total)
         local pct=math.clamp(done/math.max(total,1),0,1)
-        TweenService:Create(fill,TweenInfo.new(0.18,Enum.EasingStyle.Quint),{
-            Size=UDim2.new(pct,0,1,0), BackgroundColor3=col or Color3.fromRGB(90,160,255)
-        }):Play()
+        TweenService:Create(fill,TweenInfo.new(0.18,Enum.EasingStyle.Quint),{Size=UDim2.new(pct,0,1,0),BackgroundColor3=col or Color3.fromRGB(90,160,255)}):Play()
     end
     local function hide(delay)
         token+=1; local t=token
-        task.delay(delay or 2, function()
+        task.delay(delay or 2,function()
             if token~=t then return end
             TweenService:Create(cont,TweenInfo.new(0.4),{BackgroundTransparency=1}):Play()
             TweenService:Create(fill,TweenInfo.new(0.4),{BackgroundTransparency=1}):Play()
@@ -556,8 +482,7 @@ local function mkProg()
             task.delay(0.45,function()
                 if token~=t then return end
                 cont.Visible=false; cont.BackgroundTransparency=0
-                fill.BackgroundTransparency=0; fill.Size=UDim2.new(0,0,1,0)
-                topLbl.TextTransparency=0
+                fill.BackgroundTransparency=0; fill.Size=UDim2.new(0,0,1,0); topLbl.TextTransparency=0
             end)
         end)
     end
@@ -568,84 +493,63 @@ local function mkProg()
     end
     return cont, set, hide, reset
 end
-
 local function mkDropdown(labelText)
     local HEADER_H=40; local ITEM_H=34; local MAX_SHOW=5
     local selName=""; local isOpen=false
-
     local outer=Instance.new("Frame",page)
     outer.Size=UDim2.new(1,-12,0,HEADER_H); outer.BackgroundColor3=Color3.fromRGB(22,22,30)
     outer.BorderSizePixel=0; outer.ClipsDescendants=true
     Instance.new("UICorner",outer).CornerRadius=UDim.new(0,8)
     local outerStroke=Instance.new("UIStroke",outer)
     outerStroke.Color=Color3.fromRGB(60,60,90); outerStroke.Thickness=1; outerStroke.Transparency=0.5
-
     local header=Instance.new("Frame",outer)
     header.Size=UDim2.new(1,0,0,HEADER_H); header.BackgroundTransparency=1
-
     local lbl=Instance.new("TextLabel",header)
     lbl.Size=UDim2.new(0,80,1,0); lbl.Position=UDim2.new(0,12,0,0)
     lbl.BackgroundTransparency=1; lbl.Text=labelText
     lbl.Font=Enum.Font.GothamBold; lbl.TextSize=12; lbl.TextColor3=THEME_TEXT
     lbl.TextXAlignment=Enum.TextXAlignment.Left
-
     local selFrame=Instance.new("Frame",header)
     selFrame.Size=UDim2.new(1,-96,0,28); selFrame.Position=UDim2.new(0,90,0.5,-14)
     selFrame.BackgroundColor3=Color3.fromRGB(30,30,42); selFrame.BorderSizePixel=0
     Instance.new("UICorner",selFrame).CornerRadius=UDim.new(0,6)
     Instance.new("UIStroke",selFrame).Color=Color3.fromRGB(70,70,110)
-
     local avatar=Instance.new("ImageLabel",selFrame)
     avatar.Size=UDim2.new(0,20,0,20); avatar.Position=UDim2.new(0,6,0.5,-10)
     avatar.BackgroundColor3=Color3.fromRGB(45,45,60); avatar.BorderSizePixel=0
     avatar.Image=""; avatar.ScaleType=Enum.ScaleType.Crop
     Instance.new("UICorner",avatar).CornerRadius=UDim.new(1,0)
-
     local selLbl=Instance.new("TextLabel",selFrame)
     selLbl.Size=UDim2.new(1,-60,1,0); selLbl.Position=UDim2.new(0,32,0,0)
     selLbl.BackgroundTransparency=1; selLbl.Text="Select a player..."
     selLbl.Font=Enum.Font.GothamSemibold; selLbl.TextSize=12
-    selLbl.TextColor3=Color3.fromRGB(110,110,140)
-    selLbl.TextXAlignment=Enum.TextXAlignment.Left; selLbl.TextTruncate=Enum.TextTruncate.AtEnd
-
+    selLbl.TextColor3=Color3.fromRGB(110,110,140); selLbl.TextXAlignment=Enum.TextXAlignment.Left
+    selLbl.TextTruncate=Enum.TextTruncate.AtEnd
     local arrow=Instance.new("TextLabel",selFrame)
     arrow.Size=UDim2.new(0,22,1,0); arrow.Position=UDim2.new(1,-24,0,0)
     arrow.BackgroundTransparency=1; arrow.Text="▾"; arrow.Font=Enum.Font.GothamBold
-    arrow.TextSize=14; arrow.TextColor3=Color3.fromRGB(120,120,160)
-    arrow.TextXAlignment=Enum.TextXAlignment.Center
-
+    arrow.TextSize=14; arrow.TextColor3=Color3.fromRGB(120,120,160); arrow.TextXAlignment=Enum.TextXAlignment.Center
     local headerBtn=Instance.new("TextButton",selFrame)
-    headerBtn.Size=UDim2.new(1,0,1,0); headerBtn.BackgroundTransparency=1
-    headerBtn.Text=""; headerBtn.ZIndex=5
-
+    headerBtn.Size=UDim2.new(1,0,1,0); headerBtn.BackgroundTransparency=1; headerBtn.Text=""; headerBtn.ZIndex=5
     local divider=Instance.new("Frame",outer)
     divider.Size=UDim2.new(1,-16,0,1); divider.Position=UDim2.new(0,8,0,HEADER_H)
     divider.BackgroundColor3=Color3.fromRGB(50,50,75); divider.BorderSizePixel=0; divider.Visible=false
-
     local listScroll=Instance.new("ScrollingFrame",outer)
     listScroll.Position=UDim2.new(0,0,0,HEADER_H+2); listScroll.Size=UDim2.new(1,0,0,0)
-    listScroll.BackgroundTransparency=1; listScroll.BorderSizePixel=0
-    listScroll.ScrollBarThickness=3; listScroll.ScrollBarImageColor3=Color3.fromRGB(90,90,130)
-    listScroll.CanvasSize=UDim2.new(0,0,0,0); listScroll.ClipsDescendants=true
-    local listLayout=Instance.new("UIListLayout",listScroll)
-    listLayout.SortOrder=Enum.SortOrder.LayoutOrder; listLayout.Padding=UDim.new(0,3)
-    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        listScroll.CanvasSize=UDim2.new(0,0,0,listLayout.AbsoluteContentSize.Y+6)
+    listScroll.BackgroundTransparency=1; listScroll.BorderSizePixel=0; listScroll.ScrollBarThickness=3
+    listScroll.ScrollBarImageColor3=Color3.fromRGB(90,90,130); listScroll.CanvasSize=UDim2.new(0,0,0,0)
+    listScroll.ClipsDescendants=true
+    local ll=Instance.new("UIListLayout",listScroll)
+    ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,3)
+    ll:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        listScroll.CanvasSize=UDim2.new(0,0,0,ll.AbsoluteContentSize.Y+6)
     end)
     local lp=Instance.new("UIPadding",listScroll)
-    lp.PaddingTop=UDim.new(0,4); lp.PaddingBottom=UDim.new(0,4)
-    lp.PaddingLeft=UDim.new(0,6); lp.PaddingRight=UDim.new(0,6)
-
+    lp.PaddingTop=UDim.new(0,4); lp.PaddingBottom=UDim.new(0,4); lp.PaddingLeft=UDim.new(0,6); lp.PaddingRight=UDim.new(0,6)
     local function setSel(name, userId)
         selName=name; selLbl.Text=name; selLbl.TextColor3=THEME_TEXT
         arrow.TextColor3=Color3.fromRGB(160,160,210); outerStroke.Color=Color3.fromRGB(90,90,160)
-        if userId then
-            task.spawn(function()
-                pcall(function()
-                    avatar.Image=Players:GetUserThumbnailAsync(userId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48)
-                end)
-            end)
-        end
+        if userId then task.spawn(function() pcall(function() avatar.Image=Players:GetUserThumbnailAsync(userId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end) end) end
     end
     local function closeList()
         isOpen=false
@@ -655,45 +559,30 @@ local function mkDropdown(labelText)
         divider.Visible=false
     end
     local function buildList()
-        for _,c in ipairs(listScroll:GetChildren()) do
-            if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
-        end
+        for _,c in ipairs(listScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
         local pl=Players:GetPlayers(); table.sort(pl,function(a,b) return a.Name<b.Name end)
         for _,plr in ipairs(pl) do
             local row=Instance.new("TextButton",listScroll)
-            row.Size=UDim2.new(1,0,0,ITEM_H)
-            row.BackgroundColor3=plr.Name==selName and Color3.fromRGB(45,45,75) or Color3.fromRGB(28,28,40)
+            row.Size=UDim2.new(1,0,0,ITEM_H); row.BackgroundColor3=plr.Name==selName and Color3.fromRGB(45,45,75) or Color3.fromRGB(28,28,40)
             row.BorderSizePixel=0; row.Text=""; row.LayoutOrder=plr.UserId
             Instance.new("UICorner",row).CornerRadius=UDim.new(0,6)
             local rAv=Instance.new("ImageLabel",row)
             rAv.Size=UDim2.new(0,22,0,22); rAv.Position=UDim2.new(0,8,0.5,-11)
             rAv.BackgroundColor3=Color3.fromRGB(45,45,60); rAv.BorderSizePixel=0; rAv.ScaleType=Enum.ScaleType.Crop
             Instance.new("UICorner",rAv).CornerRadius=UDim.new(1,0)
-            local cap=plr
-            task.spawn(function()
-                pcall(function()
-                    rAv.Image=Players:GetUserThumbnailAsync(cap.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48)
-                end)
-            end)
+            local cap=plr; task.spawn(function() pcall(function() rAv.Image=Players:GetUserThumbnailAsync(cap.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end) end)
             local rLbl=Instance.new("TextLabel",row)
             rLbl.Size=UDim2.new(1,-44,1,0); rLbl.Position=UDim2.new(0,36,0,0)
-            rLbl.BackgroundTransparency=1; rLbl.Text=plr.Name
-            rLbl.Font=Enum.Font.GothamSemibold; rLbl.TextSize=13
-            rLbl.TextColor3=plr.Name==selName and THEME_TEXT or Color3.fromRGB(200,200,215)
-            rLbl.TextXAlignment=Enum.TextXAlignment.Left
+            rLbl.BackgroundTransparency=1; rLbl.Text=plr.Name; rLbl.Font=Enum.Font.GothamSemibold; rLbl.TextSize=13
+            rLbl.TextColor3=plr.Name==selName and THEME_TEXT or Color3.fromRGB(200,200,215); rLbl.TextXAlignment=Enum.TextXAlignment.Left
             row.MouseButton1Click:Connect(function() setSel(plr.Name,plr.UserId); closeList() end)
-            row.MouseEnter:Connect(function()
-                if plr.Name~=selName then TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(38,38,58)}):Play() end
-            end)
-            row.MouseLeave:Connect(function()
-                if plr.Name~=selName then TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(28,28,40)}):Play() end
-            end)
+            row.MouseEnter:Connect(function() if plr.Name~=selName then TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(38,38,58)}):Play() end end)
+            row.MouseLeave:Connect(function() if plr.Name~=selName then TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(28,28,40)}):Play() end end)
         end
     end
     local function openList()
         isOpen=true; buildList()
-        local count=#Players:GetPlayers()
-        local listH=math.min(count,MAX_SHOW)*(ITEM_H+3)+8
+        local count=#Players:GetPlayers(); local listH=math.min(count,MAX_SHOW)*(ITEM_H+3)+8
         divider.Visible=true
         TweenService:Create(arrow,TweenInfo.new(0.2,Enum.EasingStyle.Quint),{Rotation=180}):Play()
         TweenService:Create(outer,TweenInfo.new(0.25,Enum.EasingStyle.Quint),{Size=UDim2.new(1,-12,0,HEADER_H+2+listH)}):Play()
@@ -704,21 +593,108 @@ local function mkDropdown(labelText)
     headerBtn.MouseLeave:Connect(function() TweenService:Create(selFrame,TweenInfo.new(0.12),{BackgroundColor3=Color3.fromRGB(30,30,42)}):Play() end)
     Players.PlayerAdded:Connect(function() if isOpen then buildList() end end)
     Players.PlayerRemoving:Connect(function(leaving)
-        if leaving.Name==selName then
-            selName=""; selLbl.Text="Select a player..."; selLbl.TextColor3=Color3.fromRGB(110,110,140)
-            avatar.Image=""; arrow.TextColor3=Color3.fromRGB(120,120,160); outerStroke.Color=Color3.fromRGB(60,60,90)
-        end
+        if leaving.Name==selName then selName=""; selLbl.Text="Select a player..."; selLbl.TextColor3=Color3.fromRGB(110,110,140); avatar.Image=""; arrow.TextColor3=Color3.fromRGB(120,120,160); outerStroke.Color=Color3.fromRGB(60,60,90) end
         if isOpen then buildList() end
     end)
     return outer, function() return selName end
 end
 
 -- ═══════════════════════════════════════════════════
--- SECTION A — SINGLE TRUCK WARP
+-- ░░  SECTION A — AUTO-SEAT SINGLE WARP  ░░
+-- Pick a Receiver, enable the toggle, then just SIT in any truck.
+-- The warp fires the moment your butt hits the DriveSeat.
 -- ═══════════════════════════════════════════════════
 mkSep()
-mkLabel("Single Truck Warp  (physics-safe + watchdog)")
-mkHint("Sit in your truck → pick Receiver → Warp. Auto-kicks after 3s stall.")
+mkLabel("Auto-Seat Single Warp  ← just sit in the truck")
+mkHint("Enable toggle → pick Receiver → sit in any DriveSeat. Warps instantly.")
+
+local _, getAutoReceiver = mkDropdown("Receiver")
+local _, autoStat = mkStatus("Enable toggle, pick Receiver, then sit in a truck.")
+local _, autoProg, autoProgHide, autoProgReset = mkProg()
+
+local autoEnabled   = false
+local autoRunning   = false   -- prevents re-triggering while a warp is in-flight
+local seatConn      = nil
+
+local autoToggleBtn, autoToggleLock = mkBtn("Auto-Warp ON/OFF  [OFF]", Color3.fromRGB(60,30,90), function()
+    autoEnabled = not autoEnabled
+
+    if autoEnabled then
+        autoToggleBtn.Text = "Auto-Warp ON/OFF  [ON]"
+        autoToggleBtn.BackgroundColor3 = Color3.fromRGB(35,100,50)
+        autoStat("Waiting for you to sit in a truck...", false, Color3.fromRGB(140,210,255))
+
+        -- Connect to Humanoid.Seated — fires every time you sit or unsit
+        local Char = player.Character or player.CharacterAdded:Wait()
+        local hum  = Char:FindFirstChildOfClass("Humanoid")
+        if not hum then
+            autoStat("No Humanoid found!", false); autoEnabled=false
+            autoToggleBtn.Text="Auto-Warp ON/OFF  [OFF]"
+            autoToggleBtn.BackgroundColor3=Color3.fromRGB(60,30,90)
+            return
+        end
+
+        if seatConn then seatConn:Disconnect() end
+
+        seatConn = hum.Seated:Connect(function(active, seatPart)
+            -- Only trigger when sitting DOWN (active=true) in a DriveSeat
+            if not active then return end
+            if not (seatPart and seatPart.Name == "DriveSeat") then return end
+            if autoRunning then return end   -- already warping, skip
+
+            local receiverName = getAutoReceiver()
+            if receiverName == "" then
+                autoStat("Pick a Receiver first!", false); return
+            end
+
+            local truckModel = seatPart.Parent
+            if not (truckModel and truckModel:IsA("Model")) then return end
+
+            local giverOrigin    = findBase(player.Name)
+            local receiverOrigin = findBase(receiverName)
+            if not giverOrigin    then autoStat("Can't find your base!", false);      return end
+            if not receiverOrigin then autoStat("Can't find receiver base!", false); return end
+
+            autoRunning = true
+            autoProgReset()
+            autoStat("Sitting detected — ejecting & warping...", true, Color3.fromRGB(140,210,255))
+
+            -- Eject first, then warp
+            task.spawn(function()
+                ejectFromSeat(hum, seatPart, 2.0)
+
+                if not (truckModel and truckModel.Parent) then
+                    autoStat("Truck gone during eject!", false)
+                    autoRunning = false; return
+                end
+
+                doSingleWarp(truckModel, giverOrigin, receiverOrigin,
+                    autoStat, autoProg,
+                    function(_)
+                        autoProgHide(2.5)
+                        autoRunning = false
+                        -- Stay in auto mode — ready for next truck
+                        if autoEnabled then
+                            autoStat("Done! Sitting in next truck will warp again.", false, Color3.fromRGB(90,220,110))
+                        end
+                    end
+                )
+            end)
+        end)
+    else
+        autoToggleBtn.Text = "Auto-Warp ON/OFF  [OFF]"
+        autoToggleBtn.BackgroundColor3 = Color3.fromRGB(60,30,90)
+        if seatConn then seatConn:Disconnect(); seatConn = nil end
+        autoStat("Auto-warp disabled.", false)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════
+-- ░░  SECTION B — MANUAL SINGLE WARP  ░░
+-- ═══════════════════════════════════════════════════
+mkSep()
+mkLabel("Manual Single Warp  (sit first, then click)")
+mkHint("Sit in a truck → pick Receiver → hit Warp.")
 
 local _, getSingleReceiver = mkDropdown("Receiver")
 local _, singleStat        = mkStatus("Sit in truck, pick Receiver, hit Warp.")
@@ -727,17 +703,14 @@ local _, sProg, sProgHide, sProgReset = mkProg()
 local singleRunning = false
 local _, sBtnLock = mkBtn("Warp My Truck + Load", Color3.fromRGB(40,80,120), function()
     if singleRunning then singleStat("Already running!", true); return end
-    if _G.VH.butter and _G.VH.butter.running then
-        singleStat("Wait for main dupe to finish!", false); return
-    end
 
     local Char = player.Character
     if not Char then singleStat("No character!", false); return end
-    local hum = Char:FindFirstChildOfClass("Humanoid")
+    local hum  = Char:FindFirstChildOfClass("Humanoid")
     if not hum then singleStat("No Humanoid!", false); return end
     local seat = hum.SeatPart
     if not seat or seat.Name ~= "DriveSeat" then
-        singleStat("Sit in a truck's DriveSeat first!", false); return
+        singleStat("Sit in a DriveSeat first!", false); return
     end
 
     local receiverName = getSingleReceiver()
@@ -754,87 +727,35 @@ local _, sBtnLock = mkBtn("Warp My Truck + Load", Color3.fromRGB(40,80,120), fun
     if not receiverOrigin then singleStat("Can't find receiver base!", false); return end
 
     singleRunning=true; sBtnLock(true); sProgReset()
-    singleStat("Scanning cargo...", true, Color3.fromRGB(140,210,255))
 
     task.spawn(function()
-        local cargo = scanCargo(truckModel)
-        local snaps, anchor = snapshotCargo(truckModel, cargo)
-        if not anchor then
-            singleStat("ERROR: truck has no anchor part!", false)
+        ejectFromSeat(hum, seat, 2.0)
+        if not (truckModel and truckModel.Parent) then
+            singleStat("Truck gone during eject!", false)
             singleRunning=false; sBtnLock(false); return
         end
-
-        -- Register a top-level watchdog for the whole single-warp operation.
-        -- If the warp ever stalls for 3s total (e.g. server timeout mid-wait),
-        -- the watchdog force-unanchors everything and marks done.
-        local wdPulse, wdClear = registerWatchdog(WATCHDOG_TIMEOUT, function()
-            -- Watchdog fired — force unanchor truck + cargo and mark complete
-            singleStat("Watchdog kicked — force completing!", false, Color3.fromRGB(255,200,80))
-            pcall(function()
-                for _, p in ipairs(truckModel:GetDescendants()) do
-                    if p:IsA("BasePart") then p.Anchored = false end
-                end
-                for part in pairs(snaps) do
-                    if part and part.Parent then part.Anchored = false end
-                end
-            end)
-            singleStat("Done (watchdog recovery)", false, Color3.fromRGB(255,200,80))
-            sProg(1, 1, "Done (watchdog recovery)", Color3.fromRGB(255,200,80))
-            sProgHide(3)
-            singleRunning=false; sBtnLock(false)
-        end)
-
-        singleStat("Ejecting & warping "..#cargo.." cargo...", true, Color3.fromRGB(140,210,255))
-        sProg(0, 1, "Ejecting player...")
-        wdPulse()
-
-        ejectFromSeat(hum, seat, 2.0)
-        wdPulse()
-
-        if not (truckModel and truckModel.Parent) then
-            singleStat("Truck disappeared during ejection!", false)
-            wdClear(); singleRunning=false; sBtnLock(false); return
-        end
-
-        sProg(0, 1, "Warping truck + cargo...")
-        wdPulse()
-        local destCF = computeDestCF(anchor, giverOrigin, receiverOrigin)
-        warpTruck(truckModel, destCF, snaps, anchor, wdPulse)
-        wdPulse()
-
-        sProg(1, 1, "Confirming cargo...", Color3.fromRGB(255,175,55))
-
-        confirmCargo(snaps, destCF, wdPulse, function(corrections)
-            wdClear()   -- all done normally — cancel watchdog
-            local msg = corrections>0
-                and ("Done! ("..corrections.." corrected)")
-                or  "Done! All cargo landed clean."
-            singleStat(msg, false, Color3.fromRGB(90,220,110))
-            sProg(1, 1, msg, Color3.fromRGB(90,220,110))
-            sProgHide(2.5)
-            singleRunning=false; sBtnLock(false)
-        end)
-
-        task.wait(0.15); wdPulse()
-        pcall(function()
-            local hrp = Char and Char:FindFirstChild("HumanoidRootPart")
-            if hrp then hrp.CFrame = CFrame.new(giverOrigin.Position + Vector3.new(0,6,0)) end
-        end)
-        wdPulse()
+        doSingleWarp(truckModel, giverOrigin, receiverOrigin,
+            singleStat, sProg,
+            function(_)
+                sProgHide(2.5)
+                singleRunning=false; sBtnLock(false)
+            end
+        )
     end)
 end)
 
 -- ═══════════════════════════════════════════════════
--- SECTION B — MULTI TRUCK WARP
+-- ░░  SECTION C — MULTI TRUCK WARP  ░░
+-- Sequential, one-at-a-time, each with its own independent watchdog.
 -- ═══════════════════════════════════════════════════
 mkSep()
-mkLabel("Multi Truck Warp  (all trucks + watchdog)")
-mkHint("Scan → Warp All. 3s stall on any truck = auto-kick and move to next.")
+mkLabel("Multi Truck Warp  (all trucks on base)")
+mkHint("Scan → Warp All. Each truck has its own 3s watchdog.")
 
 local _, getMultiGiver    = mkDropdown("Giver")
 local _, getMultiReceiver = mkDropdown("Receiver")
 
-local scanCard = Instance.new("Frame",page)
+local scanCard=Instance.new("Frame",page)
 scanCard.Size=UDim2.new(1,-12,0,32); scanCard.BackgroundColor3=Color3.fromRGB(18,14,26)
 scanCard.BorderSizePixel=0; scanCard.Visible=false
 Instance.new("UICorner",scanCard).CornerRadius=UDim.new(0,8)
@@ -853,35 +774,28 @@ local multiAbort    = false
 
 local _, scanBtnLock = mkBtn("Scan Giver's Trucks", Color3.fromRGB(35,55,90), function()
     if multiRunning then multiStat("Warp in progress!", true); return end
-    if _G.VH.butter and _G.VH.butter.running then multiStat("Wait for main dupe!", false); return end
     local giverName = getMultiGiver()
     if giverName=="" then multiStat("Pick a Giver first!", false); return end
-
     scannedTrucks={}; scanCard.Visible=false
     multiStat("Scanning...", true, Color3.fromRGB(140,210,255)); scanBtnLock(true)
-
     task.spawn(function()
-        local trucks = scanTrucks(giverName)
-        if #trucks==0 then
-            multiStat("No trucks found for "..giverName.."!", false); scanBtnLock(false); return
-        end
+        local trucks=scanTrucks(giverName)
+        if #trucks==0 then multiStat("No trucks found for "..giverName.."!", false); scanBtnLock(false); return end
         local totalCargo=0
-        for _, tModel in ipairs(trucks) do
+        for _,tModel in ipairs(trucks) do
             if tModel and tModel.Parent then
                 local cargo=scanCargo(tModel)
                 local snaps, anchor=snapshotCargo(tModel, cargo)
                 if anchor then
-                    table.insert(scannedTrucks, {model=tModel, snaps=snaps, anchor=anchor})
+                    table.insert(scannedTrucks,{model=tModel,snaps=snaps,anchor=anchor})
                     totalCargo += #cargo
                 end
             end
         end
-        if #scannedTrucks==0 then
-            multiStat("Trucks found but none had valid anchors!", false); scanBtnLock(false); return
-        end
+        if #scannedTrucks==0 then multiStat("No valid trucks found!", false); scanBtnLock(false); return end
         scanCard.Visible=true
         scanCardLbl.Text=#scannedTrucks.." truck(s) — "..totalCargo.." cargo piece(s). Ready."
-        multiStat(#scannedTrucks.." truck(s) scanned. Hit Warp All!", false, Color3.fromRGB(90,220,110))
+        multiStat(#scannedTrucks.." scanned. Hit Warp All!", false, Color3.fromRGB(90,220,110))
         scanBtnLock(false)
     end)
 end)
@@ -889,7 +803,6 @@ end)
 local _, warpAllLock = mkBtn("Warp All Trucks + Loads", Color3.fromRGB(35,100,50), function()
     if multiRunning then multiStat("Already running!", true); return end
     if #scannedTrucks==0 then multiStat("Scan first!", false); return end
-    if _G.VH.butter and _G.VH.butter.running then multiStat("Wait for main dupe!", false); return end
 
     local giverName    = getMultiGiver()
     local receiverName = getMultiReceiver()
@@ -902,91 +815,67 @@ local _, warpAllLock = mkBtn("Warp All Trucks + Loads", Color3.fromRGB(35,100,50
     if not receiverOrigin then multiStat("Can't find Receiver's base!", false); return end
 
     multiRunning=true; multiAbort=false; mProgReset(); warpAllLock(true)
-    multiStat("Warping "..#scannedTrucks.." truck(s)...", true, Color3.fromRGB(140,210,255))
+    local total=#scannedTrucks
+    multiStat("Warping "..total.." truck(s)...", true, Color3.fromRGB(140,210,255))
 
     task.spawn(function()
-        local total        = #scannedTrucks
-        local done         = 0
-        local warpedCount  = 0
-        local pending      = {n=0}
-
-        local function onConfirmDone(_)
-            pending.n -= 1
-            if pending.n <= 0 and not multiAbort then
-                multiRunning=false; warpAllLock(false)
-                multiStat("Done! "..warpedCount.." truck(s) warped.", false, Color3.fromRGB(90,220,110))
-                mProg(total, total, "Complete!", Color3.fromRGB(90,220,110))
-                mProgHide(3)
-                scannedTrucks={}; scanCard.Visible=false
-            end
-        end
+        local done=0
 
         for i, entry in ipairs(scannedTrucks) do
-            if multiAbort then
-                -- Drain remaining pending slots so UI unlocks
-                for _ = i, total do pending.n -= 1 end
-                if pending.n <= 0 then
-                    multiRunning=false; warpAllLock(false)
-                    multiStat("Stopped after "..done.." / "..total..".", false)
-                    mProgHide(1)
-                end
-                break
-            end
-
-            pending.n += 1
+            if multiAbort then break end
 
             local tModel = entry.model
             local snaps  = entry.snaps
             local anchor = entry.anchor
 
             if not (tModel and tModel.Parent) then
-                done+=1; mProg(done, total, "Skipping missing truck "..i)
-                onConfirmDone(0); continue
+                done+=1; mProg(done, total, "Skipped missing truck "..i); continue
             end
 
-            -- Per-truck watchdog: if THIS truck's warp stalls for 3s,
-            -- force-unanchor everything and skip to next truck
-            local truckWDPulse, truckWDClear = registerWatchdog(WATCHDOG_TIMEOUT, function()
-                multiStat("Watchdog: kicked truck "..i.." — moving on", true, Color3.fromRGB(255,200,80))
-                pcall(function()
-                    for _, p in ipairs(tModel:GetDescendants()) do
-                        if p:IsA("BasePart") then p.Anchored=false end
-                    end
-                    for part in pairs(snaps) do
-                        if part and part.Parent then part.Anchored=false end
-                    end
-                end)
-                -- Force the confirm to complete so pending drains
-                onConfirmDone(0)
-            end)
+            multiStat("Warping truck "..i.." / "..total.."...", true, Color3.fromRGB(140,210,255))
 
+            -- Simple sequential: warp this truck, wait for confirm, then next.
+            local truckDone = false
             local destCF = computeDestCF(anchor, giverOrigin, receiverOrigin)
-            warpTruck(tModel, destCF, snaps, anchor, truckWDPulse)
-            truckWDPulse()
-            warpedCount+=1; done+=1
-            mProg(done, total,
-                "Warped "..done.." / "..total.." trucks",
-                done==total and Color3.fromRGB(255,175,55) or Color3.fromRGB(90,160,255))
 
-            -- confirmCargo pulses the truck-level watchdog too
-            confirmCargo(snaps, destCF, truckWDPulse, function(corrections)
-                truckWDClear()   -- confirm finished normally — cancel this truck's watchdog
-                onConfirmDone(corrections)
+            -- Warp is synchronous (no yields inside)
+            warpTruck(tModel, destCF, snaps, anchor)
+
+            -- Confirm is async — wait for it to call back
+            confirmCargo(snaps, destCF, function(_)
+                truckDone = true
             end)
 
-            task.wait(0.15); truckWDPulse()
+            -- Block until confirm finishes (max 10s safety ceiling)
+            local waitStart = tick()
+            while not truckDone and (tick()-waitStart) < 10 do
+                task.wait(0.05)
+            end
+
+            done+=1
+            mProg(done, total,
+                "Done "..done.." / "..total,
+                done==total and Color3.fromRGB(90,220,110) or Color3.fromRGB(90,160,255))
+
+            task.wait(0.15)   -- brief gap between trucks
+        end
+
+        multiRunning=false; warpAllLock(false)
+        if multiAbort then
+            multiStat("Stopped.", false); mProgHide(1)
+        else
+            multiStat("All "..#scannedTrucks.." truck(s) warped!", false, Color3.fromRGB(90,220,110))
+            mProg(#scannedTrucks, #scannedTrucks, "Complete!", Color3.fromRGB(90,220,110))
+            mProgHide(3)
+            scannedTrucks={}; scanCard.Visible=false
         end
     end)
 end)
 
 mkBtn("Stop", Color3.fromRGB(100,40,20), function()
     multiAbort=true
-    if multiRunning then
-        multiRunning=false; warpAllLock(false)
-        multiStat("Stopping...", false)
-    end
+    if multiRunning then multiRunning=false; warpAllLock(false); multiStat("Stopping...", false) end
 end)
-
 mkBtn("Re-Scan", BTN_COLOR, function()
     if multiRunning then return end
     scannedTrucks={}; scanCard.Visible=false; mProgReset()
@@ -994,32 +883,24 @@ mkBtn("Re-Scan", BTN_COLOR, function()
 end)
 
 -- ═══════════════════════════════════════════════════
--- SECTION C — CARGO ONLY WARP
+-- ░░  SECTION D — CARGO ONLY WARP  ░░
 -- ═══════════════════════════════════════════════════
 mkSep()
-mkLabel("Cargo Only Warp  (no truck movement + watchdog)")
+mkLabel("Cargo Only Warp  (no truck movement)")
 mkHint("Warps all wood/cargo on Giver base → Receiver. 3s stall = auto-kick.")
 
 local _, getCargoGiver    = mkDropdown("Giver")
 local _, getCargoReceiver = mkDropdown("Receiver")
-
-local cargoRunning = false
-local cargoAbort   = false
-
+local cargoRunning=false; local cargoAbort=false
 local _, cargoStat = mkStatus("Pick Giver & Receiver, then warp cargo.")
 local _, cProg, cProgHide, cProgReset = mkProg()
 
 local _, cargoBtnLock = mkBtn("Warp All Cargo", Color3.fromRGB(60,40,100), function()
     if cargoRunning then cargoStat("Already running!", true); return end
-    if _G.VH.butter and _G.VH.butter.running then cargoStat("Wait for main dupe!", false); return end
-
-    local giverName    = getCargoGiver()
-    local receiverName = getCargoReceiver()
+    local giverName=getCargoGiver(); local receiverName=getCargoReceiver()
     if giverName==""    then cargoStat("Pick a Giver!",    false); return end
     if receiverName=="" then cargoStat("Pick a Receiver!", false); return end
-
-    local giverOrigin    = findBase(giverName)
-    local receiverOrigin = findBase(receiverName)
+    local giverOrigin=findBase(giverName); local receiverOrigin=findBase(receiverName)
     if not giverOrigin    then cargoStat("Can't find Giver's base!",    false); return end
     if not receiverOrigin then cargoStat("Can't find Receiver's base!", false); return end
 
@@ -1027,80 +908,44 @@ local _, cargoBtnLock = mkBtn("Warp All Cargo", Color3.fromRGB(60,40,100), funct
     cargoStat("Scanning cargo...", true, Color3.fromRGB(140,210,255))
 
     task.spawn(function()
-        local BASE_RADIUS=80
         local cargo={}
-        for _, obj in ipairs(workspace:GetDescendants()) do
+        for _,obj in ipairs(workspace:GetDescendants()) do
             if cargoAbort then break end
-            if obj:IsA("BasePart")
-                and (obj.Name=="Main" or obj.Name=="WoodSection")
+            if obj:IsA("BasePart") and (obj.Name=="Main" or obj.Name=="WoodSection")
                 and not isCrossWelded(obj)
-                and (obj.Position-giverOrigin.Position).Magnitude<=BASE_RADIUS then
+                and (obj.Position-giverOrigin.Position).Magnitude<=80 then
                 table.insert(cargo, obj)
             end
         end
-
-        if #cargo==0 then
-            cargoStat("No cargo on "..giverName.."'s base.", false)
-            cargoRunning=false; cargoBtnLock(false); return
-        end
+        if #cargo==0 then cargoStat("No cargo found.", false); cargoRunning=false; cargoBtnLock(false); return end
 
         cargoStat("Warping "..#cargo.." piece(s)...", true, Color3.fromRGB(140,210,255))
-        local delta  = receiverOrigin.Position - giverOrigin.Position
-        local total  = #cargo
-        local counter   = {done=0}
-        local finished  = false
-
-        -- Top-level cargo watchdog: if the whole operation stalls for 3s,
-        -- force-drain the counter and unlock the UI
-        local cargoWDPulse, cargoWDClear = registerWatchdog(WATCHDOG_TIMEOUT, function()
-            cargoStat("Watchdog kicked — force completing cargo!", false, Color3.fromRGB(255,200,80))
-            -- Force-unanchor any parts that got stuck anchored
-            for _, part in ipairs(cargo) do
-                if part and part.Parent and part.Anchored then
-                    pcall(function() part.Anchored=false end)
-                end
-            end
-            counter.done = total
-            if not finished then
-                finished=true
-                cProg(total, total, "Done (watchdog recovery)", Color3.fromRGB(255,200,80))
-                cProgHide(3)
-                cargoRunning=false; cargoBtnLock(false)
-            end
-        end)
+        local delta=receiverOrigin.Position-giverOrigin.Position
+        local total=#cargo
+        local counter={done=0}; local finished=false
 
         local function onPieceDone()
-            counter.done += 1
-            cargoWDPulse()   -- reset watchdog timer on every completed piece
-            cProg(counter.done, total,
-                counter.done.." / "..total,
+            counter.done+=1
+            cProg(counter.done,total,counter.done.." / "..total,
                 counter.done>=total and Color3.fromRGB(90,220,110) or Color3.fromRGB(90,160,255))
             if counter.done>=total and not finished and not cargoAbort then
                 finished=true
-                cargoWDClear()
                 cargoStat("Done! "..total.." piece(s) warped.", false, Color3.fromRGB(90,220,110))
-                cProg(total, total, "Complete!", Color3.fromRGB(90,220,110))
-                cProgHide(2.5)
-                cargoRunning=false; cargoBtnLock(false)
+                cProg(total,total,"Complete!",Color3.fromRGB(90,220,110))
+                cProgHide(2.5); cargoRunning=false; cargoBtnLock(false)
             end
         end
 
         local BATCH=8
         for i=1, total, BATCH do
-            if cargoAbort then
-                cargoWDClear()
-                counter.done=total; break
-            end
-            cargoWDPulse()
+            if cargoAbort then counter.done=total; break end
             for j=i, math.min(i+BATCH-1, total) do
                 local part=cargo[j]
                 task.spawn(function()
                     if part and part.Parent then
-                        freeze(part)
-                        task.wait(); task.wait()
+                        freeze(part); task.wait(); task.wait()
                         safeSet(part, CFrame.new(part.CFrame.Position+delta)*part.CFrame.Rotation)
-                        task.wait(); task.wait()
-                        thaw(part)
+                        task.wait(); task.wait(); thaw(part)
                     end
                     onPieceDone()
                 end)
@@ -1108,20 +953,10 @@ local _, cargoBtnLock = mkBtn("Warp All Cargo", Color3.fromRGB(60,40,100), funct
             task.wait(0.05)
         end
 
-        -- Fallback timeout (the watchdog fires first in practice,
-        -- but this ensures we never spin forever if watchdog misfires)
         local deadline=tick()+15
-        while counter.done<total and tick()<deadline and not cargoAbort do
-            task.wait(0.1)
-        end
-
-        if cargoAbort then
-            cargoWDClear()
-            cargoStat("Stopped.", false)
-            cargoRunning=false; cargoBtnLock(false)
-        elseif counter.done<total and not finished then
-            cargoWDClear()
-            cargoStat("Finished (some parts were missing).", false, Color3.fromRGB(255,200,80))
+        while counter.done<total and tick()<deadline and not cargoAbort do task.wait(0.1) end
+        if not finished then
+            cargoStat("Finished ("..counter.done.."/"..total..").", false, Color3.fromRGB(255,200,80))
             cargoRunning=false; cargoBtnLock(false)
         end
     end)
@@ -1129,10 +964,7 @@ end)
 
 mkBtn("Stop", Color3.fromRGB(100,40,20), function()
     cargoAbort=true
-    if cargoRunning then
-        cargoRunning=false; cargoBtnLock(false)
-        cargoStat("Stopped.", false)
-    end
+    if cargoRunning then cargoRunning=false; cargoBtnLock(false); cargoStat("Stopped.", false) end
 end)
 
 -- ═══════════════════════════════════════════════════
@@ -1141,13 +973,14 @@ end)
 table.insert(cleanupTasks, function()
     multiAbort=true;  multiRunning=false
     cargoAbort=true;  cargoRunning=false
-    singleRunning=false
+    singleRunning=false; autoRunning=false; autoEnabled=false
+    if seatConn then seatConn:Disconnect(); seatConn=nil end
     scannedTrucks={}
-    stopWatchdog()
     pcall(function() sBtnLock(false) end)
     pcall(function() warpAllLock(false) end)
     pcall(function() scanBtnLock(false) end)
     pcall(function() cargoBtnLock(false) end)
+    pcall(function() autoToggleLock(false) end)
 end)
 
-print("[VanillaHub] TruckDupe WATCHDOG loaded — appended to DupeTab")
+print("[VanillaHub] TruckDupe FINAL loaded — auto-seat warp ready")
