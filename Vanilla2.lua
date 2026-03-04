@@ -674,7 +674,7 @@ function DupeBase()
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
                 if not hrp then continue end
 
-                -- 0.25s × up to 3 attempts = ~0.75s max per item (≤0.7s effective)
+                -- 0.2s × 3 attempts = 0.6s max per item
                 local attempts = 0
                 repeat
                     attempts += 1
@@ -685,14 +685,14 @@ function DupeBase()
                         end
                         RS.Interaction.ClientIsDragging:FireServer(item.Parent)
                     end)
-                    task.wait(0.25)
+                    task.wait(0.2)
                 until not (item and item.Parent)
                     or (item.Position - data.TargetCFrame.Position).Magnitude <= 5
 
                 pcall(function()
                     item.CFrame = data.TargetCFrame
                 end)
-                task.wait(0.07)
+                task.wait(0.06)
             end
         end
     until #retryTeleport == 0
@@ -785,6 +785,7 @@ end
 createDSep()
 createDSection("Single Truck Teleport")
 
+-- Status bar
 local singleTruckStatusFrame = Instance.new("Frame", dupePage)
 singleTruckStatusFrame.Size = UDim2.new(1,-12,0,28)
 singleTruckStatusFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
@@ -799,36 +800,34 @@ singleTruckStatusLbl.Size = UDim2.new(1,-28,1,0); singleTruckStatusLbl.Position 
 singleTruckStatusLbl.BackgroundTransparency = 1; singleTruckStatusLbl.Font = Enum.Font.Gotham
 singleTruckStatusLbl.TextSize = 12; singleTruckStatusLbl.TextColor3 = THEME_TEXT
 singleTruckStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
-singleTruckStatusLbl.Text = "Sit in a truck, pick receiver, then teleport"
+singleTruckStatusLbl.Text = "Ready"
 
 local function setSTStatus(msg, active)
     singleTruckStatusLbl.Text = msg
     stDot.BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
 end
 
+-- Giver + Receiver dropdowns
+local _, getSTGiver    = makeDupeDropdown("Giver")
 local _, getSTReceiver = makeDupeDropdown("Receiver")
 
 local stRunning = false
 local stThread  = nil
 
+local function isPointInsideST(point, boxCF, boxSz)
+    local r = boxCF:PointToObjectSpace(point)
+    return math.abs(r.X) <= boxSz.X / 2
+        and math.abs(r.Y) <= (boxSz.Y / 2 + 2)
+        and math.abs(r.Z) <= boxSz.Z / 2
+end
+
 createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
     if stRunning then setSTStatus("Already running!", true) return end
 
+    local giverName    = getSTGiver()
     local receiverName = getSTReceiver()
+    if giverName    == "" then setSTStatus("Select a Giver first!",    false) return end
     if receiverName == "" then setSTStatus("Select a Receiver first!", false) return end
-
-    local LP        = Players.LocalPlayer
-    local Character = LP.Character
-    local Humanoid  = Character and Character:FindFirstChild("Humanoid")
-
-    if not Humanoid or not Humanoid.SeatPart then
-        setSTStatus("Sit inside a truck first!", false) return
-    end
-
-    local truckModel = Humanoid.SeatPart.Parent
-    if not truckModel or not truckModel:FindFirstChild("Main") then
-        setSTStatus("Invalid truck (no Main part)!", false) return
-    end
 
     stRunning = true
     setSTStatus("Running...", true)
@@ -836,95 +835,100 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
     stThread = task.spawn(function()
         local ok, err = pcall(function()
             local RS = game:GetService("ReplicatedStorage")
+            local LP = Players.LocalPlayer
 
-            -- Locate receiver base
+            -- ── Locate giver + receiver OriginSquares ────────
+            local GiveBaseOrigin    = nil
             local ReceiverBaseOrigin = nil
             for _, v in pairs(workspace.Properties:GetDescendants()) do
-                if v.Name == "Owner" and tostring(v.Value) == receiverName then
-                    ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare")
-                    break
+                if v.Name == "Owner" then
+                    local val = tostring(v.Value)
+                    if val == giverName    then GiveBaseOrigin     = v.Parent:FindFirstChild("OriginSquare") end
+                    if val == receiverName then ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare") end
                 end
             end
-            if not ReceiverBaseOrigin then
-                setSTStatus("Receiver base not found!", false)
-                stRunning = false; return
-            end
+            if not GiveBaseOrigin    then setSTStatus("Giver base not found!",    false) stRunning = false return end
+            if not ReceiverBaseOrigin then setSTStatus("Receiver base not found!", false) stRunning = false return end
 
-            -- Locate the giver base by finding which property the truck belongs to
-            local GiveBaseOrigin = nil
-            local truckCF = truckModel.Main.CFrame
-            for _, v in pairs(workspace.Properties:GetDescendants()) do
-                if v.Name == "OriginSquare" then
-                    -- use rough proximity: truck should be within 500 studs of its base
-                    if (v.Position - truckCF.Position).Magnitude < 500 then
-                        GiveBaseOrigin = v
+            -- ── Find the giver's truck ────────────────────────
+            -- We look for any model under workspace.PlayerModels owned by the giver
+            -- that has a DriveSeat, then use the one that also has a Main part.
+            local truckModel = nil
+            for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
+                if v.Name == "Owner" and tostring(v.Value) == giverName then
+                    if v.Parent:FindFirstChild("DriveSeat") and v.Parent:FindFirstChild("Main") then
+                        truckModel = v.Parent
                         break
                     end
                 end
             end
-            if not GiveBaseOrigin then
-                -- fallback: just use truck's current position as origin anchor
-                GiveBaseOrigin = { Position = Vector3.new(0,0,0) }
-            end
+            if not truckModel then setSTStatus("No truck found for Giver!", false) stRunning = false return end
 
             local teleportedParts = {}
             local ignoredParts    = {}
             local modelCFrame, modelSize = truckModel:GetBoundingBox()
 
-            -- Mark truck + character parts as ignored so we don't double-scan
+            -- Ignore truck parts + local character parts
             for _, p in ipairs(truckModel:GetDescendants()) do
                 if p:IsA("BasePart") then ignoredParts[p] = true end
             end
-            for _, p in ipairs(Character:GetDescendants()) do
-                if p:IsA("BasePart") then ignoredParts[p] = true end
+            local char = LP.Character
+            if char then
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then ignoredParts[p] = true end
+                end
             end
 
-            -- Scan for cargo inside the truck bounding box
+            -- ── Scan cargo inside truck bounding box ──────────
             for _, part in ipairs(workspace:GetDescendants()) do
                 if part:IsA("BasePart") and not ignoredParts[part] then
                     if part.Name == "Main" or part.Name == "WoodSection" then
-                        if part:FindFirstChild("Weld") and part.Weld.Part1.Parent ~= part.Parent then continue end
-                        task.spawn(function()
-                            local function isPointInside(point, boxCF, boxSz)
-                                local r = boxCF:PointToObjectSpace(point)
-                                return math.abs(r.X) <= boxSz.X/2
-                                    and math.abs(r.Y) <= (boxSz.Y/2 + 2)
-                                    and math.abs(r.Z) <= boxSz.Z/2
-                            end
-                            if isPointInside(part.Position, modelCFrame, modelSize) then
-                                local pCF    = part.CFrame
-                                local nPos   = pCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-                                local target = CFrame.new(nPos) * pCF.Rotation
-                                part.CFrame  = target
-                                table.insert(teleportedParts, { Instance=part, TargetCFrame=target })
-                            end
-                        end)
+                        if part:FindFirstChild("Weld") and part.Weld.Part1 and part.Weld.Part1.Parent ~= part.Parent then continue end
+                        if isPointInsideST(part.Position, modelCFrame, modelSize) then
+                            local pCF    = part.CFrame
+                            local nPos   = pCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                            local target = CFrame.new(nPos) * pCF.Rotation
+                            part.CFrame  = target
+                            table.insert(teleportedParts, { Instance = part, TargetCFrame = target })
+                        end
                     end
                 end
             end
 
-            -- Teleport the truck itself
-            local tCF    = truckModel.Main.CFrame
-            local tNPos  = tCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
-            local tOff   = CFrame.new(tNPos) * tCF.Rotation
+            -- ── Teleport the truck itself ─────────────────────
+            local tCF   = truckModel.Main.CFrame
+            local tNPos = tCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+            local tOff  = CFrame.new(tNPos) * tCF.Rotation
             truckModel:SetPrimaryPartCFrame(tOff)
 
-            -- Exit seat and open door
-            local SitPart = Humanoid.SeatPart
-            local ok2, DoorHinge = pcall(function()
-                return SitPart.Parent:FindFirstChild("PaintParts").DoorLeft:FindFirstChild("ButtonRemote_Hinge")
-            end)
-            task.wait(0.07)
-            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            task.wait(0.1)
-            pcall(function() SitPart:Destroy() end)
-            task.wait(0.1)
-            if ok2 and DoorHinge then
-                for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
+            -- ── Sit in DriveSeat, then eject + open door ──────
+            local Humanoid = char and char:FindFirstChild("Humanoid")
+            if Humanoid then
+                local DriveSeat = truckModel:FindFirstChild("DriveSeat")
+                if DriveSeat then
+                    DriveSeat:Sit(Humanoid)
+                    local timeout = 0
+                    repeat task.wait(0.05); timeout += 0.05 until Humanoid.SeatPart or timeout > 2
+
+                    local SitPart = Humanoid.SeatPart
+                    if SitPart then
+                        local ok2, DoorHinge = pcall(function()
+                            return SitPart.Parent:FindFirstChild("PaintParts").DoorLeft:FindFirstChild("ButtonRemote_Hinge")
+                        end)
+                        task.wait(0.07)
+                        Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                        task.wait(0.1)
+                        pcall(function() SitPart:Destroy() end)
+                        task.wait(0.1)
+                        if ok2 and DoorHinge then
+                            for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
+                        end
+                    end
+                end
             end
 
-            -- ── Retry missed cargo items (0.7s budget) ──────
-            task.wait(1.4)
+            -- ── Retry missed cargo (0.6s budget per item) ─────
+            task.wait(1.2)
             local retryList = {}
             for _, data in ipairs(teleportedParts) do
                 if data.Instance and data.Instance.Parent
@@ -940,10 +944,11 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
                         local item = data.Instance
                         if not (item and item.Parent) then continue end
 
-                        local char = LP.Character
-                        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                        local lchar = LP.Character
+                        local hrp   = lchar and lchar:FindFirstChild("HumanoidRootPart")
                         if not hrp then continue end
 
+                        -- 0.2s × 3 attempts = 0.6s max per item
                         local attempts = 0
                         repeat
                             attempts += 1
@@ -954,16 +959,16 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
                                 end
                                 RS.Interaction.ClientIsDragging:FireServer(item.Parent)
                             end)
-                            task.wait(0.25)
+                            task.wait(0.2)
                         until not (item and item.Parent)
                             or (item.Position - data.TargetCFrame.Position).Magnitude <= 5
 
                         pcall(function() item.CFrame = data.TargetCFrame end)
-                        task.wait(0.07)
+                        task.wait(0.06)
                     end
                 end
 
-                task.wait(1.4)
+                task.wait(1.2)
                 retryList = {}
                 for _, data in ipairs(teleportedParts) do
                     if data.Instance and data.Instance.Parent
