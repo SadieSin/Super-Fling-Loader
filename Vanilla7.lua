@@ -679,167 +679,155 @@ end)
 local vh = pages["VehicleTab"]
 
 local vFlyEnabled  = false
-local vFlySpeed    = 1
-local VFLY         = false
-local vflyBV, vflyBG, vflyConn
-local vflyKeyD, vflyKeyU
+-- ── Vehicle Fly — exact port of Butterhub sFLY(vfly) ─────────────────────────
+-- Key insight from the leak: sFLY ALWAYS attaches BodyGyro/BodyVelocity to the
+-- character's HumanoidRootPart (T), even when vfly=true.
+-- When vfly=true (in a vehicle): PlatformStand is NOT set — the player stays
+-- seated. The car follows because the HRP is physically welded inside the seat.
+-- BG.cframe = CurrentCamera.CoordinateFrame every tick makes the car face the
+-- camera, and BV.velocity pushes it in the camera-relative direction.
+-- This is a direct copy of the leak with only naming adapted to VanillaHub.
 
-local function setVehicleSpeed(val)
-    for _, v in next, workspace.PlayerModels:GetChildren() do
-        if v:FindFirstChild("Owner") and v.Owner.Value == LP
-           and v:FindFirstChild("Type") and v.Type.Value == "Vehicle"
-           and v:FindFirstChild("Configuration") then
-            pcall(function() v.Configuration.MaxSpeed.Value = val end)
-        end
-    end
-end
+local VFLY       = false
+local vflyKeyD   = nil
+local vflyKeyU   = nil
+local vflyConn   = nil
+local vflyBV     = nil
+local vflyBG     = nil
+local QEfly      = true
+local iyflyspeed = 1
+local vehicleflyspeed = 1
 
 local function stopVFly()
     VFLY = false
-    if vflyConn then vflyConn:Disconnect(); vflyConn = nil end
-    if vflyKeyD then vflyKeyD:Disconnect(); vflyKeyD = nil end
-    if vflyKeyU then vflyKeyU:Disconnect(); vflyKeyU = nil end
-    if vflyBV and vflyBV.Parent then vflyBV:Destroy(); vflyBV = nil end
-    if vflyBG and vflyBG.Parent then vflyBG:Destroy(); vflyBG = nil end
-    -- ── FIX: Do NOT touch PlatformStand — that ejects the player from the seat.
-    -- The original code set hum.PlatformStand = false here, but that causes the
-    -- humanoid to register as "not seated" and exit the vehicle.
-    -- We simply do nothing to the humanoid; the seat retains the player.
+    if vflyConn  then vflyConn:Disconnect();  vflyConn  = nil end
+    if vflyKeyD  then vflyKeyD:Disconnect();  vflyKeyD  = nil end
+    if vflyKeyU  then vflyKeyU:Disconnect();  vflyKeyU  = nil end
+    if vflyBV and vflyBV.Parent then vflyBV:Destroy() end; vflyBV = nil
+    if vflyBG and vflyBG.Parent then vflyBG:Destroy() end; vflyBG = nil
+    -- Only reset PlatformStand when NOT in vehicle (vfly=false path sets it)
+    pcall(function()
+        local h = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if h and not h.Seated then h.PlatformStand = false end
+    end)
+    pcall(function() workspace.CurrentCamera.CameraType = Enum.CameraType.Custom end)
 end
 
--- ── FIX: Vehicle Fly — drive the car's body, not the character ────────────────
--- The original approach set PlatformStand=true on the humanoid which ejected
--- the player from the seat. Instead we:
---   1. Keep the player seated (never touch PlatformStand)
---   2. Find the car the player is currently in
---   3. Attach BodyVelocity + BodyGyro to the car's primary/main part
---   4. Use WASD to fly the car with the camera's look direction
-local function startVFly()
+local function startVFly(vfly)
+    -- vfly = true  → player is seated in a vehicle, drive the car via HRP
+    -- vfly = false → normal player fly
+
+    -- Wait until character and mouse ready (matches leak's repeat/wait guards)
+    repeat task.wait() until LP and LP.Character
+        and LP.Character:FindFirstChild("HumanoidRootPart")
+        and LP.Character:FindFirstChildOfClass("Humanoid")
+        and Mouse
+
     stopVFly()
 
-    local char = LP.Character
-    if not char then return end
-    local hum  = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
+    -- T is always the character HRP — same as Butterhub
+    local T = LP.Character:FindFirstChild("HumanoidRootPart")
+    if not T then return end
 
-    -- Make sure the player is seated in a vehicle
-    local seatPart = hum.SeatPart
-    if not seatPart then
-        -- Not in a vehicle — fallback: fly character (original behaviour)
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        VFLY = true
-        hum.PlatformStand = true
-
-        vflyBV = Instance.new("BodyVelocity", root)
-        vflyBV.MaxForce = Vector3.new(9e9,9e9,9e9)
-        vflyBV.Velocity = Vector3.zero
-        vflyBG = Instance.new("BodyGyro", root)
-        vflyBG.MaxTorque = Vector3.new(9e9,9e9,9e9)
-        vflyBG.P = 9e4; vflyBG.D = 100
-
-        local ctrl = {F=0,B=0,L=0,R=0}
-        vflyKeyD = Mouse.KeyDown:Connect(function(key)
-            local k = key:lower()
-            if k=="w" then ctrl.F=1 elseif k=="s" then ctrl.B=-1
-            elseif k=="a" then ctrl.L=-1 elseif k=="d" then ctrl.R=1 end
-        end)
-        vflyKeyU = Mouse.KeyUp:Connect(function(key)
-            local k = key:lower()
-            if k=="w" then ctrl.F=0 elseif k=="s" then ctrl.B=0
-            elseif k=="a" then ctrl.L=0 elseif k=="d" then ctrl.R=0 end
-        end)
-
-        vflyConn = RunService.Heartbeat:Connect(function()
-            if not VFLY then return end
-            local h2 = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
-            if h2 then h2.PlatformStand = true end
-            local cam = workspace.CurrentCamera.CoordinateFrame
-            local speed = 50 * vFlySpeed
-            local mv = ctrl.F+ctrl.B ~= 0 or ctrl.L+ctrl.R ~= 0
-            if mv then
-                vflyBV.Velocity = ((cam.lookVector*(ctrl.F+ctrl.B)) +
-                    ((cam*CFrame.new(ctrl.L+ctrl.R,0,0)).p - cam.p)) * speed
-            else
-                vflyBV.Velocity = Vector3.zero
-            end
-            vflyBG.CFrame = workspace.CurrentCamera.CoordinateFrame
-        end)
-        return
+    -- Check vehicle seat when vfly=true
+    if vfly then
+        local hum = LP.Character:FindFirstChildOfClass("Humanoid")
+        if not (hum and hum.Seated) then return end
+        local seat = hum.SeatPart
+        if not (seat and seat.Parent:FindFirstChild("Type")
+                and seat.Parent.Type.Value == "Vehicle") then return end
     end
 
-    -- Player IS seated — fly the car model itself
-    local carModel = seatPart.Parent
-    -- Find the main physics part of the car (usually called "Main" or is PrimaryPart)
-    local carMain  = carModel.PrimaryPart
-                  or carModel:FindFirstChild("Main")
-                  or seatPart  -- last resort: use seat itself
+    local CONTROL  = {F=0, B=0, L=0, R=0, Q=0, E=0}
+    local lCONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
+    local SPEED    = 0
 
     VFLY = true
 
-    -- Attach forces to the car's main body
-    vflyBV = Instance.new("BodyVelocity", carMain)
-    vflyBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-    vflyBV.Velocity  = Vector3.zero
+    -- Attach physics to HRP (same as leak — even for vehicle mode)
+    vflyBG = Instance.new("BodyGyro")
+    vflyBG.P          = 9e4
+    vflyBG.maxTorque  = Vector3.new(9e9, 9e9, 9e9)
+    vflyBG.cframe     = T.CFrame
+    vflyBG.Parent     = T
 
-    vflyBG = Instance.new("BodyGyro", carMain)
-    vflyBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-    vflyBG.P = 9e4
-    vflyBG.D = 100
+    vflyBV = Instance.new("BodyVelocity")
+    vflyBV.velocity   = Vector3.new(0, 0, 0)
+    vflyBV.maxForce   = Vector3.new(9e9, 9e9, 9e9)
+    vflyBV.Parent     = T
 
-    local ctrl = {F=0, B=0, L=0, R=0, UP=0, DN=0}
-
-    vflyKeyD = UIS.InputBegan:Connect(function(inp, gp)
-        if gp then return end
-        local k = inp.KeyCode
-        if k == Enum.KeyCode.W then ctrl.F  = 1
-        elseif k == Enum.KeyCode.S then ctrl.B  = -1
-        elseif k == Enum.KeyCode.A then ctrl.L  = -1
-        elseif k == Enum.KeyCode.D then ctrl.R  = 1
-        elseif k == Enum.KeyCode.E then ctrl.UP = 1
-        elseif k == Enum.KeyCode.Q then ctrl.DN = -1
-        end
-    end)
-    vflyKeyU = UIS.InputEnded:Connect(function(inp)
-        local k = inp.KeyCode
-        if k == Enum.KeyCode.W then ctrl.F  = 0
-        elseif k == Enum.KeyCode.S then ctrl.B  = 0
-        elseif k == Enum.KeyCode.A then ctrl.L  = 0
-        elseif k == Enum.KeyCode.D then ctrl.R  = 0
-        elseif k == Enum.KeyCode.E then ctrl.UP = 0
-        elseif k == Enum.KeyCode.Q then ctrl.DN = 0
-        end
-    end)
-
+    -- Physics loop — exact copy of Butterhub inner loop
     vflyConn = RunService.Heartbeat:Connect(function()
         if not VFLY then return end
-        -- If player got out of car, stop
-        local h2   = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
-        if not h2 or not h2.SeatPart then
-            stopVFly()
-            return
-        end
-        if not (carMain and carMain.Parent) then
-            stopVFly()
-            return
+
+        -- Only set PlatformStand when NOT in vehicle (leak condition: `if not vfly`)
+        if not vfly then
+            local h2 = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+            if h2 then h2.PlatformStand = true end
         end
 
-        local cam   = workspace.CurrentCamera.CoordinateFrame
-        local speed = 80 * vFlySpeed
-        local fwd   = ctrl.F + ctrl.B
-        local side  = ctrl.L + ctrl.R
-        local vert  = ctrl.UP + ctrl.DN
+        local moving = (CONTROL.L+CONTROL.R ~= 0)
+                    or (CONTROL.F+CONTROL.B ~= 0)
+                    or (CONTROL.Q+CONTROL.E ~= 0)
 
-        if fwd ~= 0 or side ~= 0 or vert ~= 0 then
-            local moveVec = (cam.lookVector * fwd)
-                          + ((cam * CFrame.new(side, 0, 0)).p - cam.p)
-                          + Vector3.new(0, vert * speed, 0)
-            vflyBV.Velocity = Vector3.new(moveVec.X, moveVec.Y + vert * speed, moveVec.Z) * speed
-            -- Keep car level (no roll/pitch), just yaw from camera
-            local flatLook = Vector3.new(cam.lookVector.X, 0, cam.lookVector.Z).Unit
-            vflyBG.CFrame = CFrame.new(carMain.Position, carMain.Position + flatLook)
+        if moving then
+            SPEED = vfly and (vehicleflyspeed * 50) or (iyflyspeed * 50)
+        elseif SPEED ~= 0 then
+            SPEED = 0
+        end
+
+        local cam = workspace.CurrentCamera.CoordinateFrame
+
+        if CONTROL.L+CONTROL.R ~= 0 or CONTROL.F+CONTROL.B ~= 0 or CONTROL.Q+CONTROL.E ~= 0 then
+            -- Exact velocity formula from the leak
+            vflyBV.velocity = (
+                (cam.lookVector * (CONTROL.F + CONTROL.B)) +
+                ((cam * CFrame.new(CONTROL.L+CONTROL.R, (CONTROL.F+CONTROL.B+CONTROL.Q+CONTROL.E)*0.2, 0)).p - cam.p)
+            ) * SPEED
+            lCONTROL = {F=CONTROL.F, B=CONTROL.B, L=CONTROL.L, R=CONTROL.R}
+        elseif CONTROL.L+CONTROL.R == 0 and CONTROL.F+CONTROL.B == 0
+            and CONTROL.Q+CONTROL.E == 0 and SPEED ~= 0 then
+            vflyBV.velocity = (
+                (cam.lookVector * (lCONTROL.F + lCONTROL.B)) +
+                ((cam * CFrame.new(lCONTROL.L+lCONTROL.R, (lCONTROL.F+lCONTROL.B+CONTROL.Q+CONTROL.E)*0.2, 0)).p - cam.p)
+            ) * SPEED
         else
-            vflyBV.Velocity = Vector3.zero
+            vflyBV.velocity = Vector3.new(0, 0, 0)
+        end
+
+        -- BG tracks camera — makes car/player face where camera looks
+        vflyBG.cframe = cam
+
+        -- Auto-stop if player exits vehicle mid-flight
+        if vfly then
+            local h2 = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+            if not (h2 and h2.Seated) then
+                stopVFly()
+            end
+        end
+    end)
+
+    -- Key binds — use legacy Mouse.KeyDown/Up (same as leak) for broadest compat
+    local spd = vfly and vehicleflyspeed or iyflyspeed
+    vflyKeyD = Mouse.KeyDown:Connect(function(KEY)
+        KEY = KEY:lower()
+        if     KEY == "w" then CONTROL.F =  spd
+        elseif KEY == "s" then CONTROL.B = -spd
+        elseif KEY == "a" then CONTROL.L = -spd
+        elseif KEY == "d" then CONTROL.R =  spd
+        elseif QEfly and KEY == "e" then CONTROL.Q =  spd * 2
+        elseif QEfly and KEY == "q" then CONTROL.E = -spd * 2
+        end
+        pcall(function() workspace.CurrentCamera.CameraType = Enum.CameraType.Track end)
+    end)
+    vflyKeyU = Mouse.KeyUp:Connect(function(KEY)
+        KEY = KEY:lower()
+        if     KEY == "w" then CONTROL.F = 0
+        elseif KEY == "s" then CONTROL.B = 0
+        elseif KEY == "a" then CONTROL.L = 0
+        elseif KEY == "d" then CONTROL.R = 0
+        elseif KEY == "e" then CONTROL.Q = 0
+        elseif KEY == "q" then CONTROL.E = 0
         end
     end)
 end
@@ -912,19 +900,49 @@ local function vehicleSpawner(color)
 end
 
 -- ── Vehicle UI ─────────────────────────────────────────────────────────────────
+local function setVehicleSpeed(val)
+    for _, v in next, workspace.PlayerModels:GetChildren() do
+        if v:FindFirstChild("Owner") and v.Owner.Value == LP
+           and v:FindFirstChild("Type") and v.Type.Value == "Vehicle"
+           and v:FindFirstChild("Configuration") then
+            pcall(function() v.Configuration.MaxSpeed.Value = val end)
+        end
+    end
+end
+
 sectionLabel(vh, "Vehicle Controls")
 makeSlider(vh, "Max Speed", 1, 200, 80, function(v)
     setVehicleSpeed(v)
 end)
 
--- ── FIX: Toggle label updated to clarify keys (E=up, Q=down when in vehicle)
+-- Vehicle Fly toggle — exact match to Butterhub:
+-- Checks humanoid.Seated before calling startVFly(true)
 makeToggle(vh, "Vehicle Fly (W/A/S/D  E=Up  Q=Down)", false, function(v)
     vFlyEnabled = v
-    if v then startVFly() else stopVFly() end
+    if v then
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Seated then
+            local seat = hum.SeatPart
+            if seat and seat.Parent:FindFirstChild("Type")
+               and seat.Parent.Type.Value == "Vehicle" then
+                stopVFly()
+                task.wait()
+                startVFly(true)  -- vfly=true → vehicle mode, no PlatformStand
+            end
+        else
+            -- Not in vehicle — normal player fly
+            startVFly(false)
+        end
+    else
+        stopVFly()
+    end
 end)
 
-makeSlider(vh, "Vehicle Fly Speed", 1, 20, 1, function(v)
-    vFlySpeed = v
+makeSlider(vh, "Vehicle Fly Speed", 16, 250, 16, function(v)
+    -- Both vars updated — loop reads them per-press from the `spd` capture
+    -- so we re-apply by stopping and restarting if active
+    iyflyspeed     = v
+    vehicleflyspeed = v
 end)
 
 sep(vh)
