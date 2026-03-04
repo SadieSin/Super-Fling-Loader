@@ -367,101 +367,24 @@ end
 -- ════════════════════════════════════════════════════
 
 --[[
-  DUAL-MODE DRAG DETECTION
-  ─────────────────────────
-  Some items in this game are moved server-side (the server owns the physics
-  and a RemoteEvent carries the target CFrame each frame).  Others are moved
-  client-side (the client writes CFrame/BodyPosition directly).
-
-  We auto-detect which mode an item uses at the START of each move attempt:
-
-  SERVER mode  — detected when:
-    • The main part is Anchored, OR
-    • The main part's network owner is not the local player, OR
-    • A "DraggableItem" / "ServerDrag" value exists in the model, OR
-    • mp.CFrame writes are immediately overridden (we test this with a
-      quick probe: write a dummy CFrame, wait one frame, check if it stuck).
-
-  CLIENT mode  — everything else.
-
-  For SERVER items  we fire RS.Interaction.ClientIsDragging every frame
-  (the remote the game uses to stream the drag position to the server)
-  and also try every other known drag remote.  We never write mp.CFrame.
-
-  For CLIENT items  we write mp.CFrame + zero velocity every frame.
-  We also optionally set any BodyPosition/AlignPosition constraint target
-  found in the model so the game's own mover drives it smoothly.
+  The game uses a mix of client-side and server-side dragging per item type.
+  Rather than probing each item, we do BOTH every frame:
+    1. Fire RS.Interaction.ClientIsDragging (server-sided items respond to this)
+    2. Write mp.CFrame directly (client-sided items respond to this)
+  This is exactly what the original working code did, just done more aggressively.
+  The key insight: firing ClientIsDragging tells the server to accept our
+  CFrame writes for that item, so doing both simultaneously covers all cases.
 ]]
 
--- Cache of all RemoteEvents under RS and RS.Interaction, found once
-local _remoteCache = nil
-local function getAllRemotes()
-    if _remoteCache then return _remoteCache end
-    _remoteCache = {}
-    local function scan(container)
-        if not container then return end
-        for _, v in ipairs(container:GetChildren()) do
-            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-                _remoteCache[v.Name] = v
-            end
-        end
+-- Get the ClientIsDragging remote once and cache it
+local _dragRemote = nil
+local function getDragRemote()
+    if _dragRemote then return _dragRemote end
+    local interaction = RS:FindFirstChild("Interaction")
+    if interaction then
+        _dragRemote = interaction:FindFirstChild("ClientIsDragging")
     end
-    scan(RS)
-    scan(RS:FindFirstChild("Interaction"))
-    return _remoteCache
-end
-
--- Find the primary drag-signalling remote (fires every frame while dragging)
-local DRAG_REMOTE_NAMES = {
-    "ClientIsDragging", "DragItem", "MoveItem", "UpdateDrag",
-    "DragObject", "SetDragTarget", "ItemDrag", "MovePart",
-}
-local STOP_REMOTE_NAMES = {
-    "ClientStoppedDragging", "DropItem", "Release", "StopDrag",
-    "PlaceItem", "Drop", "ItemDrop",
-}
-
-local function findRemotes()
-    local remotes = getAllRemotes()
-    local drag, stop
-    for _, name in ipairs(DRAG_REMOTE_NAMES) do
-        if remotes[name] then drag = remotes[name]; break end
-    end
-    for _, name in ipairs(STOP_REMOTE_NAMES) do
-        if remotes[name] then stop = remotes[name]; break end
-    end
-    return drag, stop
-end
-
--- Find any mover constraint in the model we can steer
-local function findMover(model)
-    for _, v in ipairs(model:GetDescendants()) do
-        if v:IsA("BodyPosition") or v:IsA("AlignPosition") then
-            return v
-        end
-    end
-    return nil
-end
-
--- Probe whether mp.CFrame writes stick (client-side) or get overridden (server-side).
--- Returns "server" or "client".
-local function detectDragMode(mp)
-    -- Quick indicators that don't need a probe
-    if mp.Anchored then return "server" end
-
-    -- Check network ownership
-    local ok, owner = pcall(function() return mp:GetNetworkOwner() end)
-    if ok and owner ~= player then return "server" end
-
-    -- Probe: write a position offset, wait a frame, see if it stuck
-    local original = mp.CFrame
-    local probe    = original * CFrame.new(0, 500, 0)  -- way up in the sky
-    pcall(function() mp.CFrame = probe end)
-    task.wait()  -- one frame
-    local moved = (mp.Position - probe.Position).Magnitude < 10
-    pcall(function() mp.CFrame = original end)         -- restore
-
-    return moved and "client" or "server"
+    return _dragRemote
 end
 
 local function goNear(pos, hrp)
@@ -482,13 +405,15 @@ end
 --[[
     placeAndLock(model, targetCF) → boolean
 
-    1. Detects server vs client drag mode for this specific item.
-    2. SERVER mode: fires the drag remote every frame with the model + destCF.
-       Never writes CFrame directly.
-    3. CLIENT mode: writes mp.CFrame + steers any mover constraint + zeros velocity.
-    4. Both modes: keeps character within grab range, waits for STABLE_NEEDED
-       consecutive frames within CONFIRM_DIST, then fires the stop remote.
-    5. Absolute timeout prevents infinite hangs.
+    Every Heartbeat frame:
+      • Keeps character within 16 studs of the item
+      • Fires ClientIsDragging(model)  — unlocks server-sided items
+      • Writes mp.CFrame = dest        — moves client-sided items
+      • Zeros all velocity             — prevents physics flinging
+
+    Waits until the item has been within CONFIRM_DIST for STABLE_NEEDED
+    consecutive frames AND at least HOLD_SECONDS of real time, then returns.
+    Times out after DRIVE_TIMEOUT if the item never arrives.
 ]]
 local function placeAndLock(model, targetCF)
     if not (model and model.Parent) then return true end
@@ -498,13 +423,9 @@ local function placeAndLock(model, targetCF)
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
-    local dest    = targetCF * CFrame.new(0, 0.04, 0)
-    local destPos = dest.Position
-
-    -- Detect mode BEFORE we start moving
-    local mode       = detectDragMode(mp)   -- "server" or "client"
-    local dragRemote, stopRemote = findRemotes()
-    local mover      = (mode == "client") and findMover(model) or nil
+    local dragRemote = getDragRemote()
+    local dest       = targetCF * CFrame.new(0, 0.04, 0)
+    local destPos    = dest.Position
 
     goNear(mp.Position, hrp)
 
@@ -521,39 +442,19 @@ local function placeAndLock(model, targetCF)
             locked = true; done = true; conn:Disconnect(); return
         end
 
-        -- Keep character in range
+        -- Stay close enough to drag
         if (hrp.Position - mp.Position).Magnitude > 16 then
             goNear(mp.Position, hrp)
         end
 
-        if mode == "server" then
-            -- ── SERVER: fire drag remote with target position every frame ──
-            pcall(function()
-                if dragRemote then
-                    -- Try common argument patterns the server might expect
-                    dragRemote:FireServer(model)
-                    dragRemote:FireServer(model, dest)
-                    dragRemote:FireServer(model, destPos)
-                end
-            end)
+        -- Fire server remote + write CFrame every frame (covers both drag types)
+        pcall(function()
+            if dragRemote then dragRemote:FireServer(model) end
+            mp.CFrame = dest
+        end)
+        zeroVelocity(model)
 
-        else
-            -- ── CLIENT: write CFrame + steer mover ──
-            pcall(function() mp.CFrame = dest end)
-            if mover then
-                pcall(function()
-                    if mover:IsA("BodyPosition") then
-                        mover.Position = destPos
-                        mover.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-                    elseif mover:IsA("AlignPosition") then
-                        mover.Position = destPos
-                    end
-                end)
-            end
-            zeroVelocity(model)
-        end
-
-        -- ── Stability tracking ────────────────────────────────
+        -- Stability check
         local dist = (mp.Position - destPos).Magnitude
 
         if dist < CONFIRM_DIST then
@@ -561,6 +462,7 @@ local function placeAndLock(model, targetCF)
             stableStreak = stableStreak + 1
         else
             stableStreak = 0
+            -- Hard timeout if we've never arrived
             if not holdStart and (tick() - driveStart) >= DRIVE_TIMEOUT then
                 done = true; conn:Disconnect(); return
             end
@@ -572,16 +474,13 @@ local function placeAndLock(model, targetCF)
         if heldLong and isStable then
             locked = true; done = true; conn:Disconnect()
         elseif holdStart and (tick() - holdStart) > HOLD_SECONDS * 6 then
+            -- Absolute bail — held far too long, something is stuck
             done = true; conn:Disconnect()
         end
     end)
 
     while not done do task.wait() end
 
-    -- Signal drop
-    pcall(function()
-        if stopRemote then stopRemote:FireServer(model, dest) end
-    end)
     zeroVelocity(model)
     return locked
 end
