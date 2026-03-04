@@ -191,7 +191,7 @@ local function makeSlider(page, text, min, max, default, cb)
     end)
 end
 
--- ── Fancy dropdown matching Dupe tab style ─────────────────────────────────────
+-- ── Fancy dropdown ─────────────────────────────────────────────────────────────
 local function makeFancyDropdown(page, labelText, getOptions, cb)
     local selected = ""
     local isOpen   = false
@@ -423,7 +423,7 @@ local function getPlayerNames()
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- BUILD TAB  (pages["BuildTab"])
+-- BUILD TAB
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local bd = pages["BuildTab"]
@@ -461,7 +461,6 @@ local function inRect(rect, screenPos)
        and screenPos.Y >= minY and screenPos.Y <= maxY
 end
 
--- Setup lasso overlay
 local function setupLasso()
     if lassoSG then pcall(function() lassoSG:Destroy() end) end
     lassoSG = Instance.new("ScreenGui")
@@ -487,7 +486,6 @@ local function setupLasso()
 end
 setupLasso()
 
--- Lasso input handler
 UIS.InputBegan:Connect(function(input)
     if not lassoActive then return end
     if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
@@ -651,9 +649,6 @@ makeFancyDropdown(bd, "Wood Owner", function() return getPlayerNames() end, func
     buildOwner = val
 end)
 
-Players.PlayerAdded:Connect(function() end)   -- triggers list rebuild on open
-Players.PlayerRemoving:Connect(function() end)
-
 makeButton(bd, "Fill Blueprints with Selected Wood", function()
     task.spawn(fillBlueprints, fillSpeed, buildOwner)
 end)
@@ -673,29 +668,20 @@ makeButton(bd, "Destroy Selected Blueprints", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- VEHICLE TAB  (pages["VehicleTab"])
+-- VEHICLE TAB
 -- ═══════════════════════════════════════════════════════════════════════════
 
 local vh = pages["VehicleTab"]
 
 local vFlyEnabled  = false
--- ── Vehicle Fly — exact port of Butterhub sFLY(vfly) ─────────────────────────
--- Key insight from the leak: sFLY ALWAYS attaches BodyGyro/BodyVelocity to the
--- character's HumanoidRootPart (T), even when vfly=true.
--- When vfly=true (in a vehicle): PlatformStand is NOT set — the player stays
--- seated. The car follows because the HRP is physically welded inside the seat.
--- BG.cframe = CurrentCamera.CoordinateFrame every tick makes the car face the
--- camera, and BV.velocity pushes it in the camera-relative direction.
--- This is a direct copy of the leak with only naming adapted to VanillaHub.
-
-local VFLY       = false
-local vflyKeyD   = nil
-local vflyKeyU   = nil
-local vflyConn   = nil
-local vflyBV     = nil
-local vflyBG     = nil
-local QEfly      = true
-local iyflyspeed = 1
+local VFLY         = false
+local vflyKeyD     = nil
+local vflyKeyU     = nil
+local vflyConn     = nil
+local vflyBV       = nil
+local vflyBG       = nil
+local QEfly        = true
+local iyflyspeed   = 1
 local vehicleflyspeed = 1
 
 local function stopVFly()
@@ -705,7 +691,6 @@ local function stopVFly()
     if vflyKeyU  then vflyKeyU:Disconnect();  vflyKeyU  = nil end
     if vflyBV and vflyBV.Parent then vflyBV:Destroy() end; vflyBV = nil
     if vflyBG and vflyBG.Parent then vflyBG:Destroy() end; vflyBG = nil
-    -- Only reset PlatformStand when NOT in vehicle (vfly=false path sets it)
     pcall(function()
         local h = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
         if h and not h.Seated then h.PlatformStand = false end
@@ -714,10 +699,6 @@ local function stopVFly()
 end
 
 local function startVFly(vfly)
-    -- vfly = true  → player is seated in a vehicle, drive the car via HRP
-    -- vfly = false → normal player fly
-
-    -- Wait until character and mouse ready (matches leak's repeat/wait guards)
     repeat task.wait() until LP and LP.Character
         and LP.Character:FindFirstChild("HumanoidRootPart")
         and LP.Character:FindFirstChildOfClass("Humanoid")
@@ -725,11 +706,9 @@ local function startVFly(vfly)
 
     stopVFly()
 
-    -- T is always the character HRP — same as Butterhub
     local T = LP.Character:FindFirstChild("HumanoidRootPart")
     if not T then return end
 
-    -- Check vehicle seat when vfly=true
     if vfly then
         local hum = LP.Character:FindFirstChildOfClass("Humanoid")
         if not (hum and hum.Seated) then return end
@@ -744,7 +723,6 @@ local function startVFly(vfly)
 
     VFLY = true
 
-    -- Attach physics to HRP (same as leak — even for vehicle mode)
     vflyBG = Instance.new("BodyGyro")
     vflyBG.P          = 9e4
     vflyBG.maxTorque  = Vector3.new(9e9, 9e9, 9e9)
@@ -756,11 +734,9 @@ local function startVFly(vfly)
     vflyBV.maxForce   = Vector3.new(9e9, 9e9, 9e9)
     vflyBV.Parent     = T
 
-    -- Physics loop — exact copy of Butterhub inner loop
     vflyConn = RunService.Heartbeat:Connect(function()
         if not VFLY then return end
 
-        -- Only set PlatformStand when NOT in vehicle (leak condition: `if not vfly`)
         if not vfly then
             local h2 = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
             if h2 then h2.PlatformStand = true end
@@ -779,7 +755,6 @@ local function startVFly(vfly)
         local cam = workspace.CurrentCamera.CoordinateFrame
 
         if CONTROL.L+CONTROL.R ~= 0 or CONTROL.F+CONTROL.B ~= 0 or CONTROL.Q+CONTROL.E ~= 0 then
-            -- Exact velocity formula from the leak
             vflyBV.velocity = (
                 (cam.lookVector * (CONTROL.F + CONTROL.B)) +
                 ((cam * CFrame.new(CONTROL.L+CONTROL.R, (CONTROL.F+CONTROL.B+CONTROL.Q+CONTROL.E)*0.2, 0)).p - cam.p)
@@ -795,10 +770,8 @@ local function startVFly(vfly)
             vflyBV.velocity = Vector3.new(0, 0, 0)
         end
 
-        -- BG tracks camera — makes car/player face where camera looks
         vflyBG.cframe = cam
 
-        -- Auto-stop if player exits vehicle mid-flight
         if vfly then
             local h2 = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
             if not (h2 and h2.Seated) then
@@ -807,7 +780,6 @@ local function startVFly(vfly)
         end
     end)
 
-    -- Key binds — use legacy Mouse.KeyDown/Up (same as leak) for broadest compat
     local spd = vfly and vehicleflyspeed or iyflyspeed
     vflyKeyD = Mouse.KeyDown:Connect(function(KEY)
         KEY = KEY:lower()
@@ -858,12 +830,39 @@ local carColors = {
     "Silver","Brick yellow","Dark red","Hot pink",
 }
 
+-- ── FIX: Vehicle Spawner — keeps running until color matches ─────────────────
+-- The previous version had a race condition: VehicleRespawnedColor was only
+-- set AFTER ChildAdded fired, but the repeat loop might start checking it
+-- before the car spawns. Now we set up the listener BEFORE clicking the pad,
+-- and use a simple boolean flag + color value that gets set by ChildAdded.
+-- The repeat loop runs FOREVER until the color matches — no timeout.
 local function vehicleSpawner(color)
-    if not color then return end
+    if not color then
+        spawnStat.SetActive(false, "Select a color first!")
+        return
+    end
     abortSpawner = false
-    spawnStat.SetActive(true, "Click your spawn pad...")
+    spawnStat.SetActive(true, "Click your vehicle spawn pad...")
 
-    local padConn; padConn = Mouse.Button1Up:Connect(function()
+    local spawnedPartColor = nil   -- will be set by ChildAdded when car arrives
+
+    -- Listen for new car BEFORE we click the pad, so we never miss it
+    local carAddedConn = workspace.PlayerModels.ChildAdded:Connect(function(v)
+        -- Wait for Owner and PaintParts to exist on the new vehicle
+        task.spawn(function()
+            local ownerVal = v:WaitForChild("Owner", 10)
+            if not ownerVal or ownerVal.Value ~= LP then return end
+            local pp = v:WaitForChild("PaintParts", 10)
+            if not pp then return end
+            local part = pp:WaitForChild("Part", 10)
+            if not part then return end
+            spawnedPartColor = part.BrickColor.Name
+        end)
+    end)
+
+    -- Wait for player to click a spawn pad
+    local padConn
+    padConn = Mouse.Button1Up:Connect(function()
         local target = Mouse.Target
         if not target then return end
         local car = target.Parent
@@ -871,35 +870,40 @@ local function vehicleSpawner(color)
             and car:FindFirstChild("Type") and car.Type.Value == "Vehicle Spot") then return end
 
         padConn:Disconnect()
+        spawnStat.SetActive(true, "Spawning... waiting for color: "..color)
+
         task.spawn(function()
-            local found = false
-            local t0 = tick()
-            local newCar
-            local conn = workspace.PlayerModels.ChildAdded:Connect(function(v)
-                if v:FindFirstChild("Owner") and v.Owner.Value == LP
-                   and v:FindFirstChild("Type") and v.Type.Value == "Vehicle" then
-                    local pp = v:FindFirstDescendant("PaintPart") or v:FindFirstDescendant("Body")
-                    if pp and pp.BrickColor.Name == color then
-                        newCar = v; found = true
-                    end
-                end
-            end)
-
+            -- Press spawn button repeatedly until the car matches the requested color.
+            -- NO timeout — runs until found or aborted.
             repeat
-                if abortSpawner then break end
+                if abortSpawner then
+                    carAddedConn:Disconnect()
+                    spawnStat.SetActive(false, "Aborted.")
+                    return
+                end
+                -- Reset the detected color before each press so we detect a fresh spawn
+                spawnedPartColor = nil
                 pcall(function()
-                    RS.Interaction.RemoteProxy:FireServer(target.Parent.ButtonRemote_SpawnButton)
+                    RS.Interaction.RemoteProxy:FireServer(car.ButtonRemote_SpawnButton)
                 end)
-                task.wait(1)
-            until found or abortSpawner or tick()-t0 > 30
+                -- Wait up to 5s for the new car to arrive and color to be read
+                local waitStart = tick()
+                repeat
+                    task.wait(0.1)
+                until spawnedPartColor ~= nil or (tick() - waitStart > 5) or abortSpawner
+            until spawnedPartColor == color or abortSpawner
 
-            conn:Disconnect()
-            spawnStat.SetActive(false, found and "Car spawned!" or "Aborted.")
+            carAddedConn:Disconnect()
+            if abortSpawner then
+                spawnStat.SetActive(false, "Aborted.")
+            else
+                spawnStat.SetActive(false, "Car spawned! Color: "..color)
+            end
         end)
     end)
 end
 
--- ── Vehicle UI ─────────────────────────────────────────────────────────────────
+-- ── Vehicle speed helper ─────────────────────────────────────────────────────
 local function setVehicleSpeed(val)
     for _, v in next, workspace.PlayerModels:GetChildren() do
         if v:FindFirstChild("Owner") and v.Owner.Value == LP
@@ -910,13 +914,12 @@ local function setVehicleSpeed(val)
     end
 end
 
+-- ── Vehicle UI ─────────────────────────────────────────────────────────────────
 sectionLabel(vh, "Vehicle Controls")
 makeSlider(vh, "Max Speed", 1, 200, 80, function(v)
     setVehicleSpeed(v)
 end)
 
--- Vehicle Fly toggle — exact match to Butterhub:
--- Checks humanoid.Seated before calling startVFly(true)
 makeToggle(vh, "Vehicle Fly (W/A/S/D  E=Up  Q=Down)", false, function(v)
     vFlyEnabled = v
     if v then
@@ -927,10 +930,9 @@ makeToggle(vh, "Vehicle Fly (W/A/S/D  E=Up  Q=Down)", false, function(v)
                and seat.Parent.Type.Value == "Vehicle" then
                 stopVFly()
                 task.wait()
-                startVFly(true)  -- vfly=true → vehicle mode, no PlatformStand
+                startVFly(true)
             end
         else
-            -- Not in vehicle — normal player fly
             startVFly(false)
         end
     else
@@ -939,16 +941,14 @@ makeToggle(vh, "Vehicle Fly (W/A/S/D  E=Up  Q=Down)", false, function(v)
 end)
 
 makeSlider(vh, "Vehicle Fly Speed", 16, 250, 16, function(v)
-    -- Both vars updated — loop reads them per-press from the `spd` capture
-    -- so we re-apply by stopping and restarting if active
-    iyflyspeed     = v
+    iyflyspeed      = v
     vehicleflyspeed = v
 end)
 
 sep(vh)
 sectionLabel(vh, "Vehicle Teleport")
 
-local vTpPlayerDD = makeFancyDropdown(vh, "To Player", getPlayerNames, function(val)
+makeFancyDropdown(vh, "To Player", getPlayerNames, function(val)
     for _, p in next, Players:GetPlayers() do
         if p.Name == val and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
             carTP(p.Character.HumanoidRootPart.CFrame)
@@ -957,7 +957,7 @@ local vTpPlayerDD = makeFancyDropdown(vh, "To Player", getPlayerNames, function(
     end
 end)
 
-local vTpPlotDD = makeFancyDropdown(vh, "To Plot", getPlayerNames, function(val)
+makeFancyDropdown(vh, "To Plot", getPlayerNames, function(val)
     for _, v in next, workspace.Properties:GetChildren() do
         if v:FindFirstChild("Owner") and tostring(v.Owner.Value) == val then
             carTP(v.OriginSquare.CFrame + Vector3.new(0,5,0))
@@ -974,7 +974,6 @@ end)
 sep(vh)
 sectionLabel(vh, "Vehicle Spawner")
 
--- ── FIX: Fancy dropdown for car color (replaces old plain dropdown)
 makeFancyDropdown(vh, "Car Color", function() return carColors end, function(val)
     spawnColor = val
 end)
@@ -990,16 +989,9 @@ makeButton(vh, "Abort Spawner", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- WOOD PROCESSING  (added from Butterhub source)
--- These functions appear in the WoodTab but are defined here so they live
--- alongside the other Butterhub core logic in Vanilla7.
+-- WOOD PROCESSING HELPERS (used by Vanilla3 WoodTab)
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ── Modded Wood Helper ────────────────────────────────────────────────────────
--- Finds all wood logs on the local player's plot that match a set of "modded"
--- tree classes (Frost, Spooky, SnowGlow, CaveCrawler, SpookyNeon, Volcano,
--- GreenSwampy, GoldSwampy, LoneCave) and returns them in a table.
--- This is used by the WoodTab to add a "Select All Modded Wood" button.
 local MODDED_CLASSES = {
     Frost=true, Spooky=true, SnowGlow=true, CaveCrawler=true,
     SpookyNeon=true, Volcano=true, GreenSwampy=true, GoldSwampy=true,
@@ -1020,11 +1012,7 @@ local function getModdedWoodOnPlot()
 end
 _G.VH.getModdedWoodOnPlot = getModdedWoodOnPlot
 
--- ── 1x1 Wood Cut ─────────────────────────────────────────────────────────────
--- Teleports the selected wood log's Main part into the sawmill blade zone at
--- the 1x1 cut position, slicing it into planks. Exactly mirrors the
--- Butterhub CutWood1x1 remote call pattern.
-local SAW_POS_1x1 = Vector3.new(148, 3, -4)   -- sawmill 1×1 cut entry
+local SAW_POS_1x1 = Vector3.new(148, 3, -4)
 
 local function cutWood1x1(model)
     if not (model and model.Parent) then return end
@@ -1035,18 +1023,15 @@ local function cutWood1x1(model)
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    -- Teleport player next to log first
     hrp.CFrame = main.CFrame * CFrame.new(0, 3, 5)
     task.wait(0.1)
 
-    -- Grab network ownership
     local t0 = tick()
     repeat
         RS.Interaction.ClientIsDragging:FireServer(model)
         task.wait()
     until (main.ReceiveAge == 0) or (tick() - t0 > 4)
 
-    -- Slam into saw
     for _ = 1, 30 do
         pcall(function()
             RS.Interaction.ClientIsDragging:FireServer(model)
