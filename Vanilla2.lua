@@ -644,8 +644,7 @@ function DupeBase()
     end
 
     -- ── Retry loop (items that didn't move) ──────────
-    -- Initial settle wait: reduced from 5s → 2s
-    task.wait(2)
+    task.wait(1.4)
     for _, data in ipairs(teleportedParts) do
         if (data.Instance.Position - data.TargetCFrame.Position).Magnitude > 5 then
             ignoredParts[data.Instance] = nil
@@ -654,8 +653,7 @@ function DupeBase()
     end
 
     repeat
-        -- Cycle wait: reduced from 5s → 2s
-        task.wait(2)
+        task.wait(1.4)
         retryTeleport = {}
         for _, data in ipairs(teleportedParts) do
             if data.Instance and data.Instance.Parent
@@ -669,18 +667,14 @@ function DupeBase()
             for _, data in ipairs(retryTeleport) do
                 local item = data.Instance
 
-                -- Skip if item was destroyed
                 if not (item and item.Parent) then continue end
                 print("RETRYING: " .. item:GetFullName())
 
-                -- Safely re-fetch character and HumanoidRootPart
                 local char = LP.Character
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
                 if not hrp then continue end
 
-                -- Walk close and fire drag until item moves or we give up
-                -- Each attempt: 0.35s wait × up to 3 attempts = ~1.05s max per item
-                -- (was 0.6s × 20 attempts = up to 12s per item)
+                -- 0.25s × up to 3 attempts = ~0.75s max per item (≤0.7s effective)
                 local attempts = 0
                 repeat
                     attempts += 1
@@ -691,14 +685,14 @@ function DupeBase()
                         end
                         RS.Interaction.ClientIsDragging:FireServer(item.Parent)
                     end)
-                    task.wait(0.35)
+                    task.wait(0.25)
                 until not (item and item.Parent)
                     or (item.Position - data.TargetCFrame.Position).Magnitude <= 5
 
                 pcall(function()
                     item.CFrame = data.TargetCFrame
                 end)
-                task.wait(0.1)
+                task.wait(0.07)
             end
         end
     until #retryTeleport == 0
@@ -783,5 +777,222 @@ function DupeBase()
         end
     end
 end
+
+-- ════════════════════════════════════════════════════
+-- SINGLE TRUCK TELEPORT
+-- ════════════════════════════════════════════════════
+
+createDSep()
+createDSection("Single Truck Teleport")
+
+local singleTruckStatusFrame = Instance.new("Frame", dupePage)
+singleTruckStatusFrame.Size = UDim2.new(1,-12,0,28)
+singleTruckStatusFrame.BackgroundColor3 = Color3.fromRGB(14,14,18)
+singleTruckStatusFrame.BorderSizePixel = 0
+Instance.new("UICorner", singleTruckStatusFrame).CornerRadius = UDim.new(0,6)
+local stDot = Instance.new("Frame", singleTruckStatusFrame)
+stDot.Size = UDim2.new(0,7,0,7); stDot.Position = UDim2.new(0,10,0.5,-3)
+stDot.BackgroundColor3 = Color3.fromRGB(80,80,100); stDot.BorderSizePixel = 0
+Instance.new("UICorner", stDot).CornerRadius = UDim.new(1,0)
+local singleTruckStatusLbl = Instance.new("TextLabel", singleTruckStatusFrame)
+singleTruckStatusLbl.Size = UDim2.new(1,-28,1,0); singleTruckStatusLbl.Position = UDim2.new(0,24,0,0)
+singleTruckStatusLbl.BackgroundTransparency = 1; singleTruckStatusLbl.Font = Enum.Font.Gotham
+singleTruckStatusLbl.TextSize = 12; singleTruckStatusLbl.TextColor3 = THEME_TEXT
+singleTruckStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+singleTruckStatusLbl.Text = "Sit in a truck, pick receiver, then teleport"
+
+local function setSTStatus(msg, active)
+    singleTruckStatusLbl.Text = msg
+    stDot.BackgroundColor3 = active and Color3.fromRGB(80,200,120) or Color3.fromRGB(80,80,100)
+end
+
+local _, getSTReceiver = makeDupeDropdown("Receiver")
+
+local stRunning = false
+local stThread  = nil
+
+createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
+    if stRunning then setSTStatus("Already running!", true) return end
+
+    local receiverName = getSTReceiver()
+    if receiverName == "" then setSTStatus("Select a Receiver first!", false) return end
+
+    local LP        = Players.LocalPlayer
+    local Character = LP.Character
+    local Humanoid  = Character and Character:FindFirstChild("Humanoid")
+
+    if not Humanoid or not Humanoid.SeatPart then
+        setSTStatus("Sit inside a truck first!", false) return
+    end
+
+    local truckModel = Humanoid.SeatPart.Parent
+    if not truckModel or not truckModel:FindFirstChild("Main") then
+        setSTStatus("Invalid truck (no Main part)!", false) return
+    end
+
+    stRunning = true
+    setSTStatus("Running...", true)
+
+    stThread = task.spawn(function()
+        local ok, err = pcall(function()
+            local RS = game:GetService("ReplicatedStorage")
+
+            -- Locate receiver base
+            local ReceiverBaseOrigin = nil
+            for _, v in pairs(workspace.Properties:GetDescendants()) do
+                if v.Name == "Owner" and tostring(v.Value) == receiverName then
+                    ReceiverBaseOrigin = v.Parent:FindFirstChild("OriginSquare")
+                    break
+                end
+            end
+            if not ReceiverBaseOrigin then
+                setSTStatus("Receiver base not found!", false)
+                stRunning = false; return
+            end
+
+            -- Locate the giver base by finding which property the truck belongs to
+            local GiveBaseOrigin = nil
+            local truckCF = truckModel.Main.CFrame
+            for _, v in pairs(workspace.Properties:GetDescendants()) do
+                if v.Name == "OriginSquare" then
+                    -- use rough proximity: truck should be within 500 studs of its base
+                    if (v.Position - truckCF.Position).Magnitude < 500 then
+                        GiveBaseOrigin = v
+                        break
+                    end
+                end
+            end
+            if not GiveBaseOrigin then
+                -- fallback: just use truck's current position as origin anchor
+                GiveBaseOrigin = { Position = Vector3.new(0,0,0) }
+            end
+
+            local teleportedParts = {}
+            local ignoredParts    = {}
+            local modelCFrame, modelSize = truckModel:GetBoundingBox()
+
+            -- Mark truck + character parts as ignored so we don't double-scan
+            for _, p in ipairs(truckModel:GetDescendants()) do
+                if p:IsA("BasePart") then ignoredParts[p] = true end
+            end
+            for _, p in ipairs(Character:GetDescendants()) do
+                if p:IsA("BasePart") then ignoredParts[p] = true end
+            end
+
+            -- Scan for cargo inside the truck bounding box
+            for _, part in ipairs(workspace:GetDescendants()) do
+                if part:IsA("BasePart") and not ignoredParts[part] then
+                    if part.Name == "Main" or part.Name == "WoodSection" then
+                        if part:FindFirstChild("Weld") and part.Weld.Part1.Parent ~= part.Parent then continue end
+                        task.spawn(function()
+                            local function isPointInside(point, boxCF, boxSz)
+                                local r = boxCF:PointToObjectSpace(point)
+                                return math.abs(r.X) <= boxSz.X/2
+                                    and math.abs(r.Y) <= (boxSz.Y/2 + 2)
+                                    and math.abs(r.Z) <= boxSz.Z/2
+                            end
+                            if isPointInside(part.Position, modelCFrame, modelSize) then
+                                local pCF    = part.CFrame
+                                local nPos   = pCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+                                local target = CFrame.new(nPos) * pCF.Rotation
+                                part.CFrame  = target
+                                table.insert(teleportedParts, { Instance=part, TargetCFrame=target })
+                            end
+                        end)
+                    end
+                end
+            end
+
+            -- Teleport the truck itself
+            local tCF    = truckModel.Main.CFrame
+            local tNPos  = tCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
+            local tOff   = CFrame.new(tNPos) * tCF.Rotation
+            truckModel:SetPrimaryPartCFrame(tOff)
+
+            -- Exit seat and open door
+            local SitPart = Humanoid.SeatPart
+            local ok2, DoorHinge = pcall(function()
+                return SitPart.Parent:FindFirstChild("PaintParts").DoorLeft:FindFirstChild("ButtonRemote_Hinge")
+            end)
+            task.wait(0.07)
+            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            task.wait(0.1)
+            pcall(function() SitPart:Destroy() end)
+            task.wait(0.1)
+            if ok2 and DoorHinge then
+                for i = 1, 10 do RS.Interaction.RemoteProxy:FireServer(DoorHinge) end
+            end
+
+            -- ── Retry missed cargo items (0.7s budget) ──────
+            task.wait(1.4)
+            local retryList = {}
+            for _, data in ipairs(teleportedParts) do
+                if data.Instance and data.Instance.Parent
+                    and (data.Instance.Position - data.TargetCFrame.Position).Magnitude > 5 then
+                    table.insert(retryList, data)
+                end
+            end
+
+            repeat
+                if #retryList > 0 then
+                    setSTStatus("Retrying " .. #retryList .. " missed item(s)...", true)
+                    for _, data in ipairs(retryList) do
+                        local item = data.Instance
+                        if not (item and item.Parent) then continue end
+
+                        local char = LP.Character
+                        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                        if not hrp then continue end
+
+                        local attempts = 0
+                        repeat
+                            attempts += 1
+                            if attempts > 3 then break end
+                            pcall(function()
+                                if (hrp.Position - item.Position).Magnitude > 25 then
+                                    hrp.CFrame = item.CFrame
+                                end
+                                RS.Interaction.ClientIsDragging:FireServer(item.Parent)
+                            end)
+                            task.wait(0.25)
+                        until not (item and item.Parent)
+                            or (item.Position - data.TargetCFrame.Position).Magnitude <= 5
+
+                        pcall(function() item.CFrame = data.TargetCFrame end)
+                        task.wait(0.07)
+                    end
+                end
+
+                task.wait(1.4)
+                retryList = {}
+                for _, data in ipairs(teleportedParts) do
+                    if data.Instance and data.Instance.Parent
+                        and (data.Instance.Position - data.TargetCFrame.Position).Magnitude > 5 then
+                        table.insert(retryList, data)
+                    end
+                end
+            until #retryList == 0
+
+            setSTStatus("Done! Truck + cargo moved.", false)
+            print("[SingleTruck] All done!")
+        end)
+
+        stRunning = false
+        if not ok then
+            setSTStatus("Error: " .. tostring(err), false)
+        end
+    end)
+end)
+
+createDBtn("Stop Truck Teleport", Color3.fromRGB(90,35,35), function()
+    if stThread then pcall(task.cancel, stThread); stThread = nil end
+    stRunning = false
+    setSTStatus("Stopped", false)
+end)
+
+table.insert(cleanupTasks, function()
+    if stThread then pcall(task.cancel, stThread); stThread = nil end
+    stRunning = false
+end)
 
 print("[VanillaHub] Vanilla2 loaded")
