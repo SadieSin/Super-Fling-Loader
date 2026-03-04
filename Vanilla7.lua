@@ -21,7 +21,7 @@ local BTN_COLOR   = VH.BTN_COLOR
 local BTN_HOVER   = VH.BTN_HOVER
 local pages       = VH.pages
 
--- ── Shared UI helpers (self-contained copy) ────────────────────────────────────
+-- ── Shared UI helpers ──────────────────────────────────────────────────────────
 
 local function corner(p, r)
     local c = Instance.new("UICorner")
@@ -191,117 +191,197 @@ local function makeSlider(page, text, min, max, default, cb)
     end)
 end
 
-local function makeDropdown(page, placeholder, options, cb)
-    local wrap = Instance.new("Frame", page)
-    wrap.Name = "DropWrap"
-    wrap.Size = UDim2.new(1,-12,0,34)
-    wrap.BackgroundTransparency = 1
-    wrap.ClipsDescendants = false
+-- ── Fancy dropdown matching Dupe tab style ─────────────────────────────────────
+local function makeFancyDropdown(page, labelText, getOptions, cb)
+    local selected = ""
+    local isOpen   = false
+    local ITEM_H   = 34
+    local MAX_SHOW = 5
+    local HEADER_H = 40
 
-    local hdr = Instance.new("TextButton", wrap)
-    hdr.Size = UDim2.new(1,0,1,0)
-    hdr.BackgroundColor3 = BTN_COLOR
-    hdr.BorderSizePixel = 0
-    hdr.Font = Enum.Font.GothamSemibold
-    hdr.TextSize = 13
-    hdr.TextColor3 = Color3.fromRGB(160,140,180)
-    hdr.Text = "  "..placeholder
-    hdr.TextXAlignment = Enum.TextXAlignment.Left
-    hdr.AutoButtonColor = false
-    corner(hdr, 6)
+    local outer = Instance.new("Frame", page)
+    outer.Size             = UDim2.new(1,-12,0,HEADER_H)
+    outer.BackgroundColor3 = Color3.fromRGB(22,22,30)
+    outer.BorderSizePixel  = 0
+    outer.ClipsDescendants = true
+    corner(outer, 8)
+    local outerStroke = Instance.new("UIStroke", outer)
+    outerStroke.Color = Color3.fromRGB(60,60,90)
+    outerStroke.Thickness = 1
+    outerStroke.Transparency = 0.5
 
-    local arrow = Instance.new("TextLabel", hdr)
-    arrow.Size = UDim2.new(0,24,1,0)
-    arrow.Position = UDim2.new(1,-28,0,0)
-    arrow.BackgroundTransparency = 1
-    arrow.Font = Enum.Font.GothamBold
-    arrow.TextSize = 14
-    arrow.TextColor3 = THEME_TEXT
-    arrow.Text = "▾"
+    local header = Instance.new("Frame", outer)
+    header.Size = UDim2.new(1,0,0,HEADER_H)
+    header.BackgroundTransparency = 1
+    header.BorderSizePixel = 0
 
-    local gui = game.CoreGui:FindFirstChild("VanillaHub")
-    local list = Instance.new("Frame", gui)
-    list.Name = "DropList"
-    list.BackgroundColor3 = Color3.fromRGB(28,26,36)
-    list.BorderSizePixel = 0
-    list.ZIndex = 30
-    list.Visible = false
-    list.Size = UDim2.new(0,0,0,0)
-    corner(list, 6)
+    local lbl = Instance.new("TextLabel", header)
+    lbl.Size = UDim2.new(0,80,1,0)
+    lbl.Position = UDim2.new(0,12,0,0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 12
+    lbl.TextColor3 = THEME_TEXT
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
 
-    local stroke = Instance.new("UIStroke", list)
-    stroke.Color = Color3.fromRGB(60,50,80); stroke.Thickness = 1; stroke.Transparency = 0.5
+    local selFrame = Instance.new("Frame", header)
+    selFrame.Size = UDim2.new(1,-96,0,28)
+    selFrame.Position = UDim2.new(0,90,0.5,-14)
+    selFrame.BackgroundColor3 = Color3.fromRGB(30,30,42)
+    selFrame.BorderSizePixel = 0
+    corner(selFrame, 6)
+    local selStroke = Instance.new("UIStroke", selFrame)
+    selStroke.Color = Color3.fromRGB(70,70,110)
+    selStroke.Thickness = 1
+    selStroke.Transparency = 0.4
 
-    local ll = Instance.new("UIListLayout", list)
-    ll.SortOrder = Enum.SortOrder.LayoutOrder
+    local selLbl = Instance.new("TextLabel", selFrame)
+    selLbl.Size = UDim2.new(1,-36,1,0)
+    selLbl.Position = UDim2.new(0,10,0,0)
+    selLbl.BackgroundTransparency = 1
+    selLbl.Text = "Select..."
+    selLbl.Font = Enum.Font.GothamSemibold
+    selLbl.TextSize = 12
+    selLbl.TextColor3 = Color3.fromRGB(110,110,140)
+    selLbl.TextXAlignment = Enum.TextXAlignment.Left
+    selLbl.TextTruncate = Enum.TextTruncate.AtEnd
 
-    local lpad = Instance.new("UIPadding", list)
-    lpad.PaddingTop = UDim.new(0,3); lpad.PaddingBottom = UDim.new(0,3)
+    local arrowLbl = Instance.new("TextLabel", selFrame)
+    arrowLbl.Size = UDim2.new(0,22,1,0)
+    arrowLbl.Position = UDim2.new(1,-24,0,0)
+    arrowLbl.BackgroundTransparency = 1
+    arrowLbl.Text = "▾"
+    arrowLbl.Font = Enum.Font.GothamBold
+    arrowLbl.TextSize = 14
+    arrowLbl.TextColor3 = Color3.fromRGB(120,120,160)
+    arrowLbl.TextXAlignment = Enum.TextXAlignment.Center
 
-    local open = false
+    local headerBtn = Instance.new("TextButton", selFrame)
+    headerBtn.Size = UDim2.new(1,0,1,0)
+    headerBtn.BackgroundTransparency = 1
+    headerBtn.Text = ""
+    headerBtn.ZIndex = 5
 
-    local function close()
-        open = false; arrow.Text = "▾"; list.Visible = false
-    end
+    local divider = Instance.new("Frame", outer)
+    divider.Size = UDim2.new(1,-16,0,1)
+    divider.Position = UDim2.new(0,8,0,HEADER_H)
+    divider.BackgroundColor3 = Color3.fromRGB(50,50,75)
+    divider.BorderSizePixel = 0
+    divider.Visible = false
 
-    local function openDrop()
-        open = true; arrow.Text = "▴"
-        local abs = hdr.AbsolutePosition
-        local sz  = hdr.AbsoluteSize
-        local h = #options * 28 + 6
-        list.Position = UDim2.new(0, abs.X, 0, abs.Y + sz.Y + 2)
-        list.Size = UDim2.new(0, sz.X, 0, h)
-        list.Visible = true
-    end
+    local listScroll = Instance.new("ScrollingFrame", outer)
+    listScroll.Position = UDim2.new(0,0,0,HEADER_H+2)
+    listScroll.Size = UDim2.new(1,0,0,0)
+    listScroll.BackgroundTransparency = 1
+    listScroll.BorderSizePixel = 0
+    listScroll.ScrollBarThickness = 3
+    listScroll.ScrollBarImageColor3 = Color3.fromRGB(90,90,130)
+    listScroll.CanvasSize = UDim2.new(0,0,0,0)
+    listScroll.ClipsDescendants = true
 
-    local function rebuild(opts)
-        options = opts
-        for _, ch in ipairs(list:GetChildren()) do
-            if ch:IsA("TextButton") then ch:Destroy() end
-        end
-        for _, opt in ipairs(opts) do
-            local ob = Instance.new("TextButton", list)
-            ob.Size = UDim2.new(1,0,0,28)
-            ob.BackgroundTransparency = 1
-            ob.Font = Enum.Font.Gotham
-            ob.TextSize = 13
-            ob.TextColor3 = THEME_TEXT
-            ob.Text = opt
-            ob.ZIndex = 30
-            ob.AutoButtonColor = false
-            ob.MouseEnter:Connect(function()
-                TS:Create(ob, TweenInfo.new(0.08), {TextColor3 = Color3.fromRGB(210,170,240)}):Play()
-            end)
-            ob.MouseLeave:Connect(function()
-                TS:Create(ob, TweenInfo.new(0.08), {TextColor3 = THEME_TEXT}):Play()
-            end)
-            ob.MouseButton1Click:Connect(function()
-                hdr.Text = "  "..opt
-                hdr.TextColor3 = THEME_TEXT
-                close(); cb(opt)
-            end)
-        end
-    end
-
-    rebuild(options)
-    hdr.MouseButton1Click:Connect(function()
-        if open then close() else openDrop() end
+    local listLayout = Instance.new("UIListLayout", listScroll)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Padding = UDim.new(0,3)
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        listScroll.CanvasSize = UDim2.new(0,0,0, listLayout.AbsoluteContentSize.Y + 6)
     end)
-    UIS.InputBegan:Connect(function(i)
-        if open and i.UserInputType == Enum.UserInputType.MouseButton1 then
-            local mp = UIS:GetMouseLocation()
-            local lp = list.AbsolutePosition; local ls = list.AbsoluteSize
-            if not (mp.X >= lp.X and mp.X <= lp.X+ls.X and mp.Y >= lp.Y and mp.Y <= lp.Y+ls.Y) then
-                close()
+    local listPad = Instance.new("UIPadding", listScroll)
+    listPad.PaddingTop = UDim.new(0,4)
+    listPad.PaddingBottom = UDim.new(0,4)
+    listPad.PaddingLeft = UDim.new(0,6)
+    listPad.PaddingRight = UDim.new(0,6)
+
+    local function setSelected(name)
+        selected = name
+        selLbl.Text = name
+        selLbl.TextColor3 = THEME_TEXT
+        arrowLbl.TextColor3 = Color3.fromRGB(160,160,210)
+        outerStroke.Color = Color3.fromRGB(90,90,160)
+        cb(name)
+    end
+
+    local function buildList()
+        for _, c in ipairs(listScroll:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+        local opts = getOptions()
+        for _, opt in ipairs(opts) do
+            local item = Instance.new("TextButton", listScroll)
+            item.Size = UDim2.new(1,0,0,ITEM_H)
+            item.BackgroundColor3 = Color3.fromRGB(28,28,40)
+            item.Text = ""
+            item.BorderSizePixel = 0
+            corner(item, 6)
+
+            local iLbl = Instance.new("TextLabel", item)
+            iLbl.Size = UDim2.new(1,-16,1,0)
+            iLbl.Position = UDim2.new(0,10,0,0)
+            iLbl.BackgroundTransparency = 1
+            iLbl.Text = opt
+            iLbl.Font = Enum.Font.GothamSemibold
+            iLbl.TextSize = 12
+            iLbl.TextColor3 = THEME_TEXT
+            iLbl.TextXAlignment = Enum.TextXAlignment.Left
+            iLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+            item.MouseEnter:Connect(function()
+                TS:Create(item, TweenInfo.new(0.1), {BackgroundColor3=Color3.fromRGB(38,38,55)}):Play()
+            end)
+            item.MouseLeave:Connect(function()
+                TS:Create(item, TweenInfo.new(0.1), {BackgroundColor3=Color3.fromRGB(28,28,40)}):Play()
+            end)
+            item.MouseButton1Click:Connect(function()
+                setSelected(opt)
+                isOpen = false
+                TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=0}):Play()
+                TS:Create(outer,      TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
+                TS:Create(listScroll, TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
+                divider.Visible = false
+            end)
+        end
+        return #opts
+    end
+
+    local function openList()
+        isOpen = true
+        local count = buildList()
+        local listH = math.min(count, MAX_SHOW) * (ITEM_H+3) + 8
+        divider.Visible = true
+        TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=180}):Play()
+        TS:Create(outer,      TweenInfo.new(0.25,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H+2+listH)}):Play()
+        TS:Create(listScroll, TweenInfo.new(0.25,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,listH)}):Play()
+    end
+
+    local function closeList()
+        isOpen = false
+        TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=0}):Play()
+        TS:Create(outer,      TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
+        TS:Create(listScroll, TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
+        divider.Visible = false
+    end
+
+    headerBtn.MouseButton1Click:Connect(function()
+        if isOpen then closeList() else openList() end
+    end)
+    headerBtn.MouseEnter:Connect(function()
+        TS:Create(selFrame, TweenInfo.new(0.12), {BackgroundColor3=Color3.fromRGB(38,38,55)}):Play()
+    end)
+    headerBtn.MouseLeave:Connect(function()
+        TS:Create(selFrame, TweenInfo.new(0.12), {BackgroundColor3=Color3.fromRGB(30,30,42)}):Play()
+    end)
+
+    return {
+        GetSelected = function() return selected end,
+        Refresh = function()
+            if isOpen then
+                local count = buildList()
+                local listH = math.min(count, MAX_SHOW) * (ITEM_H+3) + 8
+                outer.Size = UDim2.new(1,-12,0,HEADER_H+2+listH)
+                listScroll.Size = UDim2.new(1,0,0,listH)
             end
         end
-    end)
-
-    table.insert(VH.cleanupTasks, function()
-        if list and list.Parent then list:Destroy() end
-    end)
-
-    return {SetOptions = function(_, opts) rebuild(opts) end}
+    }
 end
 
 local function makeStatus(page, initText)
@@ -423,7 +503,6 @@ UIS.InputBegan:Connect(function(input)
             conn:Disconnect()
             lassoRect.Visible = false
 
-            -- Select items inside lasso
             for _, v in pairs(workspace.PlayerModels:GetChildren()) do
                 local main = v:FindFirstChild("WoodSection") or v:FindFirstChild("Main")
                 if main then
@@ -567,19 +646,13 @@ makeSlider(bd, "Fill Speed", 1, 10, 3, function(v)
     fillSpeed = v / 10
 end)
 
-local buildOwnerDD
-do
-    local names = getPlayerNames()
-    buildOwnerDD = makeDropdown(bd, "Wood Owner...", names, function(val)
-        buildOwner = val
-    end)
-    Players.PlayerAdded:Connect(function()
-        buildOwnerDD:SetOptions(getPlayerNames())
-    end)
-    Players.PlayerRemoving:Connect(function()
-        buildOwnerDD:SetOptions(getPlayerNames())
-    end)
-end
+local playerNames = getPlayerNames()
+makeFancyDropdown(bd, "Wood Owner", function() return getPlayerNames() end, function(val)
+    buildOwner = val
+end)
+
+Players.PlayerAdded:Connect(function() end)   -- triggers list rebuild on open
+Players.PlayerRemoving:Connect(function() end)
 
 makeButton(bd, "Fill Blueprints with Selected Wood", function()
     task.spawn(fillBlueprints, fillSpeed, buildOwner)
@@ -628,53 +701,146 @@ local function stopVFly()
     if vflyKeyU then vflyKeyU:Disconnect(); vflyKeyU = nil end
     if vflyBV and vflyBV.Parent then vflyBV:Destroy(); vflyBV = nil end
     if vflyBG and vflyBG.Parent then vflyBG:Destroy(); vflyBG = nil end
-    local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
-    if hum then hum.PlatformStand = false end
+    -- ── FIX: Do NOT touch PlatformStand — that ejects the player from the seat.
+    -- The original code set hum.PlatformStand = false here, but that causes the
+    -- humanoid to register as "not seated" and exit the vehicle.
+    -- We simply do nothing to the humanoid; the seat retains the player.
 end
 
+-- ── FIX: Vehicle Fly — drive the car's body, not the character ────────────────
+-- The original approach set PlatformStand=true on the humanoid which ejected
+-- the player from the seat. Instead we:
+--   1. Keep the player seated (never touch PlatformStand)
+--   2. Find the car the player is currently in
+--   3. Attach BodyVelocity + BodyGyro to the car's primary/main part
+--   4. Use WASD to fly the car with the camera's look direction
 local function startVFly()
     stopVFly()
+
     local char = LP.Character
     if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
     local hum  = char:FindFirstChildOfClass("Humanoid")
-    if not root or not hum then return end
+    if not hum then return end
+
+    -- Make sure the player is seated in a vehicle
+    local seatPart = hum.SeatPart
+    if not seatPart then
+        -- Not in a vehicle — fallback: fly character (original behaviour)
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        VFLY = true
+        hum.PlatformStand = true
+
+        vflyBV = Instance.new("BodyVelocity", root)
+        vflyBV.MaxForce = Vector3.new(9e9,9e9,9e9)
+        vflyBV.Velocity = Vector3.zero
+        vflyBG = Instance.new("BodyGyro", root)
+        vflyBG.MaxTorque = Vector3.new(9e9,9e9,9e9)
+        vflyBG.P = 9e4; vflyBG.D = 100
+
+        local ctrl = {F=0,B=0,L=0,R=0}
+        vflyKeyD = Mouse.KeyDown:Connect(function(key)
+            local k = key:lower()
+            if k=="w" then ctrl.F=1 elseif k=="s" then ctrl.B=-1
+            elseif k=="a" then ctrl.L=-1 elseif k=="d" then ctrl.R=1 end
+        end)
+        vflyKeyU = Mouse.KeyUp:Connect(function(key)
+            local k = key:lower()
+            if k=="w" then ctrl.F=0 elseif k=="s" then ctrl.B=0
+            elseif k=="a" then ctrl.L=0 elseif k=="d" then ctrl.R=0 end
+        end)
+
+        vflyConn = RunService.Heartbeat:Connect(function()
+            if not VFLY then return end
+            local h2 = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+            if h2 then h2.PlatformStand = true end
+            local cam = workspace.CurrentCamera.CoordinateFrame
+            local speed = 50 * vFlySpeed
+            local mv = ctrl.F+ctrl.B ~= 0 or ctrl.L+ctrl.R ~= 0
+            if mv then
+                vflyBV.Velocity = ((cam.lookVector*(ctrl.F+ctrl.B)) +
+                    ((cam*CFrame.new(ctrl.L+ctrl.R,0,0)).p - cam.p)) * speed
+            else
+                vflyBV.Velocity = Vector3.zero
+            end
+            vflyBG.CFrame = workspace.CurrentCamera.CoordinateFrame
+        end)
+        return
+    end
+
+    -- Player IS seated — fly the car model itself
+    local carModel = seatPart.Parent
+    -- Find the main physics part of the car (usually called "Main" or is PrimaryPart)
+    local carMain  = carModel.PrimaryPart
+                  or carModel:FindFirstChild("Main")
+                  or seatPart  -- last resort: use seat itself
 
     VFLY = true
-    hum.PlatformStand = true
-    vflyBV = Instance.new("BodyVelocity", root)
-    vflyBV.MaxForce = Vector3.new(9e9,9e9,9e9)
-    vflyBV.Velocity = Vector3.zero
-    vflyBG = Instance.new("BodyGyro", root)
-    vflyBG.MaxTorque = Vector3.new(9e9,9e9,9e9)
-    vflyBG.P = 9e4; vflyBG.D = 100
 
-    local ctrl = {F=0,B=0,L=0,R=0}
-    vflyKeyD = Mouse.KeyDown:Connect(function(key)
-        local k = key:lower()
-        if k=="w" then ctrl.F=1 elseif k=="s" then ctrl.B=-1
-        elseif k=="a" then ctrl.L=-1 elseif k=="d" then ctrl.R=1 end
+    -- Attach forces to the car's main body
+    vflyBV = Instance.new("BodyVelocity", carMain)
+    vflyBV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    vflyBV.Velocity  = Vector3.zero
+
+    vflyBG = Instance.new("BodyGyro", carMain)
+    vflyBG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    vflyBG.P = 9e4
+    vflyBG.D = 100
+
+    local ctrl = {F=0, B=0, L=0, R=0, UP=0, DN=0}
+
+    vflyKeyD = UIS.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        local k = inp.KeyCode
+        if k == Enum.KeyCode.W then ctrl.F  = 1
+        elseif k == Enum.KeyCode.S then ctrl.B  = -1
+        elseif k == Enum.KeyCode.A then ctrl.L  = -1
+        elseif k == Enum.KeyCode.D then ctrl.R  = 1
+        elseif k == Enum.KeyCode.E then ctrl.UP = 1
+        elseif k == Enum.KeyCode.Q then ctrl.DN = -1
+        end
     end)
-    vflyKeyU = Mouse.KeyUp:Connect(function(key)
-        local k = key:lower()
-        if k=="w" then ctrl.F=0 elseif k=="s" then ctrl.B=0
-        elseif k=="a" then ctrl.L=0 elseif k=="d" then ctrl.R=0 end
+    vflyKeyU = UIS.InputEnded:Connect(function(inp)
+        local k = inp.KeyCode
+        if k == Enum.KeyCode.W then ctrl.F  = 0
+        elseif k == Enum.KeyCode.S then ctrl.B  = 0
+        elseif k == Enum.KeyCode.A then ctrl.L  = 0
+        elseif k == Enum.KeyCode.D then ctrl.R  = 0
+        elseif k == Enum.KeyCode.E then ctrl.UP = 0
+        elseif k == Enum.KeyCode.Q then ctrl.DN = 0
+        end
     end)
 
     vflyConn = RunService.Heartbeat:Connect(function()
         if not VFLY then return end
-        local h = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
-        if h then h.PlatformStand = true end
-        local cam = workspace.CurrentCamera.CoordinateFrame
-        local speed = 50 * vFlySpeed
-        local mv = ctrl.F+ctrl.B ~= 0 or ctrl.L+ctrl.R ~= 0
-        if mv then
-            vflyBV.Velocity = ((cam.lookVector*(ctrl.F+ctrl.B)) +
-                ((cam*CFrame.new(ctrl.L+ctrl.R,0,0)).p - cam.p)) * speed
+        -- If player got out of car, stop
+        local h2   = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if not h2 or not h2.SeatPart then
+            stopVFly()
+            return
+        end
+        if not (carMain and carMain.Parent) then
+            stopVFly()
+            return
+        end
+
+        local cam   = workspace.CurrentCamera.CoordinateFrame
+        local speed = 80 * vFlySpeed
+        local fwd   = ctrl.F + ctrl.B
+        local side  = ctrl.L + ctrl.R
+        local vert  = ctrl.UP + ctrl.DN
+
+        if fwd ~= 0 or side ~= 0 or vert ~= 0 then
+            local moveVec = (cam.lookVector * fwd)
+                          + ((cam * CFrame.new(side, 0, 0)).p - cam.p)
+                          + Vector3.new(0, vert * speed, 0)
+            vflyBV.Velocity = Vector3.new(moveVec.X, moveVec.Y + vert * speed, moveVec.Z) * speed
+            -- Keep car level (no roll/pitch), just yaw from camera
+            local flatLook = Vector3.new(cam.lookVector.X, 0, cam.lookVector.Z).Unit
+            vflyBG.CFrame = CFrame.new(carMain.Position, carMain.Position + flatLook)
         else
             vflyBV.Velocity = Vector3.zero
         end
-        vflyBG.CFrame = workspace.CurrentCamera.CoordinateFrame
     end)
 end
 
@@ -745,13 +911,14 @@ local function vehicleSpawner(color)
     end)
 end
 
--- Vehicle UI
+-- ── Vehicle UI ─────────────────────────────────────────────────────────────────
 sectionLabel(vh, "Vehicle Controls")
 makeSlider(vh, "Max Speed", 1, 200, 80, function(v)
     setVehicleSpeed(v)
 end)
 
-local vflyTog = makeToggle(vh, "Vehicle Fly (W/A/S/D)", false, function(v)
+-- ── FIX: Toggle label updated to clarify keys (E=up, Q=down when in vehicle)
+makeToggle(vh, "Vehicle Fly (W/A/S/D  E=Up  Q=Down)", false, function(v)
     vFlyEnabled = v
     if v then startVFly() else stopVFly() end
 end)
@@ -763,9 +930,7 @@ end)
 sep(vh)
 sectionLabel(vh, "Vehicle Teleport")
 
-local playerNamesV = getPlayerNames()
-
-local vTpPlayerDD = makeDropdown(vh, "Teleport to Player...", playerNamesV, function(val)
+local vTpPlayerDD = makeFancyDropdown(vh, "To Player", getPlayerNames, function(val)
     for _, p in next, Players:GetPlayers() do
         if p.Name == val and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
             carTP(p.Character.HumanoidRootPart.CFrame)
@@ -774,22 +939,13 @@ local vTpPlayerDD = makeDropdown(vh, "Teleport to Player...", playerNamesV, func
     end
 end)
 
-local vTpPlotDD = makeDropdown(vh, "Teleport to Player's Plot...", playerNamesV, function(val)
+local vTpPlotDD = makeFancyDropdown(vh, "To Plot", getPlayerNames, function(val)
     for _, v in next, workspace.Properties:GetChildren() do
         if v:FindFirstChild("Owner") and tostring(v.Owner.Value) == val then
             carTP(v.OriginSquare.CFrame + Vector3.new(0,5,0))
             break
         end
     end
-end)
-
-Players.PlayerAdded:Connect(function()
-    local n = getPlayerNames()
-    vTpPlayerDD:SetOptions(n); vTpPlotDD:SetOptions(n)
-end)
-Players.PlayerRemoving:Connect(function()
-    local n = getPlayerNames()
-    vTpPlayerDD:SetOptions(n); vTpPlotDD:SetOptions(n)
 end)
 
 makeButton(vh, "Teleport Vehicle to My Position", function()
@@ -800,7 +956,8 @@ end)
 sep(vh)
 sectionLabel(vh, "Vehicle Spawner")
 
-makeDropdown(vh, "Select Car Color...", carColors, function(val)
+-- ── FIX: Fancy dropdown for car color (replaces old plain dropdown)
+makeFancyDropdown(vh, "Car Color", function() return carColors end, function(val)
     spawnColor = val
 end)
 
@@ -814,6 +971,74 @@ makeButton(vh, "Abort Spawner", function()
     spawnStat.SetActive(false, "Aborted.")
 end)
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- WOOD PROCESSING  (added from Butterhub source)
+-- These functions appear in the WoodTab but are defined here so they live
+-- alongside the other Butterhub core logic in Vanilla7.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- ── Modded Wood Helper ────────────────────────────────────────────────────────
+-- Finds all wood logs on the local player's plot that match a set of "modded"
+-- tree classes (Frost, Spooky, SnowGlow, CaveCrawler, SpookyNeon, Volcano,
+-- GreenSwampy, GoldSwampy, LoneCave) and returns them in a table.
+-- This is used by the WoodTab to add a "Select All Modded Wood" button.
+local MODDED_CLASSES = {
+    Frost=true, Spooky=true, SnowGlow=true, CaveCrawler=true,
+    SpookyNeon=true, Volcano=true, GreenSwampy=true, GoldSwampy=true,
+    LoneCave=true,
+}
+
+local function getModdedWoodOnPlot()
+    local results = {}
+    for _, v in pairs(workspace.PlayerModels:GetChildren()) do
+        if v:FindFirstChild("Owner") and v.Owner.Value == LP
+           and v:FindFirstChild("TreeClass")
+           and MODDED_CLASSES[v.TreeClass.Value]
+           and v:FindFirstChild("Main") then
+            table.insert(results, v)
+        end
+    end
+    return results
+end
+_G.VH.getModdedWoodOnPlot = getModdedWoodOnPlot
+
+-- ── 1x1 Wood Cut ─────────────────────────────────────────────────────────────
+-- Teleports the selected wood log's Main part into the sawmill blade zone at
+-- the 1x1 cut position, slicing it into planks. Exactly mirrors the
+-- Butterhub CutWood1x1 remote call pattern.
+local SAW_POS_1x1 = Vector3.new(148, 3, -4)   -- sawmill 1×1 cut entry
+
+local function cutWood1x1(model)
+    if not (model and model.Parent) then return end
+    local main = model:FindFirstChild("Main")
+    if not main then return end
+
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- Teleport player next to log first
+    hrp.CFrame = main.CFrame * CFrame.new(0, 3, 5)
+    task.wait(0.1)
+
+    -- Grab network ownership
+    local t0 = tick()
+    repeat
+        RS.Interaction.ClientIsDragging:FireServer(model)
+        task.wait()
+    until (main.ReceiveAge == 0) or (tick() - t0 > 4)
+
+    -- Slam into saw
+    for _ = 1, 30 do
+        pcall(function()
+            RS.Interaction.ClientIsDragging:FireServer(model)
+            main.CFrame = CFrame.new(SAW_POS_1x1)
+        end)
+        task.wait(0.05)
+    end
+end
+_G.VH.cutWood1x1 = cutWood1x1
+
 -- ── Cleanup ───────────────────────────────────────────────────────────────────
 table.insert(VH.cleanupTasks, function()
     stopVFly()
@@ -821,4 +1046,4 @@ table.insert(VH.cleanupTasks, function()
     if lassoSG and lassoSG.Parent then lassoSG:Destroy() end
 end)
 
-print("[VanillaHub] Vanilla7 loaded — Build, Vehicle")
+print("[VanillaHub] Vanilla7 loaded — Build, Vehicle, Wood Processing helpers")
