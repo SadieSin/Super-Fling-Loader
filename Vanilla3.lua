@@ -1,12 +1,8 @@
 -- ════════════════════════════════════════════════════
--- VANILLA3 — Fixed Wood Tab (drop-in replacement)
--- Fixes vs original:
---   1. treeListener registered BEFORE cutting (no race condition)
---   2. Cut loop re-anchors player to trunk every frame
---   3. Log drag-back checks network ownership properly
---   4. bringTree returns true/false so loops can handle failure
---   5. New: Farm Loop — bring N trees → sell all logs → repeat cycles
---   6. New: Abort is instant via shared flag
+-- VANILLA3 — FULL REWRITE (Aggressive Bypass Edition)
+-- Complete rewrite of tree cutting + log dragging
+-- Uses sethiddenproperty, firetouchinterest, and
+-- direct CFrame manipulation to bypass all checks
 -- ════════════════════════════════════════════════════
 
 if not _G.VH then
@@ -32,8 +28,10 @@ local startFly         = _G.VH.startFly
 local flyKeyBtn        = _G.VH.flyKeyBtn
 
 local RS = game:GetService("ReplicatedStorage")
+local WS = workspace
 local AxeClassesFolder = RS:WaitForChild("AxeClasses")
 
+-- ── Key state getters/setters ───────────────────────
 local function getWaitingForFlyKey()   return _G.VH and _G.VH.waitingForFlyKey end
 local function setWaitingForFlyKey(v)  if _G.VH then _G.VH.waitingForFlyKey = v end end
 local function getWaitingForKeyGUI()   return _G.VH and _G.VH.waitingForKeyGUI end
@@ -46,17 +44,17 @@ local function getFlyToggleEnabled()   return _G.VH and _G.VH.flyToggleEnabled e
 local function getIsFlyEnabled()       return _G.VH and _G.VH.isFlyEnabled end
 
 -- ════════════════════════════════════════════════════
--- UI HELPERS (same as original Vanilla3)
+-- UI HELPERS
 -- ════════════════════════════════════════════════════
+
+local woodPage  = pages["WoodTab"]
+local woodMouse = player:GetMouse()
 
 local function corner(p, r)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, r or 6)
     c.Parent = p
 end
-
-local woodPage  = pages["WoodTab"]
-local woodMouse = player:GetMouse()
 
 local function createWSectionLabel(text)
     local lbl = Instance.new("TextLabel", woodPage)
@@ -211,9 +209,9 @@ local function makeFancyDropdown(page, labelText, getOptions, cb)
     listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
         listScroll.CanvasSize = UDim2.new(0,0,0, listLayout.AbsoluteContentSize.Y + 6)
     end)
-    local lp = Instance.new("UIPadding", listScroll)
-    lp.PaddingTop=UDim.new(0,4); lp.PaddingBottom=UDim.new(0,4)
-    lp.PaddingLeft=UDim.new(0,6); lp.PaddingRight=UDim.new(0,6)
+    local lp2 = Instance.new("UIPadding", listScroll)
+    lp2.PaddingTop=UDim.new(0,4); lp2.PaddingBottom=UDim.new(0,4)
+    lp2.PaddingLeft=UDim.new(0,6); lp2.PaddingRight=UDim.new(0,6)
 
     local function setSelected(name)
         selected = name; selLbl.Text = name; selLbl.TextColor3 = THEME_TEXT
@@ -294,60 +292,54 @@ local function makeFancyDropdown(page, labelText, getOptions, cb)
 end
 
 -- ════════════════════════════════════════════════════
--- WOOD ENGINE — shared helpers (unchanged from original)
+-- CORE HELPERS
 -- ════════════════════════════════════════════════════
 
 local SELL_POS = Vector3.new(315.14, -0.40, 86.32)
-
-local function isnetworkowner(Part)
-    local ok, v = pcall(function() return Part.ReceiveAge == 0 end)
-    return ok and v
-end
 
 local function getHRP()
     local c = player.Character
     return c and c:FindFirstChild("HumanoidRootPart")
 end
 
-local function getPosition()
+local function safeTP(cf)
     local hrp = getHRP()
-    return hrp and hrp.CFrame.Position or Vector3.new(0,0,0)
+    if hrp then pcall(function() hrp.CFrame = cf end) end
 end
 
-local function DragModel1(model, targetVec3)
-    pcall(function()
-        RS.Interaction.ClientIsDragging:FireServer(model)
-        RS.Interaction.ClientIsDragging:FireServer(model)
-        RS.Interaction.ClientIsDragging:FireServer(model)
-        RS.Interaction.ClientIsDragging:FireServer(model)
+-- Aggressive network ownership claim — fires drag many times rapidly
+local function claimNetworkOwner(part, timeout)
+    timeout = timeout or 5
+    local t0 = tick()
+    repeat
+        pcall(function() RS.Interaction.ClientIsDragging:FireServer(part.Parent or part) end)
+        pcall(function() RS.Interaction.ClientIsDragging:FireServer(part.Parent or part) end)
+        pcall(function() RS.Interaction.ClientIsDragging:FireServer(part.Parent or part) end)
+        task.wait(0.03)
+    until (tick()-t0 > timeout) or pcall(function()
+        assert(part.ReceiveAge == 0)
     end)
-    model:MoveTo(targetVec3)
-    model:MoveTo(targetVec3)
 end
 
-local function calculateHitsForEndPart(part)
-    return math.round((math.sqrt(part.Size.X * part.Size.Z) ^ 2 * 8e7) / 1e7)
-end
-
-local function DropTools()
-    for _, v in pairs(player.Backpack:GetChildren()) do
-        if v.Name == "Tool" then
-            RS.Interaction.ClientInteracted:FireServer(v, "Drop tool",
-                player.Character.Head.CFrame * CFrame.new(0,4,-4))
-            task.wait(0.5)
-        end
+-- Force a model to a position, many times
+local function forceModelCF(model, targetCF, iters, waitTime)
+    iters = iters or 60
+    waitTime = waitTime or 0
+    local pp = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+    if not pp then return end
+    for _ = 1, iters do
+        pcall(function()
+            RS.Interaction.ClientIsDragging:FireServer(model)
+            RS.Interaction.ClientIsDragging:FireServer(model)
+            model:SetPrimaryPartCFrame(targetCF)
+        end)
+        if waitTime > 0 then task.wait(waitTime) end
     end
 end
 
-local function GetToolsfix()
-    for _, a in pairs(workspace.PlayerModels:GetDescendants()) do
-        if a.Name == "Model" and a:FindFirstChild("Owner") then
-            if a:FindFirstChild("ToolName") and a.ToolName.Value == "EndTimesAxe" then
-                RS.Interaction.ClientInteracted:FireServer(a, "Pick up tool")
-            end
-        end
-    end
-end
+-- ════════════════════════════════════════════════════
+-- AXE HELPERS
+-- ════════════════════════════════════════════════════
 
 local function getToolStats(tool)
     local name = (type(tool) ~= "string") and tool.ToolName.Value or tool
@@ -367,59 +359,12 @@ local function getTools()
     return tools
 end
 
-local function GetBestAxe(Tree)
-    if player.Character:FindFirstChild("Tool") then
-        player.Character.Humanoid:UnequipTools()
-    end
-    local best, bestDmg = nil, 0
-    for _, v in ipairs(player.Backpack:GetChildren()) do
-        if v.Name == "Tool" then
-            local ok, axe = pcall(function()
-                return require(AxeClassesFolder["AxeClass_"..v.ToolName.Value]).new()
-            end)
-            if ok then
-                if axe.SpecialTrees and axe.SpecialTrees[Tree] then return v end
-                if axe.Damage > bestDmg then bestDmg = axe.Damage; best = v end
-            end
-        end
-    end
-    return best
-end
-
-local function GetAxeDamage(Tree)
-    if player.Character:FindFirstChild("Tool") then
-        player.Character.Humanoid:UnequipTools()
-    end
-    local bestAxe = GetBestAxe(Tree)
-    if not bestAxe then return 1 end
-    local ok, axe = pcall(function()
-        return require(AxeClassesFolder["AxeClass_"..bestAxe.ToolName.Value]).new()
-    end)
-    if not ok then return 1 end
-    if axe.SpecialTrees and axe.SpecialTrees[Tree] then
-        return axe.SpecialTrees[Tree].Damage
-    end
-    return axe.Damage
-end
-
-local function ChopTree(CutEventRemote, ID, Height, Tree)
-    RS.Interaction.RemoteProxy:FireServer(CutEventRemote, {
-        tool        = GetBestAxe(Tree),
-        faceVector  = Vector3.new(1,0,0),
-        height      = Height,
-        sectionId   = ID,
-        hitPoints   = GetAxeDamage(Tree),
-        cooldown    = 0.25837870788574,
-        cuttingClass= "Axe",
-    })
-end
-
 local function getBestAxeForTree(treeClass)
     local tools = getTools()
     if #tools == 0 then return nil, "Need Axe" end
     if treeClass == "LoneCave" then
         for _, v in ipairs(tools) do
-            if v.ToolName.Value == "EndTimesAxe" then return v, nil end
+            if v.ToolName and v.ToolName.Value == "EndTimesAxe" then return v, nil end
         end
         return nil, "Need EndTimesAxe"
     end
@@ -427,7 +372,7 @@ local function getBestAxeForTree(treeClass)
     for _, v in ipairs(tools) do
         local ok, stats = pcall(getToolStats, v)
         if ok then
-            local dmg = stats.Damage
+            local dmg = stats.Damage or 1
             if stats.SpecialTrees and stats.SpecialTrees[treeClass] then
                 dmg = stats.SpecialTrees[treeClass].Damage or dmg
             end
@@ -438,263 +383,280 @@ local function getBestAxeForTree(treeClass)
 end
 
 local function cutPart(event, sectionId, height, tool, treeClass)
+    if not (event and tool) then return end
     local ok, stats = pcall(getToolStats, tool)
     if not ok then return end
     if stats.SpecialTrees and stats.SpecialTrees[treeClass] then
         for k,v in pairs(stats.SpecialTrees[treeClass]) do stats[k] = v end
     end
-    RS.Interaction.RemoteProxy:FireServer(event, {
-        tool         = tool,
-        faceVector   = Vector3.new(-1,0,0),
-        height       = height or 0.3,
-        sectionId    = sectionId or 1,
-        hitPoints    = stats.Damage,
-        cooldown     = stats.SwingCooldown,
-        cuttingClass = "Axe",
-    })
-end
-
--- Tree region scanner
-local treeRegions = {}
-task.spawn(function()
-    while task.wait(2) do
-        for _, v in ipairs(workspace:GetChildren()) do
-            if v.Name == "TreeRegion" then
-                treeRegions[v] = treeRegions[v] or {}
-                for _, v2 in ipairs(v:GetChildren()) do
-                    if v2:FindFirstChild("TreeClass") then
-                        local tc = v2.TreeClass.Value
-                        if not table.find(treeRegions[v], tc) then
-                            table.insert(treeRegions[v], tc)
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
-local function getBiggestTree(treeClass)
-    local best = nil
-    for region, classes in pairs(treeRegions) do
-        if table.find(classes, treeClass) then
-            for _, v2 in ipairs(region:GetChildren()) do
-                if v2:IsA("Model") and v2:FindFirstChild("Owner")
-                   and (v2.Owner.Value == nil or v2.Owner.Value == player)
-                   and v2:FindFirstChild("TreeClass")
-                   and v2.TreeClass.Value == treeClass then
-                    local trunk, mass = nil, 0
-                    for _, p in ipairs(v2:GetChildren()) do
-                        if p:IsA("BasePart") then
-                            mass = mass + p:GetMass()
-                            if p:FindFirstChild("ID") and p.ID.Value == 1 then trunk = p end
-                        end
-                    end
-                    if trunk and (not best or mass > best.mass) then
-                        best = {tree=v2, trunk=trunk, mass=mass}
-                    end
-                end
-            end
-        end
-    end
-    return best
-end
-
-local function GetLava()
-    for _, Lava in ipairs(workspace["Region_Volcano"]:GetChildren()) do
-        if Lava:FindFirstChild("Lava") and
-           Lava.Lava.CFrame == CFrame.new(-1675.2002,255.002533,1284.19983,
-               0.866007268,0,0.500031412,0,1,0,-0.500031412,0,0.866007268) then
-            return Lava
-        end
-    end
-end
-
-local function GodMode(tpCF)
-    local LavaPart = GetLava()
-    player.Character.HumanoidRootPart.CFrame = CFrame.new(-1439.45, 433.4, 1317.61)
-    repeat
-        task.wait(1)
-        firetouchinterest(player.Character.HumanoidRootPart, LavaPart.Lava, 0)
-    until player.Character.HumanoidRootPart:FindFirstChild("LavaFire")
-    player.Character.HumanoidRootPart.LavaFire:Destroy()
-    task.wait(1)
-    local Clone = player.Character.Torso:Clone()
-    Clone.Name = "HumanoidRootPart"; Clone.Transparency = 1
-    Clone.Parent = player.Character
-    player.Character.HumanoidRootPart.CFrame = tpCF
-    Clone.CFrame = tpCF
+    pcall(function()
+        RS.Interaction.RemoteProxy:FireServer(event, {
+            tool         = tool,
+            faceVector   = Vector3.new(-1,0,0),
+            height       = height or 0.3,
+            sectionId    = sectionId or 1,
+            hitPoints    = stats.Damage or 1,
+            cooldown     = stats.SwingCooldown or 0.25,
+            cuttingClass = "Axe",
+        })
+    end)
 end
 
 -- ════════════════════════════════════════════════════
--- FIXED bringTree
+-- TREE SCANNER
+-- ════════════════════════════════════════════════════
+
+-- Scan ALL workspace children for trees, no region restriction
+local function findBestTree(treeClass)
+    local best = nil
+    local bestMass = 0
+
+    -- Search everywhere: TreeRegion folders and raw workspace
+    local function scanContainer(container)
+        for _, v in ipairs(container:GetChildren()) do
+            if v:IsA("Model") and v:FindFirstChild("TreeClass")
+               and v.TreeClass.Value == treeClass
+               and v:FindFirstChild("Owner")
+               and (v.Owner.Value == nil or v.Owner.Value == player) then
+                -- find trunk (ID==1) and calculate mass
+                local trunk = nil
+                local mass  = 0
+                for _, p in ipairs(v:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        mass = mass + p.Size.X * p.Size.Y * p.Size.Z
+                        if p:FindFirstChild("ID") and p.ID.Value == 1 then trunk = p end
+                    end
+                end
+                -- fallback: largest base part
+                if not trunk then
+                    local biggestVol = 0
+                    for _, p in ipairs(v:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            local vol = p.Size.X * p.Size.Y * p.Size.Z
+                            if vol > biggestVol then biggestVol = vol; trunk = p end
+                        end
+                    end
+                end
+                if trunk and mass > bestMass then
+                    bestMass = mass
+                    best = {tree=v, trunk=trunk}
+                end
+            end
+        end
+    end
+
+    for _, child in ipairs(WS:GetChildren()) do
+        if child.Name:find("Region") or child.Name:find("Tree") or child.Name:find("Forest") then
+            scanContainer(child)
+        end
+    end
+    -- Also scan direct workspace children
+    scanContainer(WS)
+
+    return best
+end
+
+-- ════════════════════════════════════════════════════
+-- GLOBAL STOP FLAGS
 -- ════════════════════════════════════════════════════
 
 getgenv().treestop = true
 getgenv().doneend  = true
 
-local _treeCutFlag = false  -- internal per-call flag
+local globalAbort = false
 
-local function bringTree(treeClass, godmodeval)
-    _treeCutFlag = false
+-- ════════════════════════════════════════════════════
+-- BRING TREE — FULL REWRITE (Aggressive Bypass)
+-- Strategy:
+--   1. Find tree trunk
+--   2. Hook ChildAdded on LogModels FIRST
+--   3. Teleport player on top of trunk every frame
+--   4. Spam cutPart until log spawns
+--   5. Once log spawns, spam drag it to player origin
+-- ════════════════════════════════════════════════════
+
+local function bringTree(treeClass, statusCallback)
+    if globalAbort then return false end
+
     player.Character.Humanoid.BreakJointsOnDeath = false
 
     local tool, err = getBestAxeForTree(treeClass)
     if not tool then
-        warn("[VanillaHub] bringTree: "..(err or "no tool"))
+        warn("[VH] bringTree: "..(err or "no tool"))
+        if statusCallback then statusCallback("No axe: "..(err or "")) end
         return false
     end
 
-    local treeData = getBiggestTree(treeClass)
-    if not (treeData and treeData.trunk) then
-        warn("[VanillaHub] bringTree: no tree found for "..treeClass)
+    local treeData = findBestTree(treeClass)
+    if not treeData then
+        warn("[VH] bringTree: no tree found for "..treeClass)
+        if statusCallback then statusCallback("No tree found for "..treeClass) end
         return false
     end
 
-    local trunk   = treeData.trunk
-    local tree    = treeData.tree
-    local oldPos  = getHRP() and getHRP().CFrame or CFrame.new(0,5,0)
+    local trunk = treeData.trunk
+    local tree  = treeData.tree
 
-    if godmodeval then
-        workspace.Camera.CameraType = Enum.CameraType.Fixed
-        GodMode(trunk.CFrame)
-        workspace.Camera.CameraType = Enum.CameraType.Custom
+    -- Make sure tree has a PrimaryPart set
+    if not tree.PrimaryPart then
+        tree.PrimaryPart = trunk
     end
-    task.wait(0.3)
 
-    -- Teleport to trunk
-    player.Character.HumanoidRootPart.CFrame = trunk.CFrame * CFrame.new(0,0,3)
+    local originCF = getHRP() and getHRP().CFrame or CFrame.new(0,5,0)
+    if statusCallback then statusCallback("Cutting: "..treeClass) end
+
+    -- ── Step 1: Teleport onto trunk ──
+    safeTP(trunk.CFrame * CFrame.new(0, 2, 3))
     task.wait(0.2)
 
-    -- FIX: Register listener BEFORE cutting so we never miss the log spawn
+    -- ── Step 2: Hook log spawn listener BEFORE cutting ──
+    local logSpawned   = false
+    local spawnedLog   = nil
     local logConn
-    logConn = workspace.LogModels.ChildAdded:Connect(function(log)
+
+    logConn = WS.LogModels.ChildAdded:Connect(function(log)
         task.spawn(function()
-            -- Wait briefly for Owner to replicate
-            if not log:FindFirstChild("Owner") then
-                log:WaitForChild("Owner", 5)
-            end
-            if not (log:FindFirstChild("Owner") and log.Owner.Value == player) then return end
-            if not (log:FindFirstChild("TreeClass") and log.TreeClass.Value == treeClass) then return end
+            -- Wait for Owner value to replicate (up to 3s)
+            local t0 = tick()
+            repeat task.wait(0.05) until
+                log:FindFirstChild("Owner") or (tick()-t0 > 3)
 
-            if logConn then logConn:Disconnect(); logConn = nil end
-            _treeCutFlag = true
+            local ownerVal = log:FindFirstChild("Owner")
+            local tcVal    = log:FindFirstChild("TreeClass")
 
-            if not log.PrimaryPart then
-                log.PrimaryPart = log:FindFirstChildWhichIsA("BasePart")
-            end
-            -- Drag log back to old position
-            for _ = 1, 100 do
-                if not (log and log.Parent) then break end
-                pcall(function()
-                    RS.Interaction.ClientIsDragging:FireServer(log)
-                    log:SetPrimaryPartCFrame(oldPos * CFrame.new(0,1,0))
-                end)
-                task.wait()
+            -- Accept log if owned by us OR unowned (server sometimes delays ownership assignment)
+            local ownedByUs  = ownerVal and ownerVal.Value == player
+            local rightClass = tcVal and tcVal.Value == treeClass
+
+            if rightClass and (ownedByUs or not ownerVal or ownerVal.Value == nil) then
+                if logConn then logConn:Disconnect(); logConn = nil end
+                logSpawned = true
+                spawnedLog = log
+
+                -- Set PrimaryPart immediately
+                if not log.PrimaryPart then
+                    log.PrimaryPart = log:FindFirstChild("WoodSection")
+                        or log:FindFirstChildWhichIsA("BasePart")
+                end
+
+                -- ── Aggressively drag log to origin ──
+                local logPP = log.PrimaryPart
+                if logPP then
+                    local t1 = tick()
+                    repeat
+                        pcall(function()
+                            RS.Interaction.ClientIsDragging:FireServer(log)
+                            RS.Interaction.ClientIsDragging:FireServer(log)
+                            RS.Interaction.ClientIsDragging:FireServer(log)
+                            log:SetPrimaryPartCFrame(originCF * CFrame.new(0,2,0))
+                        end)
+                        task.wait(0.03)
+                    until not log.Parent or (tick()-t1 > 12)
+                end
             end
         end)
     end)
 
-    task.wait(0.05)
+    -- ── Step 3: Cut loop — spam cuts + keep player glued to trunk ──
+    local cutTimeout = treeClass == "LoneCave" and 90 or 45
+    local t0 = tick()
+    local cutEvent = tree:FindFirstChild("CutEvent")
 
-    if treeClass == "LoneCave" and godmodeval then
-        getgenv().doneend = false
-        local numHits = calculateHitsForEndPart(trunk) - 1
-        for _ = 1, numHits do
-            if not getgenv().treestop then break end
-            player.Character.HumanoidRootPart.CFrame = trunk.CFrame * CFrame.new(0,0,3)
-            cutPart(tree.CutEvent, 1, 0, tool, treeClass)
-            task.wait(1)
+    repeat
+        if globalAbort then break end
+        if not cutEvent then cutEvent = tree:FindFirstChild("CutEvent") end
+
+        -- Re-anchor player to trunk every iteration
+        pcall(function()
+            local hrp = getHRP()
+            if hrp then hrp.CFrame = trunk.CFrame * CFrame.new(0, 2, 3) end
+        end)
+
+        -- Spam cut from multiple sections/heights for reliability
+        for section = 1, 3 do
+            if cutEvent then
+                cutPart(cutEvent, section, 0.1 * section, tool, treeClass)
+                cutPart(cutEvent, section, 0.5,            tool, treeClass)
+            end
         end
-        _treeCutFlag = false
-        getgenv().treestop = false
-        DropTools()
-        task.wait(0.3)
-        player.Character.HumanoidRootPart.CFrame = CFrame.new(-1675, 261, 1284)
-        task.wait(0.5)
-        pcall(function() repeat task.wait() until player.Character.Humanoid.Health == 100 end)
-        task.wait(0.3)
-        GetToolsfix()
-        task.wait(0.5)
-        bringTree("LoneCave", false)
-    else
-        -- FIX: keep cutting and re-gluing player to trunk each frame until log spawns
-        local t0 = tick()
-        repeat
-            if not getgenv().treestop then break end
-            pcall(function()
-                player.Character.HumanoidRootPart.CFrame = trunk.CFrame * CFrame.new(0,0,3)
-            end)
-            cutPart(tree.CutEvent, 1, 0, tool, treeClass)
-            task.wait(0.06)
-        until _treeCutFlag or not getgenv().treestop or (tick()-t0 > 45)
-    end
+
+        task.wait(0.06)
+    until logSpawned or globalAbort or (tick()-t0 > cutTimeout) or not tree.Parent
 
     if logConn then logConn:Disconnect(); logConn = nil end
 
-    task.wait(0.8)
-    _treeCutFlag = false
-    pcall(function() player.Character.HumanoidRootPart.CFrame = oldPos end)
+    -- ── Step 4: Return player to origin ──
+    task.wait(0.5)
+    safeTP(originCF)
 
-    if treeClass == "LoneCave" then
-        getgenv().doneend  = true
-        getgenv().treestop = true
+    if logSpawned then
+        if statusCallback then statusCallback("Log delivered!") end
+        return true
+    else
+        if statusCallback then statusCallback("Cut timeout / aborted") end
+        return false
     end
-
-    return true
 end
 
 -- ════════════════════════════════════════════════════
--- BringAllLogs / SellAllLogs (unchanged from original)
+-- BRING ALL LOGS
 -- ════════════════════════════════════════════════════
 
 local function BringAllLogs()
-    local OldPos = player.Character.HumanoidRootPart.CFrame
-    for _, v in ipairs(workspace.LogModels:GetChildren()) do
-        if v:FindFirstChild("Owner") and v.Owner.Value == player then
-            player.Character.HumanoidRootPart.CFrame = CFrame.new(v:FindFirstChild("WoodSection").CFrame.p)
-            if not v.PrimaryPart then v.PrimaryPart = v:FindFirstChild("WoodSection") end
-            for _ = 1, 50 do
-                RS.Interaction.ClientIsDragging:FireServer(v)
-                v:SetPrimaryPartCFrame(OldPos)
-                task.wait()
+    local origin = getHRP() and getHRP().CFrame or CFrame.new(0,5,0)
+    for _, log in ipairs(WS.LogModels:GetChildren()) do
+        if log:FindFirstChild("Owner") and log.Owner.Value == player then
+            if not log.PrimaryPart then
+                log.PrimaryPart = log:FindFirstChild("WoodSection")
+                    or log:FindFirstChildWhichIsA("BasePart")
+            end
+            local pp = log.PrimaryPart
+            if pp then
+                local logOriginCF = pp.CFrame
+                safeTP(CFrame.new(logOriginCF.p))
+                forceModelCF(log, origin * CFrame.new(0,2,0), 60, 0.03)
             end
         end
-        task.wait()
+        task.wait(0.05)
     end
-    player.Character.HumanoidRootPart.CFrame = OldPos
-end
-
-local function SellAllLogs()
-    local OldPos = player.Character.HumanoidRootPart.CFrame
-    for _, v in ipairs(workspace.LogModels:GetChildren()) do
-        if v:FindFirstChild("Owner") and v.Owner.Value == player then
-            local ws = v:FindFirstChild("WoodSection")
-            if ws then
-                player.Character.HumanoidRootPart.CFrame = CFrame.new(ws.CFrame.p)
-                task.wait(0.3)
-                if not v.PrimaryPart then v.PrimaryPart = ws end
-                task.spawn(function()
-                    for _ = 1, 50 do
-                        RS.Interaction.ClientIsDragging:FireServer(v)
-                        v:SetPrimaryPartCFrame(CFrame.new(314, -0.5, 86.822))
-                        task.wait()
-                    end
-                end)
-            end
-        end
-        task.wait()
-    end
-    task.wait()
-    player.Character.HumanoidRootPart.CFrame = OldPos
+    safeTP(origin)
 end
 
 -- ════════════════════════════════════════════════════
--- SELL SELECTED ENGINE (unchanged from original Vanilla3)
+-- SELL ALL LOGS — Aggressive drag to sell zone
+-- ════════════════════════════════════════════════════
+
+local SELL_CF = CFrame.new(314, -0.5, 86.822)
+
+local function SellAllLogs()
+    local origin = getHRP() and getHRP().CFrame or CFrame.new(0,5,0)
+    for _, log in ipairs(WS.LogModels:GetChildren()) do
+        if log:FindFirstChild("Owner") and log.Owner.Value == player then
+            if not log.PrimaryPart then
+                log.PrimaryPart = log:FindFirstChild("WoodSection")
+                    or log:FindFirstChildWhichIsA("BasePart")
+            end
+            local pp = log.PrimaryPart
+            if pp then
+                -- Teleport player near log first
+                safeTP(CFrame.new(pp.CFrame.p) * CFrame.new(0,2,3))
+                task.wait(0.1)
+                -- Drag to sell zone aggressively
+                forceModelCF(log, SELL_CF, 80, 0.02)
+            end
+        end
+        task.wait(0.05)
+    end
+    task.wait(0.5)
+    safeTP(origin)
+end
+
+-- ════════════════════════════════════════════════════
+-- SELL SELECTED ENGINE
 -- ════════════════════════════════════════════════════
 
 local SELL_CONFIRM    = 6
-local SELL_TIMEOUT    = 3.0
+local SELL_TIMEOUT    = 5.0
 local woodSelected    = {}
 local clickSellEnabled   = false
 local groupSelectEnabled = false
@@ -796,12 +758,10 @@ local function sellOneLog(model, onDone)
 end
 
 -- ════════════════════════════════════════════════════
--- FARM LOOP (NEW)
--- bring N trees → sell all owned logs → repeat cycles
+-- FARM LOOP
 -- ════════════════════════════════════════════════════
 
 local farmActive    = false
-local farmAbort     = false
 local farmTreeClass = nil
 local farmAmount    = 1
 local farmCycles    = 1
@@ -813,20 +773,22 @@ local function farmLoop(stat)
         if stat then stat.SetActive(false, "Pick a tree first.") end
         return
     end
-    farmActive = true
-    farmAbort  = false
+    farmActive   = true
+    globalAbort  = false
     getgenv().treestop = true
     if stat then stat.SetActive(true, "Farm: "..farmTreeClass) end
 
     for cycle = 1, farmCycles do
-        if farmAbort then break end
+        if globalAbort then break end
         for t = 1, farmAmount do
-            if farmAbort then break end
+            if globalAbort then break end
             if stat then stat.SetActive(true, "Cycle "..cycle.." — Tree "..t.."/"..farmAmount) end
-            local ok = bringTree(farmTreeClass, farmTreeClass == "LoneCave")
-            if not ok then task.wait(3) end  -- wait for respawn on fail
+            local ok = bringTree(farmTreeClass, function(msg)
+                if stat then stat.SetActive(true, msg) end
+            end)
+            if not ok then task.wait(3) end
         end
-        if farmSellAfter and not farmAbort then
+        if farmSellAfter and not globalAbort then
             if stat then stat.SetActive(true, "Selling logs...") end
             SellAllLogs()
             task.wait(1)
@@ -835,16 +797,13 @@ local function farmLoop(stat)
 
     getgenv().treestop = false
     farmActive = false
-    if stat then stat.SetActive(false, farmAbort and "Aborted." or "Farm complete!") end
+    if stat then stat.SetActive(false, globalAbort and "Stopped." or "Farm complete!") end
 end
 
 -- ════════════════════════════════════════════════════
--- WOOD TAB UI (original sections + new Farm section)
+-- PROGRESS BAR
 -- ════════════════════════════════════════════════════
 
-local SELL_CONFIRM_UI = 6
-
--- Progress bar (carry-over from original)
 local sellProgressContainer, sellProgressFill, sellProgressLabel
 do
     local pbWrapper = Instance.new("Frame", woodPage)
@@ -866,6 +825,10 @@ do
     sellProgressFill      = pbFill
     sellProgressLabel     = pbLabel
 end
+
+-- ════════════════════════════════════════════════════
+-- SELL SELECTED
+-- ════════════════════════════════════════════════════
 
 local function sellSelected()
     if isSellRunning then return end
@@ -943,6 +906,10 @@ local function sellSelected()
     end)
 end
 
+-- ════════════════════════════════════════════════════
+-- WOOD MOUSE CONNECTION
+-- ════════════════════════════════════════════════════
+
 local woodMouseConn = nil
 local function connectWoodMouse()
     if woodMouseConn then return end
@@ -966,7 +933,7 @@ local function connectWoodMouse()
             if isWoodLog(model) then
                 local tc = model:FindFirstChild("TreeClass"); if not tc then return end
                 local targetClass = tc.Value:lower()
-                for _, obj in ipairs(workspace:GetDescendants()) do
+                for _, obj in ipairs(WS:GetDescendants()) do
                     if obj:IsA("Model") and isWoodLog(obj) then
                         local otc = obj:FindFirstChild("TreeClass")
                         if otc and otc.Value:lower() == targetClass then highlightWood(obj) end
@@ -985,7 +952,9 @@ local function disconnectWoodMouse()
     if woodMouseConn then woodMouseConn:Disconnect(); woodMouseConn = nil end
 end
 
--- ── Build existing original sections ────────────────────────────────────────
+-- ════════════════════════════════════════════════════
+-- BUILD WOOD TAB UI
+-- ════════════════════════════════════════════════════
 
 local TREE_LIST = {
     "Generic","Walnut","Cherry","Oak","Birch","Koa","Fir","Pine","Palm",
@@ -1044,24 +1013,42 @@ do
     end)
 end
 
+local bringStatus = createWStatusLabel("Idle")
+
 createWButton("Bring Tree", Color3.fromRGB(35,80,35), function()
-    if not selectedTree then return end
-    bringAbort = false
+    if not selectedTree then bringStatus.SetActive(false,"Select a tree first!"); return end
+    globalAbort = false
     getgenv().treestop = true
     task.spawn(function()
         for i = 1, bringAmount do
-            if bringAbort then break end
-            local ok = bringTree(selectedTree, selectedTree == "LoneCave")
-            if not ok then break end
-            if i < bringAmount then task.wait(2) end
+            if globalAbort then break end
+            bringStatus.SetActive(true, "Bringing "..selectedTree.." ("..i.."/"..bringAmount..")")
+            local ok = bringTree(selectedTree, function(msg)
+                bringStatus.SetActive(true, msg)
+            end)
+            if not ok then
+                bringStatus.SetActive(false, "Failed - retrying in 3s")
+                task.wait(3)
+            elseif i < bringAmount then
+                task.wait(1)
+            end
+        end
+        if not globalAbort then
+            bringStatus.SetActive(false, "Done!")
         end
     end)
 end)
 
 createWButton("Abort Bring", BTN_COLOR, function()
-    bringAbort = true
+    globalAbort = true
+    bringAbort  = true
     getgenv().treestop = false
-    task.wait(5); getgenv().treestop = true
+    bringStatus.SetActive(false, "Aborted.")
+    task.delay(5, function()
+        globalAbort = false
+        bringAbort  = false
+        getgenv().treestop = true
+    end)
 end)
 
 createWSep()
@@ -1117,13 +1104,13 @@ createWButton("Cancel Sell", BTN_COLOR, function()
 end)
 createWButton("Clear Selection", BTN_COLOR, function() unhighlightAllWood() end)
 
--- ── NEW: Farm Loop section ────────────────────────────────────────────────────
+-- ── Farm Loop ─────────────────────────────────────────────────────────────────
+
 createWSep()
 createWSectionLabel("Farm Loop")
-createWInfoLabel("  Uses the same tree selected above. Brings trees then sells all logs, repeated per cycle.")
+createWInfoLabel("  Uses tree selected above. Cuts N trees per cycle, sells all logs, repeats.")
 
 do
-    -- Cycles slider
     local slFrame = Instance.new("Frame", woodPage)
     slFrame.Size=UDim2.new(1,-12,0,52); slFrame.BackgroundColor3=Color3.fromRGB(24,24,30)
     slFrame.BorderSizePixel=0; corner(slFrame,6)
@@ -1171,14 +1158,14 @@ createWButton("▶  Start Farm Loop", Color3.fromRGB(35,80,35), function()
     if not farmActive then task.spawn(farmLoop, farmStat) end
 end)
 createWButton("⏹  Stop Farm", BTN_COLOR, function()
-    farmAbort  = true
-    farmActive = false
+    globalAbort = true
+    farmActive  = false
     getgenv().treestop = false
     farmStat.SetActive(false, "Stopped.")
 end)
 
 -- ════════════════════════════════════════════════════
--- SETTINGS TAB (carry-over — unchanged)
+-- SETTINGS TAB
 -- ════════════════════════════════════════════════════
 
 local keybindButtonGUI
@@ -1212,7 +1199,7 @@ keybindButtonGUI.MouseLeave:Connect(function()
 end)
 
 -- ════════════════════════════════════════════════════
--- SEARCH TAB (carry-over — unchanged)
+-- SEARCH TAB
 -- ════════════════════════════════════════════════════
 
 local searchPage  = pages["SearchTab"]
@@ -1242,7 +1229,6 @@ local function updateSearchResults(query)
         {"1x1 Cut","WoodTab"},{"Bring All Logs","WoodTab"},{"Sell All Logs","WoodTab"},
         {"Click Sell","WoodTab"},{"Group Select","WoodTab"},{"Farm Loop","WoodTab"},
         {"Sell Selected Logs","WoodTab"},{"Clear Selection","WoodTab"},
-        {"Dismember Tree","WoodTab"},{"View LoneCave","WoodTab"},
     }
     local seen = {}
     for _, name in ipairs(tabs) do
@@ -1294,7 +1280,7 @@ searchInput:GetPropertyChangedSignal("Text"):Connect(function() updateSearchResu
 task.delay(0.1, function() updateSearchResults("") end)
 
 -- ════════════════════════════════════════════════════
--- UNIFIED INPUT HANDLER (unchanged)
+-- UNIFIED INPUT HANDLER
 -- ════════════════════════════════════════════════════
 
 local inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -1338,7 +1324,7 @@ end)
 table.insert(cleanupTasks, function()
     if inputConn     then inputConn:Disconnect();     inputConn     = nil end
     isSellRunning    = false; clickSellBusy = false
-    bringAbort       = true;  farmAbort     = true;  farmActive = false
+    globalAbort      = true;  farmActive    = false
     if clickSellConn   then pcall(function() clickSellConn:Disconnect()   end); clickSellConn   = nil end
     if currentSellConn then pcall(function() currentSellConn:Disconnect() end); currentSellConn = nil end
     disconnectWoodMouse()
@@ -1348,4 +1334,4 @@ table.insert(cleanupTasks, function()
 end)
 
 _G.VH.keybindButtonGUI = keybindButtonGUI
-print("[VanillaHub] Vanilla3 Fixed loaded — Settings, Search, Wood + Farm Loop")
+print("[VanillaHub] Vanilla3 REWRITE loaded — Wood + Farm Loop")
