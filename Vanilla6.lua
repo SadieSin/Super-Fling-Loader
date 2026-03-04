@@ -550,13 +550,14 @@ local function GetCounter(Item)
     return ClosestCounter
 end
 
+-- Pay must be called WITHOUT spawn/task.spawn so it blocks inside the pay loop.
+-- The original Butterhub uses spawn() but that causes the loop to fire
+-- thousands of times spending all cash. We call it synchronously.
 local function Pay(ID)
-    task.spawn(function()
-        RS.NPCDialog.PlayerChatted:InvokeServer(
-            {ID=ID, Character="name", Name="name", Dialog="Dialog"},
-            "ConfirmPurchase"
-        )
-    end)
+    RS.NPCDialog.PlayerChatted:InvokeServer(
+        {ID=ID, Character="name", Name="name", Dialog="Dialog"},
+        "ConfirmPurchase"
+    )
 end
 
 -- State
@@ -637,20 +638,21 @@ local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
         end)
         task.wait(GetPing())
 
-        -- ── FIX: Pay loop — check Item.Parent.Name (string comparison on the NAME)
-        -- The item leaves "ShopItems" when purchased — its parent changes or it's removed.
-        -- We also guard with a timeout so it can't loop forever.
+        -- ── Pay loop — exact match to Butterhub source ──────────────────────────────
+        -- Fire ClientIsDragging to keep ownership, then invoke ConfirmPurchase.
+        -- Item.Parent changes from the ShopItems folder to nil/PlayerModels when bought.
+        -- task.wait() (not 0.1) matches the leak's task.wait() cadence.
         local payStart = tick()
         repeat
             if AbortAutoBuy then break end
             RS.Interaction.ClientIsDragging:FireServer(Item)
             Pay(ShopIDS[Counter.Parent.Name])
-            task.wait(0.1)
+            task.wait()
         until (not Item.Parent)
           or (Item.Parent and Item.Parent.Name ~= "ShopItems")
           or (tick() - payStart > 10)
 
-        -- After purchase: grab net ownership, return item to OldPos
+        -- After purchase: regain network ownership then return item to OldPos
         pcall(function()
             local t0 = tick()
             repeat
@@ -660,6 +662,7 @@ local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
 
             if Item.Parent then
                 RS.Interaction.ClientIsDragging:FireServer(Item)
+                -- Return item to where player was standing (exact leak behaviour)
                 Item.Main.CFrame = OldPos
                 task.wait(GetPing())
             end
