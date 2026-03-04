@@ -191,7 +191,7 @@ local function makeSlider(page, text, min, max, default, cb)
     end)
 end
 
--- ── Fancy dropdown matching Dupe tab style ─────────────────────────────────────
+-- ── Fancy dropdown ─────────────────────────────────────────────────────────────
 local function makeFancyDropdown(page, labelText, getOptions, cb)
     local selected = ""
     local isOpen   = false
@@ -463,13 +463,14 @@ local ShopIDS = {
 }
 
 local function isnetworkowner(Part)
-    return Part.ReceiveAge == 0
+    local ok, v = pcall(function() return Part.ReceiveAge == 0 end)
+    return ok and v
 end
 
 local function GetPing()
     local Time = tick()
-    RS.TestPing:InvokeServer()
-    return ((tick() - Time) / 2) + 0.5
+    pcall(function() RS.TestPing:InvokeServer() end)
+    return math.clamp((tick() - Time) / 2, 0.05, 0.3)
 end
 
 local function GetPrice(Item, Amount)
@@ -492,7 +493,6 @@ local function GrabShopItems()
                     local entry = item.BoxItemName.Value.." - $"..GetPrice(item.BoxItemName.Value, 1)
                     if not table.find(ItemList, entry) then
                         table.insert(ItemList, entry)
-                        task.wait(0.01)
                     end
                 end
             end
@@ -536,11 +536,14 @@ end
 
 local function GetCounter(Item)
     local ClosestCounter = nil
+    local closestDist = math.huge
     for _, v in next, workspace.Stores:GetChildren() do
         if v.Name:lower() ~= "shopitems" then
             for _, child in next, v:GetChildren() do
                 if child.Name:lower() == "counter" then
-                    if (Item.CFrame.p - child.CFrame.p).Magnitude <= 200 then
+                    local dist = (Item.CFrame.p - child.CFrame.p).Magnitude
+                    if dist <= 200 and dist < closestDist then
+                        closestDist = dist
                         ClosestCounter = child
                     end
                 end
@@ -550,14 +553,14 @@ local function GetCounter(Item)
     return ClosestCounter
 end
 
--- Pay must be called WITHOUT spawn/task.spawn so it blocks inside the pay loop.
--- The original Butterhub uses spawn() but that causes the loop to fire
--- thousands of times spending all cash. We call it synchronously.
+-- FIX: Pay fires synchronously in a tight loop — no spawn wrapper to avoid lag
 local function Pay(ID)
-    RS.NPCDialog.PlayerChatted:InvokeServer(
-        {ID=ID, Character="name", Name="name", Dialog="Dialog"},
-        "ConfirmPurchase"
-    )
+    pcall(function()
+        RS.NPCDialog.PlayerChatted:InvokeServer(
+            {ID=ID, Character="name", Name="name", Dialog="Dialog"},
+            "ConfirmPurchase"
+        )
+    end)
 end
 
 -- State
@@ -566,17 +569,13 @@ local ItemToBuy     = nil
 local AutoBuyAmount = 1
 local OpenBox       = false
 
--- ── FIX: Correct AutoBuy logic ────────────────────────────────────────────────
--- BUG WAS: `until Item.Parent ~= "ShopItems"` — this compared the INSTANCE to a
--- string, which is always true immediately, so the pay loop never fired.
--- FIX: Check Item.Parent.Name ~= "ShopItems" (compare the NAME of the parent)
--- and also fire the remote *before* checking, matching the Butterhub source intent.
+-- ── FIXED AutoBuy — faster, correct parent name check ────────────────────────
 local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
     if ItemName == nil then
         if stat then stat.SetActive(false, "No item selected!") end
         return
     end
-    if LP.leaderstats.Money.Value < GetPrice(ItemName, Amount) then
+    if LP.leaderstats.Money.Value < GetPrice(ItemName, 1) then
         if stat then stat.SetActive(false, "Not enough money!") end
         return
     end
@@ -595,92 +594,113 @@ local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
     for i = 1, Amount do
         if AbortAutoBuy then break end
 
-        -- Wait for item to exist/respawn in ShopItems
-        local Item = Path:WaitForChild(ItemName, 15)
+        -- Wait for item to appear/respawn in ShopItems
+        local Item = nil
+        local waitStart = tick()
+        repeat
+            task.wait()
+            for _, v in next, Path:GetChildren() do
+                if v:FindFirstChild("BoxItemName") and v.BoxItemName.Value == ItemName
+                   and v:FindFirstChild("Owner") and v.Owner.Value == nil then
+                    Item = v; break
+                end
+            end
+        until Item or (tick() - waitStart > 20) or AbortAutoBuy
+
         if not Item then
             if stat then stat.SetActive(false, "Item wait timed out.") end
             break
         end
 
-        local Counter = GetCounter(Item.Main)
+        local mainPart = Item:FindFirstChild("Main") or Item:FindFirstChildWhichIsA("BasePart")
+        if not mainPart then continue end
+
+        local Counter = GetCounter(mainPart)
         if not Counter then
             if stat then stat.SetActive(false, "No counter found.") end
             break
         end
 
         -- Move player next to item
-        LP.Character.HumanoidRootPart.CFrame = Item.Main.CFrame + Vector3.new(5, 0, 5)
+        LP.Character.HumanoidRootPart.CFrame = mainPart.CFrame + Vector3.new(3, 0, 3)
+        task.wait(0.05)
 
-        -- Grab ownership
+        -- Grab ownership — tight loop, no sleep
+        local t0 = tick()
         repeat
             RS.Interaction.ClientIsDragging:FireServer(Item)
             task.wait()
-        until Item.Owner.Value ~= nil
+        until (Item.Owner and Item.Owner.Value ~= nil) or (tick()-t0 > 5) or AbortAutoBuy
 
-        if Item.Owner.Value ~= LP then break end
+        if not (Item.Owner and Item.Owner.Value == LP) then continue end
 
-        -- Get network ownership
+        -- Get network ownership — tight loop
+        t0 = tick()
         repeat
             RS.Interaction.ClientIsDragging:FireServer(Item)
             task.wait()
-        until isnetworkowner(Item.Main)
+        until isnetworkowner(mainPart) or (tick()-t0 > 5)
 
-        -- Move item to counter
+        -- Move item to counter top
         RS.Interaction.ClientIsDragging:FireServer(Item)
         pcall(function()
-            Item.Main.CFrame = Counter.CFrame + Vector3.new(0, Item.Main.Size.Y, 0.5)
+            mainPart.CFrame = Counter.CFrame + Vector3.new(0, mainPart.Size.Y / 2 + 0.5, 0)
         end)
-        task.wait(GetPing())
+        task.wait(0.05)
 
         -- Move player to counter
         pcall(function()
-            LP.Character.HumanoidRootPart.CFrame = Counter.CFrame + Vector3.new(5, 0, 5)
+            LP.Character.HumanoidRootPart.CFrame = Counter.CFrame + Vector3.new(3, 0, 3)
         end)
-        task.wait(GetPing())
+        task.wait(0.05)
 
-        -- ── Pay loop — exact match to Butterhub source ──────────────────────────────
-        -- Fire ClientIsDragging to keep ownership, then invoke ConfirmPurchase.
-        -- Item.Parent changes from the ShopItems folder to nil/PlayerModels when bought.
-        -- task.wait() (not 0.1) matches the leak's task.wait() cadence.
+        -- ── FIX: Corrected pay loop ─────────────────────────────────────────────
+        -- Checks Item.Parent.Name (string) not Item.Parent (instance vs string)
+        -- Fires both remotes every frame for maximum speed
+        local shopID = ShopIDS[Counter.Parent.Name]
         local payStart = tick()
         repeat
             if AbortAutoBuy then break end
             RS.Interaction.ClientIsDragging:FireServer(Item)
-            Pay(ShopIDS[Counter.Parent.Name])
+            -- Keep item on counter while paying
+            pcall(function()
+                mainPart.CFrame = Counter.CFrame + Vector3.new(0, mainPart.Size.Y / 2 + 0.5, 0)
+            end)
+            Pay(shopID)
             task.wait()
         until (not Item.Parent)
           or (Item.Parent and Item.Parent.Name ~= "ShopItems")
-          or (tick() - payStart > 10)
+          or (tick() - payStart > 20)
 
-        -- After purchase: regain network ownership then return item to OldPos
+        -- Re-grab network ownership then send item to player's original position
         pcall(function()
-            local t0 = tick()
+            if not Item.Parent then return end
+            local t1 = tick()
             repeat
                 RS.Interaction.ClientIsDragging:FireServer(Item)
                 task.wait()
-            until (not Item.Parent) or isnetworkowner(Item.Main) or tick()-t0 > 3
+            until (not Item.Parent) or isnetworkowner(mainPart) or tick()-t1 > 3
 
             if Item.Parent then
                 RS.Interaction.ClientIsDragging:FireServer(Item)
-                -- Return item to where player was standing (exact leak behaviour)
-                Item.Main.CFrame = OldPos
-                task.wait(GetPing())
+                mainPart.CFrame = OldPos * CFrame.new(0, 2, 0)
+                task.wait(0.05)
             end
         end)
 
         if op and Item.Parent then
-            RS.Interaction.ClientInteracted:FireServer(Item, "Open box")
+            pcall(function()
+                RS.Interaction.ClientInteracted:FireServer(Item, "Open box")
+            end)
         end
 
         if prog and not bpop then
             prog.Set(i, Amount, "Buying... "..i.." / "..Amount)
         end
-
-        task.wait()
     end
 
     -- Return player to start
-    LP.Character.HumanoidRootPart.CFrame = OldPos + Vector3.new(5, 1, 0)
+    LP.Character.HumanoidRootPart.CFrame = OldPos * CFrame.new(0, 1, 0)
 
     if stat then
         stat.SetActive(false, AbortAutoBuy and "Aborted." or "Done!")
@@ -707,10 +727,8 @@ end
 
 sectionLabel(ab, "Item Selection")
 
--- Fancy dropdown for item selection (uses the same style as Dupe tab)
 local shopItemsCache = GrabShopItems()
 local shopDD = makeFancyDropdown(ab, "Item", function() return shopItemsCache end, function(val)
-    -- Strip " - $price" suffix to get raw item name
     ItemToBuy = val:match("^(.-)%s*%-%s*%$") or val
 end)
 
@@ -750,15 +768,9 @@ makeButton(ab, "Buy All Missing Blueprints", function()
     abStat.SetActive(false, AbortAutoBuy and "Aborted." or "Done!")
 end)
 
-makeButton(ab, "Pay Toll Bridge", function()
-    Pay(15)
-end)
-makeButton(ab, "Buy Ferry Ticket", function()
-    Pay(13)
-end)
-makeButton(ab, "Buy Power of Ease", function()
-    Pay(3)
-end)
+makeButton(ab, "Pay Toll Bridge", function() Pay(15) end)
+makeButton(ab, "Buy Ferry Ticket",  function() Pay(13) end)
+makeButton(ab, "Buy Power of Ease", function() Pay(3)  end)
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SLOT TAB
@@ -848,7 +860,6 @@ makeButton(sl, "Sell Sold Sign", sellSoldSign)
 sep(sl)
 sectionLabel(sl, "Land Claim")
 
--- Fancy dropdown for land plots
 local landPlotOptions = {"1","2","3","4","5","6","7","8","9"}
 makeFancyDropdown(sl, "Plot", function() return landPlotOptions end, function(val)
     if landHL then pcall(function() landHL:Destroy() end) end
