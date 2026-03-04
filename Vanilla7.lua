@@ -1024,7 +1024,7 @@ local function cutWood1x1(model)
     if not hrp then return end
 
     hrp.CFrame = main.CFrame * CFrame.new(0, 3, 5)
-    task.wait(0.1)
+    task.wait(0.8)
 
     local t0 = tick()
     repeat
