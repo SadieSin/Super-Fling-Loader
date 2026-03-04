@@ -374,42 +374,29 @@ local function freezeModel(model)
     end)
 end
 
--- getHRP: always fetches a fresh HumanoidRootPart reference
 local function getHRP()
     local char = player.Character
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
--- snapHRPToItem: teleport character directly on top of the item's main part.
--- We stay <= 4 studs away so ClientIsDragging never rejects due to distance.
-local function snapHRPToItem(mp)
-    local hrp = getHRP()
-    if hrp and mp and mp.Parent then
-        hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 2)
-    end
-end
-
 -- moveItemTo
 -- ─────────────────────────────────────────────────────────────────────────────
--- Strategy that actually works against server snap-back:
+-- HOW DRAGGING ACTUALLY WORKS SERVER-SIDE:
+--   ClientIsDragging fires with the model, and the server moves the item
+--   toward the player's HumanoidRootPart position.  Writing mp.CFrame
+--   client-side is immediately overwritten by the server.
 --
--- Phase 1  (active drag loop, up to SORT_TIMEOUT seconds):
---   Every Heartbeat:
---     1. Re-snap HRP on top of item (guarantees drag acceptance distance)
---     2. Fire ClientIsDragging  ×3  (burst — saturates server rate limit)
---     3. Write mp.CFrame  ×3  (redundant writes survive 1-2 frame rejection)
---     4. Zero all velocities
---   Check arrival every frame; exit early when close enough.
+-- CORRECT TECHNIQUE:
+--   1. Teleport HRP to the TARGET position (where we want the item to land).
+--   2. Fire ClientIsDragging — server sees character at target, pulls item there.
+--   3. Repeat every frame until item arrives or timeout.
 --
--- Phase 2  (hard lock, 60 frames after arrival or timeout):
---   Keep hammering CFrame + drag + zero-velocity so physics can't fling it.
---   HRP stays glued so the server keeps accepting the drag.
---
--- onDone(bool) is called exactly once after Phase 2.
+-- We keep HRP at the destination for the entire duration so the server
+-- consistently drags the item to the right place every frame.
 -- ─────────────────────────────────────────────────────────────────────────────
-local SORT_TIMEOUT  = 10.0   -- raised: 10 s per slot before giving up
-local CONFIRM_DIST  = 3.5    -- studs: counts as "arrived"
-local LOCK_FRAMES   = 60     -- frames of hard-lock after arrival
+local SORT_TIMEOUT = 12.0   -- seconds before giving up on a single attempt
+local CONFIRM_DIST = 3.5    -- studs: item counts as "arrived"
+local LOCK_FRAMES  = 60     -- frames of post-arrival lock
 
 local function moveItemTo(model, targetCF, onDone)
     if not (model and model.Parent) then
@@ -419,7 +406,8 @@ local function moveItemTo(model, targetCF, onDone)
     if not mp then
         if onDone then task.spawn(onDone, false) end; return nil
     end
-    if not getHRP() then
+    local hrp = getHRP()
+    if not hrp then
         if onDone then task.spawn(onDone, false) end; return nil
     end
 
@@ -434,58 +422,58 @@ local function moveItemTo(model, targetCF, onDone)
         if onDone then task.spawn(onDone, ok) end
     end
 
-    -- Lift 3 cm so item sits on surface rather than being jammed into it
-    local settledCF = targetCF * CFrame.new(0, 0.03, 0)
+    -- Where the server should drag the item TO = where we put the HRP
+    -- Offset HRP slightly above+behind target so the item lands at targetCF
+    local hrpAtTarget = targetCF * CFrame.new(0, 2, 2)
 
-    -- Immediately glue character to item before the loop starts
-    snapHRPToItem(mp)
+    -- Move character to item first so the server registers us as the dragger
+    hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 2)
+    task.wait()  -- one frame so server sees us next to item
 
     conn = RunService.Heartbeat:Connect(function()
-        -- Item removed from workspace
         if not (mp and mp.Parent) then
             conn:Disconnect(); fireDone(true); return
         end
 
-        -- Always keep HRP glued — re-snap every frame
-        snapHRPToItem(mp)
+        -- Re-fetch hrp each frame in case character respawned
+        local h = getHRP()
+        if not h then return end
 
-        -- Burst: fire drag remote 3× per frame to beat server throttle
+        -- Park HRP at the destination — server drags item toward us
+        h.CFrame = hrpAtTarget
+
+        -- Fire drag remote — server moves item toward HRP position
         if dragger then
-            pcall(function() dragger:FireServer(model) end)
             pcall(function() dragger:FireServer(model) end)
             pcall(function() dragger:FireServer(model) end)
         end
 
-        -- Write CFrame 3× per frame — at least one survives server lag
-        pcall(function() mp.CFrame = settledCF end)
-        pcall(function() mp.CFrame = settledCF end)
-        pcall(function() mp.CFrame = settledCF end)
-
+        -- Kill velocity so physics doesn't send it flying
         freezeModel(model)
 
-        local dist     = (mp.Position - settledCF.Position).Magnitude
+        local dist     = (mp.Position - targetCF.Position).Magnitude
         local arrived  = dist < CONFIRM_DIST
         local timedOut = (tick() - startTime) >= SORT_TIMEOUT
 
         if arrived or timedOut then
             conn:Disconnect()
-            -- Phase 2: hard-lock for LOCK_FRAMES frames
+            -- Phase 2: keep HRP at target and spam drag for LOCK_FRAMES
+            -- to prevent the server snapping the item back
             task.spawn(function()
                 for _ = 1, LOCK_FRAMES do
                     if not (mp and mp.Parent) then break end
-                    snapHRPToItem(mp)
+                    local h2 = getHRP()
+                    if h2 then h2.CFrame = hrpAtTarget end
                     if dragger then
                         pcall(function() dragger:FireServer(model) end)
                         pcall(function() dragger:FireServer(model) end)
                     end
-                    pcall(function() mp.CFrame = settledCF end)
-                    pcall(function() mp.CFrame = settledCF end)
                     freezeModel(model)
                     task.wait()
                 end
-                -- Final check: did it actually land?
-                local finalDist = mp and mp.Parent
-                    and (mp.Position - settledCF.Position).Magnitude or 0
+                -- Final distance check
+                local finalDist = (mp and mp.Parent)
+                    and (mp.Position - targetCF.Position).Magnitude or 0
                 fireDone(finalDist < CONFIRM_DIST * 2)
             end)
         end
@@ -944,7 +932,7 @@ local function runSortLoop(slots, startI, total, doneStart)
 
                 -- Not placed yet and item still exists — brief pause then retry
                 if not placed and (slot.model and slot.model.Parent) then
-                    -- Re-snap character right on top and wait 0.5 s before retry
+                    -- Park HRP back near item so server re-registers us as dragger
                     local hrp2 = getHRP()
                     local mp2  = getMainPart(slot.model)
                     if hrp2 and mp2 then
