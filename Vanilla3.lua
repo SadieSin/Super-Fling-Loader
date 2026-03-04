@@ -338,7 +338,41 @@ local HitPoints = {
 
 local AxeClassesFolder = RS.AxeClasses
 
--- ── Tree helper functions (exact port from Butterhub) ─────────────────────────
+-- tp: teleport character to a CFrame or Vector3 — exact port from Butterhub
+local function tp(pos, infeaxerange)
+    if infeaxerange then
+        if typeof(pos) == "CFrame" then
+            game:GetService("Lighting").HumanoidRootPart.CFrame = pos
+        elseif typeof(pos) == "Vector3" then
+            game:GetService("Lighting").HumanoidRootPart.CFrame = CFrame.new(pos)
+        end
+    else
+        if typeof(pos) == "CFrame" then
+            player.Character:SetPrimaryPartCFrame(pos)
+        elseif typeof(pos) == "Vector3" then
+            player.Character:MoveTo(pos)
+        end
+    end
+end
+
+-- DragModel1: fire ClientIsDragging 4x then MoveTo a Vector3 — exact port
+local function DragModel1(model, targetVec3)
+    pcall(function()
+        RS.Interaction.ClientIsDragging:FireServer(model)
+        RS.Interaction.ClientIsDragging:FireServer(model)
+        RS.Interaction.ClientIsDragging:FireServer(model)
+        RS.Interaction.ClientIsDragging:FireServer(model)
+    end)
+    model:MoveTo(targetVec3)
+    model:MoveTo(targetVec3)
+end
+
+-- getPosition: returns Vector3 of character HRP
+local function getPosition()
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return Vector3.new(0,0,0) end
+    return hrp.CFrame.Position
+end
 
 local function isnetworkowner(Part)
     return Part.ReceiveAge == 0
@@ -573,45 +607,41 @@ local function bringTree(treeClass, godmodeval)
         return
     end
 
-    local oldPosition = player.Character.HumanoidRootPart.CFrame.Position
+    -- oldPosition is a Vector3 — used for DragModel1 and tp() return
+    local oldPosition = getPosition()
 
     if godmodeval then
         workspace.Camera.CameraType = Enum.CameraType.Fixed
         GodMode(tree.trunk.CFrame)
         workspace.Camera.CameraType = Enum.CameraType.Custom
-        player.Character:SetPrimaryPartCFrame(tree.trunk.CFrame)
+        tp(tree.trunk.CFrame)  -- CFrame teleport
     end
     task.wait(0.5)
 
+    -- treeListener: when the log spawns, set treeCut=true and drag it to oldPosition
     treeListener(treeClass, function(log)
         log.PrimaryPart = log:FindFirstChild("WoodSection")
         getgenv().treeCut = true
         for _ = 1, 60 do
-            pcall(function()
-                RS.Interaction.ClientIsDragging:FireServer(log)
-                RS.Interaction.ClientIsDragging:FireServer(log)
-                RS.Interaction.ClientIsDragging:FireServer(log)
-                RS.Interaction.ClientIsDragging:FireServer(log)
-                log:MoveTo(oldPosition)
-                log:MoveTo(oldPosition)
-            end)
+            DragModel1(log, oldPosition)  -- Vector3 target
             task.wait()
         end
     end)
     task.wait(0.15)
 
+    -- Keep teleporting player onto the trunk until the tree is cut
     task.spawn(function()
         if treeClass == "LoneCave" then
             getgenv().doneend = false
             repeat
                 if not getgenv().treestop then break end
-                player.Character:SetPrimaryPartCFrame(tree.trunk.CFrame)
+                tp(tree.trunk.CFrame)
                 task.wait()
             until getgenv().treeCut
         else
             repeat
                 if not getgenv().treestop then break end
-                player.Character:SetPrimaryPartCFrame(tree.trunk.CFrame)
+                tp(tree.trunk.CFrame)
                 task.wait()
             until getgenv().treeCut
         end
@@ -628,6 +658,7 @@ local function bringTree(treeClass, godmodeval)
         getgenv().treestop  = false
         DropTools()
         task.wait(0.3)
+        -- Teleport to LoneCave revival spot
         player.Character.HumanoidRootPart.CFrame = CFrame.new(-1675, 261, 1284)
         task.wait(0.5)
         pcall(function()
@@ -647,14 +678,14 @@ local function bringTree(treeClass, godmodeval)
 
     if treeClass == "LoneCave" then
         task.wait(1)
-        player.Character:SetPrimaryPartCFrame(CFrame.new(oldPosition))
+        tp(oldPosition)  -- Vector3 teleport back
         getgenv().doneend  = true
         getgenv().treeCut  = false
         getgenv().treestop = false
     else
         task.wait(1)
         getgenv().treeCut = false
-        player.Character:SetPrimaryPartCFrame(CFrame.new(oldPosition))
+        tp(oldPosition)  -- Vector3 teleport back
     end
 end
 
@@ -754,7 +785,9 @@ local function ViewEndTree(Val)
     end
 end
 
--- ── OneUnitCutter (exact port from Butterhub) ─────────────────────────────────
+-- ChopTree is defined earlier (line ~439) — used by DismemberTree AND OneUnitCutter
+-- OneUnitCutter: exact port from Butterhub
+-- Click a WoodSection → auto-chop down to ≤1.88 studs on each axis
 local UnitCutter      = false
 local PlankReAdded    = nil
 local UnitCutterClick = nil
@@ -771,23 +804,29 @@ local function OneUnitCutter(Val)
         if UnitCutterClick then UnitCutterClick:Disconnect(); UnitCutterClick = nil end
         return
     end
+    -- Listen for new planks added to PlayerModels (after a cut)
     PlankReAdded = workspace.PlayerModels.ChildAdded:Connect(function(v)
         if v:WaitForChild("TreeClass") and v:WaitForChild("WoodSection") then
             SelTree = v
             task.wait()
         end
     end)
+    -- Use Mouse.Button1Up (legacy API) — exact match to Butterhub source
     UnitCutterClick = woodMouse.Button1Up:Connect(function()
         local Clicked = woodMouse.Target
         if not PlrHasTool() then return end
         if Clicked and Clicked.Name == "WoodSection" then
             SelTree = Clicked.Parent
-            player.Character:MoveTo(Clicked.Position + Vector3.new(0,3,-3))
+            -- Move player next to the wood section
+            player.Character:MoveTo(Clicked.Position + Vector3.new(0, 3, -3))
             repeat
-                if not UnitCutter then break end
+                if UnitCutter == false then break end
+                -- height=1 (not 0.3) — exact Butterhub value for 1x1 cut
                 ChopTree(SelTree.CutEvent, 1, 1, SelTree.TreeClass.Value)
                 if SelTree:FindFirstChild("WoodSection") then
-                    player.Character:MoveTo(SelTree.WoodSection.Position + Vector3.new(0,3,-3))
+                    player.Character:MoveTo(
+                        SelTree:FindFirstChild("WoodSection").Position + Vector3.new(0, 3, -3)
+                    )
                 end
                 task.wait()
             until SelTree.WoodSection.Size.X <= 1.88
