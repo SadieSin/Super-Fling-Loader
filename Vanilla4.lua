@@ -25,14 +25,18 @@ local mouse      = player:GetMouse()
 -- ════════════════════════════════════════════════════
 -- CONSTANTS
 -- ════════════════════════════════════════════════════
-local HIGHLIGHT_COLOR = Color3.fromRGB(255, 180, 0)
-local PREVIEW_COLOR   = Color3.fromRGB(80, 160, 255)
-local PLACED_COLOR    = Color3.fromRGB(60, 210, 100)
-local ITEM_GAP        = 0.08
-local SORT_TIMEOUT    = 5.0      -- per-item timeout
-local SLOT_RETRY_MAX  = 3        -- how many times to retry a slot before skipping
-local CONFIRM_DIST    = 4        -- studs: "close enough" threshold
-local SETTLE_FRAMES   = 50       -- Heartbeat frames to hold item in place after arrival
+local HIGHLIGHT_COLOR  = Color3.fromRGB(255, 180, 0)
+local PREVIEW_COLOR    = Color3.fromRGB(80, 160, 255)
+local PLACED_COLOR     = Color3.fromRGB(60, 210, 100)
+local ITEM_GAP         = 0.08
+local DRIVE_TIMEOUT    = 8.0    -- seconds to drive item to target
+local HOLD_SECONDS     = 1.2    -- seconds to hold position after arrival
+local STABLE_NEEDED    = 40     -- consecutive stable frames to confirm locked
+local STABLE_DIST      = 0.6    -- studs/frame: max drift to count as stable
+local CONFIRM_DIST     = 2.5    -- studs: "arrived" threshold (tight)
+local VERIFY_DIST      = 4.0    -- studs: "still in place" threshold for drift checks
+local SLOT_RETRY_MAX   = 5      -- full retries per slot before giving up
+local PUSH_REPEAT      = 4      -- how many times to fire dragger + write CFrame per frame
 
 -- ════════════════════════════════════════════════════
 -- STATE
@@ -44,7 +48,6 @@ local previewPlaced    = false
 local isSorting        = false
 local isStopped        = false
 local sortThread       = nil
-local currentItemConn  = nil
 local sortSlots        = nil
 local sortIndex        = 1
 local sortTotal        = 0
@@ -361,23 +364,22 @@ local function placePreview()
 end
 
 -- ════════════════════════════════════════════════════
--- SORT ENGINE  (bulletproof, layer-fill-first)
+-- SORT ENGINE  (aggressive hold-until-stable, layer-fill-first)
 -- ════════════════════════════════════════════════════
 local function getInteraction()
     local i = RS:FindFirstChild("Interaction")
     return i and i:FindFirstChild("ClientIsDragging")
 end
 
-local function goToItem(model)
-    local mp   = getMainPart(model)
-    local char = player.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+local function goNear(model, hrp)
+    local mp = getMainPart(model)
     if mp and hrp then
         hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
     end
 end
 
-local function freezeVelocity(model)
+-- Zero every unanchored BasePart in the model
+local function zeroVelocity(model)
     pcall(function()
         for _, p in ipairs(model:GetDescendants()) do
             if p:IsA("BasePart") and not p.Anchored then
@@ -388,79 +390,140 @@ local function freezeVelocity(model)
     end)
 end
 
--- Move one item to targetCF.
--- Returns true if confirmed arrived, false if timed out or item vanished.
-local function moveItemTo(model, targetCF)
-    if not (model and model.Parent) then return false end
+--[[
+    placeAndLock(model, targetCF)  →  boolean (true = confirmed stable)
+
+    Works in two interlocking loops that run on the SAME Heartbeat connection
+    so there is never a gap between pushes:
+
+    ① DRIVE phase — keep teleporting character next to the item, firing
+      ClientIsDragging, writing the CFrame, and zeroing velocity PUSH_REPEAT
+      times per frame until the item is within CONFIRM_DIST of the target,
+      or DRIVE_TIMEOUT elapses.
+
+    ② HOLD phase — once arrived, keep hammering for at least HOLD_SECONDS
+      seconds (= real time, not frame count so it's framerate-independent)
+      AND wait for STABLE_NEEDED consecutive frames with drift < STABLE_DIST.
+      Any time the item snaps back (drift spike) we immediately push PUSH_REPEAT
+      extra times and reset the stability counter, but we never let go early.
+      The loop only exits when BOTH conditions are met (time + stability).
+]]
+local function placeAndLock(model, targetCF)
+    if not (model and model.Parent) then return true end
     local mp = getMainPart(model)
-    if not mp then return false end
+    if not mp then return true end
     local char = player.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
-    local dragger   = getInteraction()
-    local startTime = tick()
-    -- Lift slightly above surface so physics doesn't launch the item
-    local settledCF = targetCF * CFrame.new(0, 0.05, 0)
+    local dragger = getInteraction()
+    -- Tiny lift so the item settles on top of the surface rather than inside it
+    local dest    = targetCF * CFrame.new(0, 0.04, 0)
+    local destPos = dest.Position
 
-    goToItem(model)
+    -- Aggressive push: write CFrame + fire dragger PUSH_REPEAT times and kill velocity
+    local function push(n)
+        n = n or 1
+        pcall(function()
+            -- Keep character within grab range
+            if hrp and (hrp.Position - mp.Position).Magnitude > 18 then
+                hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
+            end
+            for _ = 1, n do
+                if dragger then dragger:FireServer(model) end
+                if mp and mp.Parent then mp.CFrame = dest end
+            end
+        end)
+        zeroVelocity(model)
+    end
 
-    local arrived = false
-    local timedOut = false
+    goNear(model, hrp)
+
+    local driveStart  = tick()
+    local arrived     = false
+    local phase       = "drive"   -- "drive" → "hold"
+    local holdStart   = 0
+    local stableStreak = 0
+    local lastPos     = mp.Position
+    local locked      = false
+    local done        = false
 
     local conn
     conn = RunService.Heartbeat:Connect(function()
+        if done then return end
         if not (mp and mp.Parent) then
-            arrived = true   -- item gone — treat as done
-            conn:Disconnect()
-            return
-        end
-        -- Keep character in range
-        if (hrp.Position - mp.Position).Magnitude > 22 then
-            hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
+            -- Item vanished — treat as success (nothing to place)
+            locked = true; done = true; conn:Disconnect(); return
         end
 
-        if dragger then pcall(function() dragger:FireServer(model) end) end
-        pcall(function() mp.CFrame = settledCF end)
-        freezeVelocity(model)
+        local curPos = mp.Position
+        local dist   = (curPos - destPos).Magnitude
 
-        local dist = (mp.Position - settledCF.Position).Magnitude
-        if dist < CONFIRM_DIST then
-            arrived = true
-            conn:Disconnect()
-        elseif (tick() - startTime) >= SORT_TIMEOUT then
-            timedOut = true
-            conn:Disconnect()
+        if phase == "drive" then
+            push(PUSH_REPEAT)
+            if dist < CONFIRM_DIST then
+                phase     = "hold"
+                holdStart = tick()
+                arrived   = true
+            elseif (tick() - driveStart) >= DRIVE_TIMEOUT then
+                -- Timed out driving — transition to hold anyway and try to lock
+                phase     = "hold"
+                holdStart = tick()
+            end
+
+        else  -- "hold"
+            push(PUSH_REPEAT)
+
+            local move = (curPos - lastPos).Magnitude
+
+            if dist < CONFIRM_DIST and move < STABLE_DIST then
+                stableStreak = stableStreak + 1
+            else
+                -- Snapped back — blast it harder and reset streak
+                push(PUSH_REPEAT * 2)
+                stableStreak = 0
+            end
+
+            lastPos = curPos
+
+            local heldLongEnough = (tick() - holdStart) >= HOLD_SECONDS
+            local isStable       = stableStreak >= STABLE_NEEDED
+
+            if heldLongEnough and isStable then
+                locked = true; done = true; conn:Disconnect()
+            elseif (tick() - holdStart) > HOLD_SECONDS * 4 then
+                -- Absolute safety bail — we held for 4× the target time
+                done = true; conn:Disconnect()
+            end
         end
     end)
 
-    -- Spin until conn fires
-    while conn.Connected do task.wait() end
+    while not done do task.wait() end
 
-    -- Reinforce position: hold the item in place for SETTLE_FRAMES
-    if mp and mp.Parent then
-        for _ = 1, SETTLE_FRAMES do
-            pcall(function()
-                if dragger then dragger:FireServer(model) end
-                if mp and mp.Parent then mp.CFrame = settledCF end
-            end)
-            freezeVelocity(model)
-            task.wait()
-        end
-        -- Hard final freeze
-        freezeVelocity(model)
-    end
-
-    return arrived and not timedOut
+    -- Hard final zero after everything
+    zeroVelocity(model)
+    return locked
 end
 
--- Check whether the item in a slot is still roughly in position
+-- Returns true if the slot's model is still close enough to its target position
 local function isSlotFilled(slot)
     local model = slot.model
-    if not (model and model.Parent) then return true end   -- item gone = vacated, skip
+    if not (model and model.Parent) then return true end   -- gone = vacated, fine
     local mp = getMainPart(model)
     if not mp then return true end
-    return (mp.Position - slot.cf.Position).Magnitude < CONFIRM_DIST * 1.5
+    return (mp.Position - slot.cf.Position).Magnitude < VERIFY_DIST
+end
+
+-- Sweep completed slots [1..upTo] and re-lock any that have drifted
+local function fixDriftedSlots(slots, upTo)
+    for i = 1, upTo do
+        if not isSorting then break end
+        local slot = slots[i]
+        if slot and not isSlotFilled(slot) then
+            pbLabel.Text = "🔧 Re-fixing slot " .. i .. " ..."
+            placeAndLock(slot.model, slot.cf)
+        end
+    end
 end
 
 -- ════════════════════════════════════════════════════
@@ -940,90 +1003,93 @@ Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
 
 -- ────────────────────────────────────────────────────
 -- CORE SORT LOOP
--- Layer-fill-first: iterates slots in order (layer 0 fully filled before layer 1).
--- After each item, verifies it is still in place. If it drifted back (teleported),
--- retries that slot up to SLOT_RETRY_MAX times before moving on.
+--
+-- Strategy:
+--   1. Items are pre-sorted so a full layer is placed before the next begins.
+--   2. Each slot gets up to SLOT_RETRY_MAX attempts via placeAndLock().
+--      placeAndLock drives + holds the item until it accumulates STABLE_NEEDED
+--      consecutive stable frames — so a single server-snap can't fool it.
+--   3. At every layer boundary we sweep all completed slots and re-fix any
+--      that drifted while we were placing later items.
 -- ────────────────────────────────────────────────────
 local function runSortLoop(slots, startI, total, doneStart)
     local done = doneStart
 
     sortThread = task.spawn(function()
-        local i = startI
+        local i           = startI
+        local prevLayer   = slots[startI] and slots[startI].layer or 0
+
         while i <= total and isSorting do
             local slot = slots[i]
 
-            -- Skip slots whose item is gone
+            -- ── Layer boundary: sweep all previous slots for drift ──
+            local curLayer = slot.layer or 0
+            if curLayer > prevLayer then
+                pbLabel.Text = "🔍 Checking layer " .. prevLayer .. "..."
+                fixDriftedSlots(slots, i - 1)
+                prevLayer = curLayer
+                if not isSorting then sortIndex = i; break end
+            end
+
+            -- ── Skip if item is gone ──
             if not (slot.model and slot.model.Parent) then
-                done = done + 1
-                sortDone = done
-                sortIndex = i + 1
-                i = i + 1
-                continue
+                done = done + 1; sortDone = done; sortIndex = i + 1
+                i = i + 1; continue
             end
 
             pbLabel.Text = "Sorting... " .. done .. " / " .. total
 
-            -- Retry loop: keep trying this slot until it stays filled
-            local attempt = 0
-            local slotDone = false
+            -- ── Try to lock this slot ──
+            local locked = false
+            for attempt = 1, SLOT_RETRY_MAX do
+                if not isSorting then break end
+                pbLabel.Text = "Sorting " .. done+1 .. "/" .. total
+                    .. (attempt > 1 and ("  (retry " .. attempt .. ")") or "")
 
-            while attempt < SLOT_RETRY_MAX and isSorting do
-                attempt = attempt + 1
-
-                -- Move the item
-                currentItemConn = nil
-                local ok = moveItemTo(slot.model, slot.cf)
-                currentItemConn = nil
+                locked = placeAndLock(slot.model, slot.cf)
 
                 if not isSorting then break end
 
-                -- Small wait for physics to settle
-                task.wait(0.1)
-
-                -- Verify it stayed
+                -- Double-check after a brief settle
+                task.wait(0.15)
                 if isSlotFilled(slot) then
-                    slotDone = true
-                    break
+                    locked = true; break
                 end
-                -- Item drifted — retry without advancing
+                -- Didn't stay — immediately retry
+                locked = false
             end
 
-            if not isSorting then
-                sortIndex = i
-                break
-            end
+            if not isSorting then sortIndex = i; break end
 
-            -- Whether it succeeded or we exhausted retries, mark done and unhighlight
+            -- Advance regardless (we tried our best)
             unhighlightItem(slot.model)
-            done = done + 1
-            sortDone  = done
-            sortIndex = i + 1
+            done = done + 1; sortDone = done; sortIndex = i + 1
 
             local pct = math.clamp(done / math.max(total, 1), 0, 1)
-            TweenService:Create(pbFill, TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            TweenService:Create(pbFill, TweenInfo.new(0.15, Enum.EasingStyle.Quad),
                 { Size = UDim2.new(pct, 0, 1, 0) }):Play()
             pbLabel.Text = "Sorting... " .. done .. " / " .. total
 
-            task.wait(0.30)
+            task.wait(0.25)
             i = i + 1
+        end
+
+        -- Final sweep of all slots to catch any last-minute drift
+        if isSorting and done >= total then
+            pbLabel.Text = "🔍 Final check..."
+            fixDriftedSlots(slots, total)
         end
 
         isSorting = false
         sortThread = nil
-        currentItemConn = nil
 
         if done >= total then
-            -- Fully complete
-            isStopped = false
-            sortSlots = nil
+            isStopped = false; sortSlots = nil
             TweenService:Create(pbFill, TweenInfo.new(0.25),
                 { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.fromRGB(90,220,110) }):Play()
             pbLabel.Text = "✔  Sorting complete!"
-            destroyPreview()
-            unhighlightAll()
-            hideProgress(2.5)
+            destroyPreview(); unhighlightAll(); hideProgress(2.5)
         else
-            -- Paused
             isStopped = true
             pbLabel.Text = "⏸  Stopped at " .. done .. " / " .. total
         end
@@ -1102,7 +1168,6 @@ mkBtn("Cancel  (clear all)", Color3.fromRGB(70,20,20), function()
     sortIndex = 1
     sortTotal = 0
     sortDone  = 0
-    currentItemConn = nil
     if sortThread then pcall(task.cancel, sortThread); sortThread = nil end
     destroyPreview()
     unhighlightAll()
@@ -1172,9 +1237,8 @@ end)
 table.insert(cleanupTasks, function()
     isSorting = false; isStopped = false
     sortSlots = nil; sortIndex = 1; sortTotal = 0; sortDone = 0
-    if followConn      then followConn:Disconnect();      followConn = nil end
-    if currentItemConn then pcall(function() currentItemConn:Disconnect() end); currentItemConn = nil end
-    if sortThread      then pcall(task.cancel, sortThread); sortThread = nil end
+    if followConn  then followConn:Disconnect();             followConn = nil end
+    if sortThread  then pcall(task.cancel, sortThread);      sortThread = nil end
     mouseDownConn:Disconnect()
     mouseMoveConn:Disconnect()
     mouseUpConn:Disconnect()
