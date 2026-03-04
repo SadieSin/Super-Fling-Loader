@@ -359,7 +359,9 @@ end
 -- SORT ENGINE
 -- ════════════════════════════════════════════════════
 
--- Helpers
+local CONFIRM_DIST = 5   -- studs
+local ITEM_BUDGET  = 0.7 -- seconds total per item
+
 local function getHRP()
     local c = player.Character
     return c and c:FindFirstChild("HumanoidRootPart")
@@ -370,97 +372,76 @@ local function getDragger()
     return i and i:FindFirstChild("ClientIsDragging")
 end
 
-local CONFIRM_DIST = 5  -- studs — counts as "arrived"
-
 -- ─────────────────────────────────────────────────────────────────────────────
--- placeItem(model, targetCF)  →  bool (true = landed server-side)
+-- placeItem(model, targetCF) → bool
 --
--- This game has THREE server-side move mechanisms depending on item type.
--- We try all three in order, then verify with a real position check.
+-- Exact pattern from the working DupeBase retry loop:
+--   1. HRP teleports TO the item (not the destination)
+--   2. ClientIsDragging fires with item.Parent
+--   3. CFrame write to targetCF
+--   4. Wait ~ping for server to replicate
+--   5. Check real position
 --
--- Method A — isitemownersecondary + CFrame spam
---   Works for: PurchasedBoxItems, DraggableItems (gift items)
---   How: claims server ownership so CFrame writes are accepted
---
--- Method B — ClientIsDragging spam + CFrame spam
---   Works for: Wood (TreeClass items)
---   How: drag remote registers the server-side drag state first
---
--- Method C — Raw CFrame spam (no ownership call)
---   Works for: any item where we're already close enough that the
---   server's physics simulation accepts the position (fallback)
---
--- After each method we wait one ping cycle and check real position.
+-- We repeat this cycle for up to ITEM_BUDGET seconds.
+-- Each cycle is spaced 0.2s apart (matching vanilla2 timing).
 -- ─────────────────────────────────────────────────────────────────────────────
 local function placeItem(model, targetCF)
-    if not (model and model.Parent) then return true end  -- gone = skip
+    if not (model and model.Parent) then return true end
 
     local mp = getMainPart(model)
     if not mp then return true end
 
-    local hrp = getHRP()
-    if not hrp then return false end
-
-    -- Always walk HRP next to item first (< 10 studs)
-    if (hrp.Position - mp.Position).Magnitude > 10 then
-        hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 3)
-        task.wait(0.08)
-    end
+    local dragger = getDragger()
 
     local function arrived()
         if not (mp and mp.Parent) then return true end
         return (mp.Position - targetCF.Position).Magnitude < CONFIRM_DIST
     end
 
-    -- ── Method A: isitemownersecondary + CFrame spam ──────────────────────
-    pcall(isitemownersecondary, mp)
-    for _ = 1, 250 do
-        pcall(function() mp.CFrame = targetCF end)
-    end
-    if GetPing then wait(GetPing()) else task.wait(0.15) end
-    if arrived() then return true end
+    local deadline = tick() + ITEM_BUDGET
 
-    -- ── Method B: ClientIsDragging spam + ownership + CFrame spam ─────────
-    local dragger = getDragger()
-    if dragger then
-        hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 3)  -- re-snap near item
-        task.wait(0.05)
-        for _ = 1, 60 do
+    repeat
+        local hrp = getHRP()
+        if not hrp then task.wait(0.1); continue end
+
+        -- Step 1: HRP goes to the item (same as vanilla2 retry)
+        hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 0)
+
+        -- Step 2: fire ClientIsDragging while HRP is AT the item
+        if dragger then
             pcall(function() dragger:FireServer(model) end)
-            task.wait(0.04)
         end
-    end
-    pcall(isitemownersecondary, mp)
-    for _ = 1, 250 do
-        pcall(function() mp.CFrame = targetCF end)
-    end
-    if GetPing then wait(GetPing()) else task.wait(0.15) end
-    if arrived() then return true end
 
-    -- ── Method C: Sit near item, ownership, huge CFrame burst ─────────────
-    hrp.CFrame = mp.CFrame * CFrame.new(0, 1, 1)  -- very close
-    task.wait(0.1)
-    pcall(isitemownersecondary, mp)
-    for _ = 1, 500 do
+        -- Small pause so server registers the drag
+        task.wait(0.05)
+
+        -- Step 3: write targetCF — server accepts because drag is active
         pcall(function() mp.CFrame = targetCF end)
-    end
-    if GetPing then wait(GetPing()) else task.wait(0.2) end
+
+        -- Step 4: wait for server replication
+        task.wait(0.2)
+
+        if arrived() then return true end
+
+    until tick() >= deadline
+
+    -- Final check
     return arrived()
 end
 
--- moveItemTo: async wrapper around placeItem that the sort loop can cancel.
--- Returns a handle with :Disconnect() to abort.
+-- Async wrapper the sort loop can cancel mid-run
 local function moveItemTo(model, targetCF, onDone)
     local cancelled = false
     local handle = { Disconnect = function() cancelled = true end }
 
     task.spawn(function()
         if cancelled then
-            if onDone then task.spawn(onDone, false) end; return
+            if onDone then task.spawn(onDone, false) end
+            return
         end
         local ok = placeItem(model, targetCF)
-        if not cancelled then
-            if onDone then task.spawn(onDone, ok) end
+        if not cancelled and onDone then
+            task.spawn(onDone, ok)
         end
     end)
 
@@ -915,7 +896,7 @@ local function runSortLoop(slots, startI, total, doneStart)
 
                 -- Not placed: brief pause before retry
                 if not placed and (slot.model and slot.model.Parent) then
-                    task.wait(0.3)
+                    task.wait(0.7)
                 end
 
             until placed or not (slot.model and slot.model.Parent)
@@ -928,7 +909,7 @@ local function runSortLoop(slots, startI, total, doneStart)
                 { Size = UDim2.new(pct, 0, 1, 0) }):Play()
             pbLabel.Text = "Sorting... " .. done .. " / " .. total
 
-            task.wait(0.1)
+            task.wait(0.7)
         end
 
         isSorting = false; sortThread = nil; currentItemConn = nil
