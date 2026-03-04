@@ -416,12 +416,13 @@ local _, getReceiverName = makeDupeDropdown("Receiver")
 createDSep()
 createDSection("What to Transfer")
 
-local _, getStructures = createDToggle("Structures",      false)
-local _, getFurniture  = createDToggle("Furniture",       false)
-local _, getTrucks     = createDToggle("Trucks",          false)
-local _, getDupeItems  = createDToggle("Purchased Items", false)
-local _, getGifs       = createDToggle("Gift Items",      false)
-local _, getWood       = createDToggle("Wood",            false)
+-- "Teleport" prefix added to all transfer toggle labels
+local _, getStructures = createDToggle("Teleport Structures",      false)
+local _, getFurniture  = createDToggle("Teleport Furniture",       false)
+local _, getTrucks     = createDToggle("Teleport Trucks",          false)
+local _, getDupeItems  = createDToggle("Teleport Purchased Items", false)
+local _, getGifs       = createDToggle("Teleport Gift Items",      false)
+local _, getWood       = createDToggle("Teleport Wood",            false)
 
 -- ── Status ───────────────────────────────────────────
 createDSep()
@@ -494,6 +495,41 @@ table.insert(cleanupTasks, function()
     dupeRunning = false
     setDupeStatus("Stopped", false)
 end)
+
+-- ════════════════════════════════════════════════════
+-- HELPERS — Slow truck/cargo movement via TweenService
+-- ════════════════════════════════════════════════════
+
+-- Seconds for trucks and cargo to travel to receiver plot.
+-- Raise this number to make movement even slower.
+local TRUCK_TWEEN_DURATION = 2.0
+
+-- Smoothly tween a single BasePart's CFrame to targetCF over duration seconds
+local function tweenPartCFrame(part, targetCF, duration)
+    local tween = TweenService:Create(
+        part,
+        TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+        { CFrame = targetCF }
+    )
+    tween:Play()
+    tween.Completed:Wait()
+end
+
+-- Smoothly tween an entire Model to targetCF via its PrimaryPart
+local function tweenModelCFrame(model, targetCF, duration)
+    local primary = model.PrimaryPart
+    if not primary then
+        model:SetPrimaryPartCFrame(targetCF)
+        return
+    end
+    local tween = TweenService:Create(
+        primary,
+        TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+        { CFrame = targetCF }
+    )
+    tween:Play()
+    tween.Completed:Wait()
+end
 
 -- ════════════════════════════════════════════════════
 -- BUTTER LEAK — DupeBase
@@ -588,7 +624,8 @@ function DupeBase()
         local TruckCFrame = Character.Humanoid.SeatPart.Parent:FindFirstChild("Main").CFrame
         local newPos = TruckCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
         local Offset = CFrame.new(newPos) * TruckCFrame.Rotation
-        Character.Humanoid.SeatPart.Parent:SetPrimaryPartCFrame(Offset)
+        -- Slowly tween the whole truck model to the receiver plot
+        tweenModelCFrame(Character.Humanoid.SeatPart.Parent, Offset, TRUCK_TWEEN_DURATION)
         getgenv().DidTruckTeleport = true
     end
 
@@ -619,7 +656,8 @@ function DupeBase()
                                         local PartCFrame   = part.CFrame
                                         local nPos         = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                                         local targetOffset = CFrame.new(nPos) * PartCFrame.Rotation
-                                        part.CFrame = targetOffset
+                                        -- Slowly tween cargo parts toward receiver plot
+                                        tweenPartCFrame(part, targetOffset, TRUCK_TWEEN_DURATION)
                                         table.insert(teleportedParts, { Instance=part, OldPos=oldPos, TargetCFrame=targetOffset })
                                     end
                                 end)
@@ -627,7 +665,7 @@ function DupeBase()
                         end
                     end
 
-                    -- Always teleport the truck itself even if empty
+                    -- Slowly tween truck itself to receiver plot
                     TeleportTruck()
 
                     local SitPart   = Character.Humanoid.SeatPart
@@ -674,7 +712,6 @@ function DupeBase()
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
                 if not hrp then continue end
 
-                -- 0.2s × 3 attempts = 0.6s max per item
                 local attempts = 0
                 repeat
                     attempts += 1
@@ -716,7 +753,7 @@ function DupeBase()
                     end
                     pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
-                    wait(GetPing())
+                    task.wait(0.6)  -- item teleport delay
                     print("Sent Item")
                 end
             end
@@ -741,7 +778,7 @@ function DupeBase()
                     end
                     pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
-                    wait(GetPing())
+                    task.wait(0.6)  -- item teleport delay
                     print("Sent Item")
                 end
             end
@@ -770,7 +807,7 @@ function DupeBase()
                     end
                     pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
-                    wait(GetPing())
+                    task.wait(0.6)  -- item teleport delay
                     print("Sent Item")
                 end
             end
@@ -851,8 +888,6 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
             if not ReceiverBaseOrigin then setSTStatus("Receiver base not found!", false) stRunning = false return end
 
             -- ── Find the giver's truck ────────────────────────
-            -- We look for any model under workspace.PlayerModels owned by the giver
-            -- that has a DriveSeat, then use the one that also has a Main part.
             local truckModel = nil
             for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
                 if v.Name == "Owner" and tostring(v.Value) == giverName then
@@ -879,7 +914,7 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
                 end
             end
 
-            -- ── Scan cargo inside truck bounding box ──────────
+            -- ── Scan cargo and slowly tween each piece ────────
             for _, part in ipairs(workspace:GetDescendants()) do
                 if part:IsA("BasePart") and not ignoredParts[part] then
                     if part.Name == "Main" or part.Name == "WoodSection" then
@@ -888,18 +923,21 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
                             local pCF    = part.CFrame
                             local nPos   = pCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                             local target = CFrame.new(nPos) * pCF.Rotation
-                            part.CFrame  = target
+                            -- Slowly tween cargo toward receiver plot
+                            task.spawn(function()
+                                tweenPartCFrame(part, target, TRUCK_TWEEN_DURATION)
+                            end)
                             table.insert(teleportedParts, { Instance = part, TargetCFrame = target })
                         end
                     end
                 end
             end
 
-            -- ── Teleport the truck itself ─────────────────────
+            -- ── Slowly tween the truck itself ─────────────────
             local tCF   = truckModel.Main.CFrame
             local tNPos = tCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
             local tOff  = CFrame.new(tNPos) * tCF.Rotation
-            truckModel:SetPrimaryPartCFrame(tOff)
+            tweenModelCFrame(truckModel, tOff, TRUCK_TWEEN_DURATION)
 
             -- ── Sit in DriveSeat, then eject + open door ──────
             local Humanoid = char and char:FindFirstChild("Humanoid")
@@ -927,7 +965,7 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
                 end
             end
 
-            -- ── Retry missed cargo (0.6s budget per item) ─────
+            -- ── Retry missed cargo ─────────────────────────────
             task.wait(1.2)
             local retryList = {}
             for _, data in ipairs(teleportedParts) do
@@ -948,7 +986,6 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
                         local hrp   = lchar and lchar:FindFirstChild("HumanoidRootPart")
                         if not hrp then continue end
 
-                        -- 0.2s × 3 attempts = 0.6s max per item
                         local attempts = 0
                         repeat
                             attempts += 1
