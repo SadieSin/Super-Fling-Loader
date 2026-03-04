@@ -830,12 +830,6 @@ local carColors = {
     "Silver","Brick yellow","Dark red","Hot pink",
 }
 
--- ── FIX: Vehicle Spawner — keeps running until color matches ─────────────────
--- The previous version had a race condition: VehicleRespawnedColor was only
--- set AFTER ChildAdded fired, but the repeat loop might start checking it
--- before the car spawns. Now we set up the listener BEFORE clicking the pad,
--- and use a simple boolean flag + color value that gets set by ChildAdded.
--- The repeat loop runs FOREVER until the color matches — no timeout.
 local function vehicleSpawner(color)
     if not color then
         spawnStat.SetActive(false, "Select a color first!")
@@ -844,11 +838,9 @@ local function vehicleSpawner(color)
     abortSpawner = false
     spawnStat.SetActive(true, "Click your vehicle spawn pad...")
 
-    local spawnedPartColor = nil   -- will be set by ChildAdded when car arrives
+    local spawnedPartColor = nil
 
-    -- Listen for new car BEFORE we click the pad, so we never miss it
     local carAddedConn = workspace.PlayerModels.ChildAdded:Connect(function(v)
-        -- Wait for Owner and PaintParts to exist on the new vehicle
         task.spawn(function()
             local ownerVal = v:WaitForChild("Owner", 10)
             if not ownerVal or ownerVal.Value ~= LP then return end
@@ -860,7 +852,6 @@ local function vehicleSpawner(color)
         end)
     end)
 
-    -- Wait for player to click a spawn pad
     local padConn
     padConn = Mouse.Button1Up:Connect(function()
         local target = Mouse.Target
@@ -873,24 +864,20 @@ local function vehicleSpawner(color)
         spawnStat.SetActive(true, "Spawning... waiting for color: "..color)
 
         task.spawn(function()
-            -- Press spawn button repeatedly until the car matches the requested color.
-            -- NO timeout — runs until found or aborted.
             repeat
                 if abortSpawner then
                     carAddedConn:Disconnect()
                     spawnStat.SetActive(false, "Aborted.")
                     return
                 end
-                -- Reset the detected color before each press so we detect a fresh spawn
                 spawnedPartColor = nil
                 pcall(function()
                     RS.Interaction.RemoteProxy:FireServer(car.ButtonRemote_SpawnButton)
                 end)
-                -- Wait up to 5s for the new car to arrive and color to be read
                 local waitStart = tick()
                 repeat
-                    task.wait(0.1)
-                until spawnedPartColor ~= nil or (tick() - waitStart > 5) or abortSpawner
+                    task.wait(0.05)
+                until spawnedPartColor ~= nil or (tick() - waitStart > 1) or abortSpawner
             until spawnedPartColor == color or abortSpawner
 
             carAddedConn:Disconnect()
@@ -1024,7 +1011,7 @@ local function cutWood1x1(model)
     if not hrp then return end
 
     hrp.CFrame = main.CFrame * CFrame.new(0, 3, 5)
-    task.wait(0.8)
+    task.wait(0.1)
 
     local t0 = tick()
     repeat
