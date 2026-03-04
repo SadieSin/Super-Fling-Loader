@@ -191,113 +191,197 @@ local function makeSlider(page, text, min, max, default, cb)
     end)
 end
 
-local function makeDropdown(page, placeholder, options, cb)
-    local wrap = Instance.new("Frame", page)
-    wrap.Name = "DropWrap"
-    wrap.Size = UDim2.new(1,-12,0,34)
-    wrap.BackgroundTransparency = 1
-    wrap.ClipsDescendants = false
+-- ── Fancy dropdown matching Dupe tab style ─────────────────────────────────────
+local function makeFancyDropdown(page, labelText, getOptions, cb)
+    local selected = ""
+    local isOpen   = false
+    local ITEM_H   = 34
+    local MAX_SHOW = 5
+    local HEADER_H = 40
 
-    local hdr = Instance.new("TextButton", wrap)
-    hdr.Size = UDim2.new(1,0,1,0)
-    hdr.BackgroundColor3 = BTN_COLOR
-    hdr.BorderSizePixel = 0
-    hdr.Font = Enum.Font.GothamSemibold
-    hdr.TextSize = 13
-    hdr.TextColor3 = Color3.fromRGB(160,140,180)
-    hdr.Text = "  "..placeholder
-    hdr.TextXAlignment = Enum.TextXAlignment.Left
-    hdr.AutoButtonColor = false
-    corner(hdr, 6)
+    local outer = Instance.new("Frame", page)
+    outer.Size             = UDim2.new(1,-12,0,HEADER_H)
+    outer.BackgroundColor3 = Color3.fromRGB(22,22,30)
+    outer.BorderSizePixel  = 0
+    outer.ClipsDescendants = true
+    corner(outer, 8)
+    local outerStroke = Instance.new("UIStroke", outer)
+    outerStroke.Color = Color3.fromRGB(60,60,90)
+    outerStroke.Thickness = 1
+    outerStroke.Transparency = 0.5
 
-    local arrow = Instance.new("TextLabel", hdr)
-    arrow.Size = UDim2.new(0,24,1,0)
-    arrow.Position = UDim2.new(1,-28,0,0)
-    arrow.BackgroundTransparency = 1
-    arrow.Font = Enum.Font.GothamBold
-    arrow.TextSize = 14
-    arrow.TextColor3 = THEME_TEXT
-    arrow.Text = "▾"
+    local header = Instance.new("Frame", outer)
+    header.Size = UDim2.new(1,0,0,HEADER_H)
+    header.BackgroundTransparency = 1
+    header.BorderSizePixel = 0
 
-    local gui = game.CoreGui:FindFirstChild("VanillaHub")
-    local list = Instance.new("Frame", gui)
-    list.Name = "DropList"
-    list.BackgroundColor3 = Color3.fromRGB(28,26,36)
-    list.BorderSizePixel = 0
-    list.ZIndex = 30
-    list.Visible = false
-    list.Size = UDim2.new(0,0,0,0)
-    corner(list, 6)
-    local stroke = Instance.new("UIStroke", list)
-    stroke.Color = Color3.fromRGB(60,50,80); stroke.Thickness = 1; stroke.Transparency = 0.5
-    local ll = Instance.new("UIListLayout", list)
-    ll.SortOrder = Enum.SortOrder.LayoutOrder
-    local lpad = Instance.new("UIPadding", list)
-    lpad.PaddingTop = UDim.new(0,3); lpad.PaddingBottom = UDim.new(0,3)
+    local lbl = Instance.new("TextLabel", header)
+    lbl.Size = UDim2.new(0,80,1,0)
+    lbl.Position = UDim2.new(0,12,0,0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 12
+    lbl.TextColor3 = THEME_TEXT
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
 
-    local open = false
+    local selFrame = Instance.new("Frame", header)
+    selFrame.Size = UDim2.new(1,-96,0,28)
+    selFrame.Position = UDim2.new(0,90,0.5,-14)
+    selFrame.BackgroundColor3 = Color3.fromRGB(30,30,42)
+    selFrame.BorderSizePixel = 0
+    corner(selFrame, 6)
+    local selStroke = Instance.new("UIStroke", selFrame)
+    selStroke.Color = Color3.fromRGB(70,70,110)
+    selStroke.Thickness = 1
+    selStroke.Transparency = 0.4
 
-    local function close()
-        open = false; arrow.Text = "▾"; list.Visible = false
-    end
-    local function openDrop()
-        open = true; arrow.Text = "▴"
-        local abs = hdr.AbsolutePosition
-        local sz  = hdr.AbsoluteSize
-        local h = #options * 28 + 6
-        list.Position = UDim2.new(0, abs.X, 0, abs.Y + sz.Y + 2)
-        list.Size = UDim2.new(0, sz.X, 0, h)
-        list.Visible = true
-    end
+    local selLbl = Instance.new("TextLabel", selFrame)
+    selLbl.Size = UDim2.new(1,-36,1,0)
+    selLbl.Position = UDim2.new(0,10,0,0)
+    selLbl.BackgroundTransparency = 1
+    selLbl.Text = "Select..."
+    selLbl.Font = Enum.Font.GothamSemibold
+    selLbl.TextSize = 12
+    selLbl.TextColor3 = Color3.fromRGB(110,110,140)
+    selLbl.TextXAlignment = Enum.TextXAlignment.Left
+    selLbl.TextTruncate = Enum.TextTruncate.AtEnd
 
-    local function rebuild(opts)
-        options = opts
-        for _, ch in ipairs(list:GetChildren()) do
-            if ch:IsA("TextButton") then ch:Destroy() end
-        end
-        for _, opt in ipairs(opts) do
-            local ob = Instance.new("TextButton", list)
-            ob.Size = UDim2.new(1,0,0,28)
-            ob.BackgroundTransparency = 1
-            ob.Font = Enum.Font.Gotham
-            ob.TextSize = 13
-            ob.TextColor3 = THEME_TEXT
-            ob.Text = opt
-            ob.ZIndex = 30
-            ob.AutoButtonColor = false
-            ob.MouseEnter:Connect(function()
-                TS:Create(ob, TweenInfo.new(0.08), {TextColor3 = Color3.fromRGB(210,170,240)}):Play()
-            end)
-            ob.MouseLeave:Connect(function()
-                TS:Create(ob, TweenInfo.new(0.08), {TextColor3 = THEME_TEXT}):Play()
-            end)
-            ob.MouseButton1Click:Connect(function()
-                hdr.Text = "  "..opt
-                hdr.TextColor3 = THEME_TEXT
-                close(); cb(opt)
-            end)
-        end
-    end
+    local arrowLbl = Instance.new("TextLabel", selFrame)
+    arrowLbl.Size = UDim2.new(0,22,1,0)
+    arrowLbl.Position = UDim2.new(1,-24,0,0)
+    arrowLbl.BackgroundTransparency = 1
+    arrowLbl.Text = "▾"
+    arrowLbl.Font = Enum.Font.GothamBold
+    arrowLbl.TextSize = 14
+    arrowLbl.TextColor3 = Color3.fromRGB(120,120,160)
+    arrowLbl.TextXAlignment = Enum.TextXAlignment.Center
 
-    rebuild(options)
-    hdr.MouseButton1Click:Connect(function()
-        if open then close() else openDrop() end
+    local headerBtn = Instance.new("TextButton", selFrame)
+    headerBtn.Size = UDim2.new(1,0,1,0)
+    headerBtn.BackgroundTransparency = 1
+    headerBtn.Text = ""
+    headerBtn.ZIndex = 5
+
+    local divider = Instance.new("Frame", outer)
+    divider.Size = UDim2.new(1,-16,0,1)
+    divider.Position = UDim2.new(0,8,0,HEADER_H)
+    divider.BackgroundColor3 = Color3.fromRGB(50,50,75)
+    divider.BorderSizePixel = 0
+    divider.Visible = false
+
+    local listScroll = Instance.new("ScrollingFrame", outer)
+    listScroll.Position = UDim2.new(0,0,0,HEADER_H+2)
+    listScroll.Size = UDim2.new(1,0,0,0)
+    listScroll.BackgroundTransparency = 1
+    listScroll.BorderSizePixel = 0
+    listScroll.ScrollBarThickness = 3
+    listScroll.ScrollBarImageColor3 = Color3.fromRGB(90,90,130)
+    listScroll.CanvasSize = UDim2.new(0,0,0,0)
+    listScroll.ClipsDescendants = true
+
+    local listLayout = Instance.new("UIListLayout", listScroll)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Padding = UDim.new(0,3)
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        listScroll.CanvasSize = UDim2.new(0,0,0, listLayout.AbsoluteContentSize.Y + 6)
     end)
-    UIS.InputBegan:Connect(function(i)
-        if open and i.UserInputType == Enum.UserInputType.MouseButton1 then
-            local mp = UIS:GetMouseLocation()
-            local lp = list.AbsolutePosition; local ls = list.AbsoluteSize
-            if not (mp.X >= lp.X and mp.X <= lp.X+ls.X and mp.Y >= lp.Y and mp.Y <= lp.Y+ls.Y) then
-                close()
+    local listPad = Instance.new("UIPadding", listScroll)
+    listPad.PaddingTop = UDim.new(0,4)
+    listPad.PaddingBottom = UDim.new(0,4)
+    listPad.PaddingLeft = UDim.new(0,6)
+    listPad.PaddingRight = UDim.new(0,6)
+
+    local function setSelected(name)
+        selected = name
+        selLbl.Text = name
+        selLbl.TextColor3 = THEME_TEXT
+        arrowLbl.TextColor3 = Color3.fromRGB(160,160,210)
+        outerStroke.Color = Color3.fromRGB(90,90,160)
+        cb(name)
+    end
+
+    local function buildList()
+        for _, c in ipairs(listScroll:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+        local opts = getOptions()
+        for _, opt in ipairs(opts) do
+            local item = Instance.new("TextButton", listScroll)
+            item.Size = UDim2.new(1,0,0,ITEM_H)
+            item.BackgroundColor3 = Color3.fromRGB(28,28,40)
+            item.Text = ""
+            item.BorderSizePixel = 0
+            corner(item, 6)
+
+            local iLbl = Instance.new("TextLabel", item)
+            iLbl.Size = UDim2.new(1,-16,1,0)
+            iLbl.Position = UDim2.new(0,10,0,0)
+            iLbl.BackgroundTransparency = 1
+            iLbl.Text = opt
+            iLbl.Font = Enum.Font.GothamSemibold
+            iLbl.TextSize = 12
+            iLbl.TextColor3 = THEME_TEXT
+            iLbl.TextXAlignment = Enum.TextXAlignment.Left
+            iLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+            item.MouseEnter:Connect(function()
+                TS:Create(item, TweenInfo.new(0.1), {BackgroundColor3=Color3.fromRGB(38,38,55)}):Play()
+            end)
+            item.MouseLeave:Connect(function()
+                TS:Create(item, TweenInfo.new(0.1), {BackgroundColor3=Color3.fromRGB(28,28,40)}):Play()
+            end)
+            item.MouseButton1Click:Connect(function()
+                setSelected(opt)
+                isOpen = false
+                TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=0}):Play()
+                TS:Create(outer,      TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
+                TS:Create(listScroll, TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
+                divider.Visible = false
+            end)
+        end
+        return #opts
+    end
+
+    local function openList()
+        isOpen = true
+        local count = buildList()
+        local listH = math.min(count, MAX_SHOW) * (ITEM_H+3) + 8
+        divider.Visible = true
+        TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=180}):Play()
+        TS:Create(outer,      TweenInfo.new(0.25,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H+2+listH)}):Play()
+        TS:Create(listScroll, TweenInfo.new(0.25,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,listH)}):Play()
+    end
+
+    local function closeList()
+        isOpen = false
+        TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=0}):Play()
+        TS:Create(outer,      TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
+        TS:Create(listScroll, TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
+        divider.Visible = false
+    end
+
+    headerBtn.MouseButton1Click:Connect(function()
+        if isOpen then closeList() else openList() end
+    end)
+    headerBtn.MouseEnter:Connect(function()
+        TS:Create(selFrame, TweenInfo.new(0.12), {BackgroundColor3=Color3.fromRGB(38,38,55)}):Play()
+    end)
+    headerBtn.MouseLeave:Connect(function()
+        TS:Create(selFrame, TweenInfo.new(0.12), {BackgroundColor3=Color3.fromRGB(30,30,42)}):Play()
+    end)
+
+    return {
+        GetSelected = function() return selected end,
+        Refresh = function()
+            if isOpen then
+                local count = buildList()
+                local listH = math.min(count, MAX_SHOW) * (ITEM_H+3) + 8
+                outer.Size = UDim2.new(1,-12,0,HEADER_H+2+listH)
+                listScroll.Size = UDim2.new(1,0,0,listH)
             end
         end
-    end)
-
-    table.insert(VH.cleanupTasks, function()
-        if list and list.Parent then list:Destroy() end
-    end)
-
-    return {SetOptions = function(_, opts) rebuild(opts) end}
+    }
 end
 
 local function makeStatus(page, initText)
@@ -371,7 +455,7 @@ end
 
 local ab = pages["AutoBuyTab"]
 
--- ── Core functions (exact port from Butterhub) ─────────────────────────────
+-- ── Core functions ─────────────────────────────────────────────────────────
 
 local ShopIDS = {
     WoodRUs=7, FurnitureStore=8, FineArt=11,
@@ -402,10 +486,10 @@ local function GrabShopItems()
     local ItemList = {}
     for _, v in next, workspace.Stores:GetChildren() do
         if v.Name == "ShopItems" then
-            for _, v in next, v:GetChildren() do
-                if v:FindFirstChild("Type") and v.Type.Value ~= "Blueprint"
-                   and v:FindFirstChild("BoxItemName") then
-                    local entry = v.BoxItemName.Value.." - $"..GetPrice(v.BoxItemName.Value, 1)
+            for _, item in next, v:GetChildren() do
+                if item:FindFirstChild("Type") and item.Type.Value ~= "Blueprint"
+                   and item:FindFirstChild("BoxItemName") then
+                    local entry = item.BoxItemName.Value.." - $"..GetPrice(item.BoxItemName.Value, 1)
                     if not table.find(ItemList, entry) then
                         table.insert(ItemList, entry)
                         task.wait(0.01)
@@ -421,13 +505,13 @@ end
 local function UpdateNames()
     for _, v in next, workspace.Stores:GetChildren() do
         if v.Name == "ShopItems" then
-            v.ChildAdded:Connect(function(v)
-                v.Name = v:WaitForChild("BoxItemName").Value
+            v.ChildAdded:Connect(function(child)
+                child.Name = child:WaitForChild("BoxItemName").Value
             end)
-            for _, v in next, v:GetChildren() do
-                if v:FindFirstChild("Owner") and v.Owner.Value == nil then
-                    if v:FindFirstChild("BoxItemName") then
-                        v.Name = v.BoxItemName.Value
+            for _, item in next, v:GetChildren() do
+                if item:FindFirstChild("Owner") and item.Owner.Value == nil then
+                    if item:FindFirstChild("BoxItemName") then
+                        item.Name = item.BoxItemName.Value
                     end
                 end
             end
@@ -439,10 +523,10 @@ UpdateNames()
 local function ItemPath(Item)
     for _, v in next, workspace.Stores:GetChildren() do
         if v.Name == "ShopItems" then
-            for _, v in next, v:GetChildren() do
-                if v:FindFirstChild("Owner") and v.Owner.Value == nil then
-                    if v:FindFirstChild("BoxItemName") and tostring(v.BoxItemName.Value) == Item then
-                        return v.Parent
+            for _, item in next, v:GetChildren() do
+                if item:FindFirstChild("Owner") and item.Owner.Value == nil then
+                    if item:FindFirstChild("BoxItemName") and tostring(item.BoxItemName.Value) == Item then
+                        return item.Parent
                     end
                 end
             end
@@ -454,10 +538,10 @@ local function GetCounter(Item)
     local ClosestCounter = nil
     for _, v in next, workspace.Stores:GetChildren() do
         if v.Name:lower() ~= "shopitems" then
-            for _, v in next, v:GetChildren() do
-                if v.Name:lower() == "counter" then
-                    if (Item.CFrame.p - v.CFrame.p).Magnitude <= 200 then
-                        ClosestCounter = v
+            for _, child in next, v:GetChildren() do
+                if child.Name:lower() == "counter" then
+                    if (Item.CFrame.p - child.CFrame.p).Magnitude <= 200 then
+                        ClosestCounter = child
                     end
                 end
             end
@@ -476,12 +560,16 @@ local function Pay(ID)
 end
 
 -- State
-local AbortAutoBuy = false
-local ItemToBuy    = nil
+local AbortAutoBuy  = false
+local ItemToBuy     = nil
 local AutoBuyAmount = 1
-local OpenBox      = false
+local OpenBox       = false
 
--- ── Exact AutoBuy logic from Butterhub ────────────────────────────────────────
+-- ── FIX: Correct AutoBuy logic ────────────────────────────────────────────────
+-- BUG WAS: `until Item.Parent ~= "ShopItems"` — this compared the INSTANCE to a
+-- string, which is always true immediately, so the pay loop never fired.
+-- FIX: Check Item.Parent.Name ~= "ShopItems" (compare the NAME of the parent)
+-- and also fire the remote *before* checking, matching the Butterhub source intent.
 local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
     if ItemName == nil then
         if stat then stat.SetActive(false, "No item selected!") end
@@ -506,11 +594,20 @@ local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
     for i = 1, Amount do
         if AbortAutoBuy then break end
 
-        -- WaitForChild so it waits for item to respawn each loop
-        local Item = Path:WaitForChild(ItemName)
+        -- Wait for item to exist/respawn in ShopItems
+        local Item = Path:WaitForChild(ItemName, 15)
+        if not Item then
+            if stat then stat.SetActive(false, "Item wait timed out.") end
+            break
+        end
 
         local Counter = GetCounter(Item.Main)
+        if not Counter then
+            if stat then stat.SetActive(false, "No counter found.") end
+            break
+        end
 
+        -- Move player next to item
         LP.Character.HumanoidRootPart.CFrame = Item.Main.CFrame + Vector3.new(5, 0, 5)
 
         -- Grab ownership
@@ -527,7 +624,7 @@ local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
             task.wait()
         until isnetworkowner(Item.Main)
 
-        -- Move to counter
+        -- Move item to counter
         RS.Interaction.ClientIsDragging:FireServer(Item)
         pcall(function()
             Item.Main.CFrame = Counter.CFrame + Vector3.new(0, Item.Main.Size.Y, 0.5)
@@ -540,27 +637,35 @@ local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
         end)
         task.wait(GetPing())
 
-        -- Pay loop — runs until item leaves ShopItems (bought successfully)
+        -- ── FIX: Pay loop — check Item.Parent.Name (string comparison on the NAME)
+        -- The item leaves "ShopItems" when purchased — its parent changes or it's removed.
+        -- We also guard with a timeout so it can't loop forever.
+        local payStart = tick()
         repeat
             if AbortAutoBuy then break end
             RS.Interaction.ClientIsDragging:FireServer(Item)
             Pay(ShopIDS[Counter.Parent.Name])
-            task.wait()
-        until Item.Parent ~= "ShopItems"   -- string compare on parent NAME, exactly like Butterhub
+            task.wait(0.1)
+        until (not Item.Parent)
+          or (Item.Parent and Item.Parent.Name ~= "ShopItems")
+          or (tick() - payStart > 10)
 
-        -- After purchase: get network ownership again, teleport item back to start
+        -- After purchase: grab net ownership, return item to OldPos
         pcall(function()
+            local t0 = tick()
             repeat
                 RS.Interaction.ClientIsDragging:FireServer(Item)
                 task.wait()
-            until isnetworkowner(Item.Main)
+            until (not Item.Parent) or isnetworkowner(Item.Main) or tick()-t0 > 3
 
-            RS.Interaction.ClientIsDragging:FireServer(Item)
-            Item.Main.CFrame = OldPos
-            task.wait(GetPing())
+            if Item.Parent then
+                RS.Interaction.ClientIsDragging:FireServer(Item)
+                Item.Main.CFrame = OldPos
+                task.wait(GetPing())
+            end
         end)
 
-        if op then
+        if op and Item.Parent then
             RS.Interaction.ClientInteracted:FireServer(Item, "Open box")
         end
 
@@ -571,7 +676,7 @@ local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
         task.wait()
     end
 
-    -- Return to start
+    -- Return player to start
     LP.Character.HumanoidRootPart.CFrame = OldPos + Vector3.new(5, 1, 0)
 
     if stat then
@@ -599,7 +704,9 @@ end
 
 sectionLabel(ab, "Item Selection")
 
-local shopDD = makeDropdown(ab, "Select Item...", GrabShopItems(), function(val)
+-- Fancy dropdown for item selection (uses the same style as Dupe tab)
+local shopItemsCache = GrabShopItems()
+local shopDD = makeFancyDropdown(ab, "Item", function() return shopItemsCache end, function(val)
     -- Strip " - $price" suffix to get raw item name
     ItemToBuy = val:match("^(.-)%s*%-%s*%$") or val
 end)
@@ -613,7 +720,8 @@ local abStat = makeStatus(ab, "Idle")
 local abProg = makeProgress(ab)
 
 makeButton(ab, "↻  Refresh Item List", function()
-    shopDD:SetOptions(GrabShopItems())
+    shopItemsCache = GrabShopItems()
+    shopDD.Refresh()
 end)
 
 makeButton(ab, "Purchase Selected Item(s)", function()
@@ -737,7 +845,9 @@ makeButton(sl, "Sell Sold Sign", sellSoldSign)
 sep(sl)
 sectionLabel(sl, "Land Claim")
 
-makeDropdown(sl, "Select Land Plot...", {"1","2","3","4","5","6","7","8","9"}, function(val)
+-- Fancy dropdown for land plots
+local landPlotOptions = {"1","2","3","4","5","6","7","8","9"}
+makeFancyDropdown(sl, "Plot", function() return landPlotOptions end, function(val)
     if landHL then pcall(function() landHL:Destroy() end) end
     landToTake = tonumber(val)
     local props = workspace.Properties:GetChildren()
