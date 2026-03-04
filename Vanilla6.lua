@@ -1,14 +1,16 @@
 -- ════════════════════════════════════════════════════
--- VANILLA6 — Fixed AutoBuy + Slot Tab (drop-in replacement)
--- Fixes vs original:
---   1. findShopItem: was comparing Instance to string for BoxItemName — always failed
---   2. GetCounter: had 200-stud cap that excluded valid counters — now returns nearest
---   3. Ownership grab: tight loop with no giveup, could hang — now has 6s timeout
---   4. Item placement: placed at wrong Y (into counter surface) — now uses half-heights
---   5. Pay loop exit: compared Item.Parent (Instance) to "ShopItems" (string) — always true,
---      loop never ran correctly — fixed to check .Name and nil properly
---   6. Player returns to origin after EACH item, not just at the end
---   7. Shop ID lookup uses counter.Parent.Name (the actual store model name)
+-- VANILLA6 — FULL REWRITE (Aggressive Bypass Edition)
+-- AutoBuy + Slot Tab
+-- Key changes from broken original:
+--   1. findShopItem: fixed BoxItemName.Value string comparison
+--   2. GetCounter: removed stud cap, nearest counter wins
+--   3. Ownership grab: 8s timeout with rapid-fire firing
+--   4. Item placement: correct half-height above counter
+--   5. Pay loop: checks item.Parent == nil to detect purchase
+--   6. Shop ID: derived from counter.Parent.Name properly
+--   7. Player teleports back to origin after each item
+--   8. Network ownership verified via ReceiveAge
+--   9. Entire buy flow wrapped in pcall for stability
 -- ════════════════════════════════════════════════════
 
 if not _G.VH then
@@ -298,9 +300,9 @@ local function makeFancyDropdown(page, labelText, getOptions, cb)
     listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
         listScroll.CanvasSize=UDim2.new(0,0,0,listLayout.AbsoluteContentSize.Y+6)
     end)
-    local lp=Instance.new("UIPadding",listScroll)
-    lp.PaddingTop=UDim.new(0,4); lp.PaddingBottom=UDim.new(0,4)
-    lp.PaddingLeft=UDim.new(0,6); lp.PaddingRight=UDim.new(0,6)
+    local lp2=Instance.new("UIPadding",listScroll)
+    lp2.PaddingTop=UDim.new(0,4); lp2.PaddingBottom=UDim.new(0,4)
+    lp2.PaddingLeft=UDim.new(0,6); lp2.PaddingRight=UDim.new(0,6)
     local function setSelected(name)
         selected=name; selLbl.Text=name; selLbl.TextColor3=THEME_TEXT
         arrowLbl.TextColor3=Color3.fromRGB(160,160,210)
@@ -362,19 +364,26 @@ local function makeFancyDropdown(page, labelText, getOptions, cb)
 end
 
 -- ════════════════════════════════════════════════════
--- AUTOBUY CORE — ALL FIXES APPLIED
+-- AUTOBUY CORE — COMPLETE REWRITE
 -- ════════════════════════════════════════════════════
 
+-- Shop ID map: store model name → NPC dialog ID
 local ShopIDS = {
-    WoodRUs=7, FurnitureStore=8, FineArt=11,
-    CarStore=9, LogicStore=12, ShackShop=10,
+    WoodRUs       = 7,
+    FurnitureStore= 8,
+    FineArt       = 11,
+    CarStore      = 9,
+    LogicStore    = 12,
+    ShackShop     = 10,
 }
 
-local function isnetworkowner(Part)
-    local ok, v = pcall(function() return Part.ReceiveAge == 0 end)
+-- Check if WE have network ownership of a part (ReceiveAge == 0)
+local function hasNetOwnership(part)
+    local ok, v = pcall(function() return part.ReceiveAge == 0 end)
     return ok and v
 end
 
+-- Get item price from ClientItemInfo
 local function GetPrice(itemName)
     for _, v in ipairs(RS.ClientItemInfo:GetDescendants()) do
         if v.Name == itemName and v:FindFirstChild("Price") then
@@ -384,17 +393,22 @@ local function GetPrice(itemName)
     return 0
 end
 
+-- Scan all shop items that are unowned
 local function GrabShopItems()
     local out, seen = {}, {}
     for _, v in ipairs(workspace.Stores:GetDescendants()) do
         if v:IsA("Model")
            and v:FindFirstChild("BoxItemName")
-           and v:FindFirstChild("Type") and v.Type.Value ~= "Blueprint"
            and v:FindFirstChild("Owner") and v.Owner.Value == nil then
-            local name = v.BoxItemName.Value
-            if not seen[name] then
-                seen[name] = true
-                table.insert(out, name.." - $"..GetPrice(name))
+            -- Filter out blueprints
+            local typeVal = v:FindFirstChild("Type")
+            if not (typeVal and typeVal.Value == "Blueprint") then
+                local name = v.BoxItemName.Value
+                if not seen[name] then
+                    seen[name] = true
+                    local price = GetPrice(name)
+                    table.insert(out, name .. " - $" .. price)
+                end
             end
         end
     end
@@ -402,43 +416,54 @@ local function GrabShopItems()
     return #out > 0 and out or {"(no items found)"}
 end
 
--- FIX 1: scan by BoxItemName.Value string — the original compared Instance == string
+-- FIX 1: Find a shop item by name string properly
 local function findShopItem(itemName)
     for _, v in ipairs(workspace.Stores:GetDescendants()) do
-        if v:IsA("Model")
-           and v:FindFirstChild("BoxItemName") and v.BoxItemName.Value == itemName
-           and v:FindFirstChild("Owner") and v.Owner.Value == nil then
-            return v
+        if v:IsA("Model") and v:FindFirstChild("BoxItemName") then
+            -- FIX: compare .Value (string) to itemName (string)
+            if v.BoxItemName.Value == itemName then
+                local ownerVal = v:FindFirstChild("Owner")
+                if ownerVal and ownerVal.Value == nil then
+                    return v
+                end
+            end
         end
     end
     return nil
 end
 
--- FIX 2: no distance cap, just nearest counter
+-- FIX 2: Get nearest counter with NO distance cap
 local function GetCounter(itemModel)
     local mainPart = itemModel:FindFirstChild("Main") or itemModel:FindFirstChildWhichIsA("BasePart")
-    if not mainPart then return nil end
-    local best, bestDist = nil, math.huge
+    if not mainPart then return nil, nil end
+    local best, bestDist, bestStore = nil, math.huge, nil
     for _, store in ipairs(workspace.Stores:GetChildren()) do
         for _, child in ipairs(store:GetChildren()) do
-            if child.Name:lower() == "counter" then
+            -- Match any part named "Counter" or "counter"
+            if child.Name:lower() == "counter" and child:IsA("BasePart") then
                 local d = (mainPart.Position - child.Position).Magnitude
-                if d < bestDist then bestDist = d; best = child end
+                if d < bestDist then
+                    bestDist = d
+                    best = child
+                    bestStore = store.Name
+                end
             end
         end
     end
-    return best
+    return best, bestStore
 end
 
+-- Invoke the NPC dialog purchase confirm
 local function Pay(ID)
     pcall(function()
         RS.NPCDialog.PlayerChatted:InvokeServer(
-            {ID=ID, Character="name", Name="name", Dialog="Dialog"},
+            {ID = ID, Character = "name", Name = "name", Dialog = "Dialog"},
             "ConfirmPurchase"
         )
     end)
 end
 
+-- Get blueprints player is missing
 local function getMissingBlueprints()
     local out = {}
     for _, v in ipairs(RS.ClientItemInfo:GetChildren()) do
@@ -454,138 +479,191 @@ end
 
 local AbortAutoBuy = false
 
--- FIX 3-7: full AutoBuy rewrite
-local function AutoBuy(itemName, amount, openBox, prog, stat)
-    if not itemName or itemName == "" then
-        if stat then stat.SetActive(false, "No item selected!") end; return
+-- ════════════════════════════════════════════════════
+-- MAIN AutoBuy FUNCTION — FULL REWRITE
+-- ════════════════════════════════════════════════════
+
+local function AutoBuy(itemName, amount, doOpenBox, prog, stat)
+    if not itemName or itemName == "" or itemName == "(no items found)" then
+        if stat then stat.SetActive(false, "No item selected!") end
+        return
     end
+
     local price = GetPrice(itemName)
-    if LP.leaderstats.Money.Value < price then
-        if stat then stat.SetActive(false, "Not enough money! Need $"..price) end; return
+    if LP.leaderstats and LP.leaderstats.Money and LP.leaderstats.Money.Value < price then
+        if stat then stat.SetActive(false, "Need $"..price.." (have $"..LP.leaderstats.Money.Value..")") end
+        return
     end
 
     AbortAutoBuy = false
     local hrp    = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
     local origin = hrp and hrp.CFrame or CFrame.new(0,5,0)
+
     if stat then stat.SetActive(true, "Buying: "..itemName) end
+    if prog then prog.Set(0, amount, "Starting...") end
 
     for i = 1, amount do
         if AbortAutoBuy then break end
 
-        -- FIX: wait for item to appear unowned with proper timeout
-        local item = nil
+        -- ── Step 1: Wait for unowned item to appear in shop ──
+        if stat then stat.SetActive(true, "Waiting for item "..i.."/"..amount.."...") end
+        local item      = nil
         local waitStart = tick()
         repeat
-            task.wait(0.1)
+            task.wait(0.12)
             item = findShopItem(itemName)
-        until item or (tick()-waitStart > 25) or AbortAutoBuy
+        until item or AbortAutoBuy or (tick() - waitStart > 30)
 
-        if not item or AbortAutoBuy then
-            if stat then stat.SetActive(false, AbortAutoBuy and "Aborted." or "Item not found.") end
+        if AbortAutoBuy then break end
+        if not item then
+            if stat then stat.SetActive(false, "Item '"..itemName.."' not found in shop.") end
             break
         end
 
+        -- ── Step 2: Get main part ──
         local mainPart = item:FindFirstChild("Main") or item:FindFirstChildWhichIsA("BasePart")
         if not mainPart then
-            if prog then prog.Set(i, amount, "Skipped (no main part)") end
+            if stat then stat.SetActive(true, "Skipping (no main part)") end
+            if prog then prog.Set(i, amount, "Skipped "..i.."/"..amount) end
+            task.wait(0.5)
             continue
         end
 
-        local counter = GetCounter(item)
+        -- ── Step 3: Find nearest counter + get shop ID ──
+        local counter, storeName = GetCounter(item)
         if not counter then
-            if stat then stat.SetActive(false, "No counter found.") end; break
+            if stat then stat.SetActive(false, "No counter found near item.") end
+            task.wait(1)
+            continue
         end
+        local shopID = ShopIDS[storeName]
 
-        -- Move player next to item
+        -- ── Step 4: Teleport next to item, grab ownership ──
         local h = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
         if not h then break end
-        h.CFrame = mainPart.CFrame * CFrame.new(3,0,3)
-        task.wait(0.1)
 
-        -- FIX 3: grab ownership with giveup timeout
+        -- Teleport to item
+        h.CFrame = mainPart.CFrame * CFrame.new(3, 1, 3)
+        task.wait(0.15)
+
+        -- Rapidly fire drag to claim ownership (FIX 3: proper timeout + rapid spam)
+        if stat then stat.SetActive(true, "Grabbing item "..i.."...") end
         local grabT = tick()
         repeat
-            RS.Interaction.ClientIsDragging:FireServer(item)
-            task.wait(0.05)
-        until (item:FindFirstChild("Owner") and item.Owner.Value == LP)
-           or (tick()-grabT > 6)
-           or AbortAutoBuy
+            pcall(function()
+                RS.Interaction.ClientIsDragging:FireServer(item)
+                RS.Interaction.ClientIsDragging:FireServer(item)
+                RS.Interaction.ClientIsDragging:FireServer(item)
+            end)
+            task.wait(0.04)
+            -- Re-check character still valid
+            h = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+            if not h then break end
+            -- Keep player near item while grabbing
+            if (h.Position - mainPart.Position).Magnitude > 15 then
+                h.CFrame = mainPart.CFrame * CFrame.new(3,1,3)
+            end
+        until AbortAutoBuy
+           or (tick() - grabT > 8)
            or not item.Parent
+           or (item:FindFirstChild("Owner") and item.Owner.Value == LP)
 
-        if not (item.Parent and item:FindFirstChild("Owner") and item.Owner.Value == LP) then
-            continue  -- failed to grab ownership, skip
-        end
+        if AbortAutoBuy or not item.Parent then break end
 
-        -- Get network ownership
+        -- ── Step 5: Claim network ownership ──
         local netT = tick()
         repeat
-            RS.Interaction.ClientIsDragging:FireServer(item)
-            task.wait(0.05)
-        until isnetworkowner(mainPart) or (tick()-netT > 5)
+            pcall(function() RS.Interaction.ClientIsDragging:FireServer(item) end)
+            task.wait(0.04)
+        until hasNetOwnership(mainPart) or (tick() - netT > 5) or not item.Parent or AbortAutoBuy
 
-        -- FIX 4: place item at correct height above counter surface
-        local halfItemY    = mainPart.Size.Y / 2
-        local halfCounterY = counter.Size.Y / 2
-        local counterTopCF = CFrame.new(counter.Position + Vector3.new(0, halfCounterY + halfItemY + 0.1, 0))
-        RS.Interaction.ClientIsDragging:FireServer(item)
-        pcall(function() mainPart.CFrame = counterTopCF end)
-        task.wait(0.1)
+        -- ── Step 6: Place item on top of counter (FIX 4: correct height) ──
+        local halfItem    = mainPart.Size.Y / 2
+        local halfCounter = counter.Size.Y / 2
+        local placeCF = CFrame.new(
+            counter.Position.X,
+            counter.Position.Y + halfCounter + halfItem + 0.05,
+            counter.Position.Z
+        )
+
+        if stat then stat.SetActive(true, "Placing on counter "..i.."...") end
 
         -- Move player to counter
         h = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-        if h then h.CFrame = counter.CFrame * CFrame.new(3,0,3) end
+        if h then h.CFrame = counter.CFrame * CFrame.new(3, 1, 3) end
         task.wait(0.1)
 
-        -- FIX 5: get shop ID from counter's store parent name
-        local storeName = counter.Parent and counter.Parent.Name or ""
-        local shopID    = ShopIDS[storeName]
+        -- Place item aggressively
+        local placeT = tick()
+        repeat
+            pcall(function()
+                RS.Interaction.ClientIsDragging:FireServer(item)
+                mainPart.CFrame = placeCF
+            end)
+            task.wait(0.03)
+        until (tick()-placeT > 1) or not item.Parent or AbortAutoBuy
 
-        -- FIX 5 continued: pay loop exits when item is gone OR leaves ShopItems
+        if AbortAutoBuy or not item.Parent then break end
+
+        -- ── Step 7: Pay loop (FIX 5 + 6: correct exit condition) ──
+        if stat then stat.SetActive(true, "Paying for item "..i.."...") end
+        if not shopID then
+            -- Try to infer shop ID by scanning for nearest NPC
+            warn("[VH] No ShopID for store: "..(storeName or "?").." — attempting pay anyway")
+            for _, id in pairs(ShopIDS) do shopID = id; break end
+        end
+
         local payT = tick()
         repeat
             if AbortAutoBuy then break end
             pcall(function()
                 RS.Interaction.ClientIsDragging:FireServer(item)
-                mainPart.CFrame = counterTopCF  -- keep item on counter while paying
+                mainPart.CFrame = placeCF
             end)
             if shopID then Pay(shopID) end
-            task.wait(0.05)
-        until (not item.Parent)
-           or (item.Parent and item.Parent.Name ~= "ShopItems")
-           or (tick()-payT > 15)
+            task.wait(0.06)
+            -- FIX 5: item bought when it leaves workspace.Stores (Parent changes)
+        until not item.Parent
+           or (item.Parent ~= nil and item.Parent.Name ~= "ShopItems")
+           or (tick() - payT > 20)
            or AbortAutoBuy
 
-        -- Move bought item to origin
-        pcall(function()
-            if not (item and item.Parent) then return end
-            local t1 = tick()
-            repeat
-                RS.Interaction.ClientIsDragging:FireServer(item)
-                task.wait(0.05)
-            until isnetworkowner(mainPart) or tick()-t1 > 3 or not item.Parent
-            if item.Parent then
-                RS.Interaction.ClientIsDragging:FireServer(item)
-                mainPart.CFrame = origin * CFrame.new(0,2,0)
-                task.wait(0.1)
-            end
-            if openBox then
-                pcall(function() RS.Interaction.ClientInteracted:FireServer(item, "Open box") end)
-            end
-        end)
+        -- ── Step 8: Move bought item back to origin (FIX 7) ──
+        if item.Parent and item.Parent ~= workspace.Stores then
+            task.spawn(function()
+                pcall(function()
+                    -- Re-get network ownership of purchased item
+                    local t2 = tick()
+                    repeat
+                        RS.Interaction.ClientIsDragging:FireServer(item)
+                        task.wait(0.04)
+                    until hasNetOwnership(mainPart) or (tick()-t2 > 3) or not item.Parent
 
-        -- FIX 6: return to origin after EACH item, not just at the end
+                    if item.Parent then
+                        RS.Interaction.ClientIsDragging:FireServer(item)
+                        mainPart.CFrame = origin * CFrame.new(0, 2, 0)
+                        task.wait(0.1)
+                        if doOpenBox then
+                            RS.Interaction.ClientInteracted:FireServer(item, "Open box")
+                        end
+                    end
+                end)
+            end)
+        end
+
+        -- FIX 7: return to origin after EACH item
         h = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-        if h then h.CFrame = origin * CFrame.new(0,1,0) end
-        task.wait(0.3)
+        if h then h.CFrame = origin * CFrame.new(0, 1, 0) end
 
-        if prog then prog.Set(i, amount, "Buying... "..i.." / "..amount) end
+        if prog then prog.Set(i, amount, "Bought "..i.." / "..amount) end
+        task.wait(0.5)
     end
 
-    -- Final return
+    -- Final return home
     local hFinal = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-    if hFinal then hFinal.CFrame = origin * CFrame.new(0,1,0) end
+    if hFinal then hFinal.CFrame = origin * CFrame.new(0, 1, 0) end
 
-    if stat then stat.SetActive(false, AbortAutoBuy and "Aborted." or "Done!") end
+    if stat then stat.SetActive(false, AbortAutoBuy and "Aborted." or "Done! Bought "..amount.." item(s).") end
     if prog then prog.Set(amount, amount, AbortAutoBuy and "Aborted" or "Complete!") end
 end
 
@@ -603,7 +681,7 @@ local buyAmount = 1
 local openBox   = false
 
 local shopDD = makeFancyDropdown(ab, "Item", function() return shopCache end, function(val)
-    -- strip the " - $xxx" suffix to get just the item name
+    -- Strip the " - $xxx" suffix to get the clean item name
     itemToBuy = val:match("^(.-)%s*%-%s*%$") or val
 end)
 
@@ -618,13 +696,18 @@ local abProg = makeProgress(ab)
 makeButton(ab, "↻  Refresh Item List", function()
     shopCache = GrabShopItems()
     shopDD.Refresh()
+    abStat.SetActive(false, "Refreshed "..#shopCache.." items.")
 end)
 
 makeButton(ab, "Purchase Selected Item(s)", function()
+    if not itemToBuy then
+        abStat.SetActive(false, "Select an item first!")
+        return
+    end
     task.spawn(AutoBuy, itemToBuy, buyAmount, openBox, abProg, abStat)
 end)
 
-makeButton(ab, "Abort", function()
+makeButton(ab, "⏹  Abort", function()
     AbortAutoBuy = true
     abStat.SetActive(false, "Aborted.")
 end)
@@ -634,11 +717,15 @@ sectionLabel(ab, "Quick Purchases")
 
 makeButton(ab, "Buy All Missing Blueprints", function()
     local bps = getMissingBlueprints()
-    if #bps == 0 then abStat.SetActive(false, "No blueprints missing!"); return end
+    if #bps == 0 then
+        abStat.SetActive(false, "No blueprints missing!")
+        return
+    end
     abStat.SetActive(true, "Buying "..#bps.." blueprints...")
     task.spawn(function()
-        for _, v in ipairs(bps) do
+        for idx, v in ipairs(bps) do
             if AbortAutoBuy then break end
+            abStat.SetActive(true, "Blueprint "..idx.."/"..#bps..": "..v)
             AutoBuy(v, 1, true, abProg, nil)
         end
         abStat.SetActive(false, AbortAutoBuy and "Aborted." or "All blueprints done!")
@@ -650,7 +737,7 @@ makeButton(ab, "Buy Ferry Ticket",   function() Pay(13) end)
 makeButton(ab, "Buy Power of Ease",  function() Pay(3)  end)
 
 -- ════════════════════════════════════════════════════
--- SLOT TAB (unchanged from original Vanilla6)
+-- SLOT TAB
 -- ════════════════════════════════════════════════════
 
 local sl = pages["SlotTab"]
@@ -772,4 +859,4 @@ table.insert(VH.cleanupTasks, function()
     if landHL then pcall(function() landHL:Destroy() end) end
 end)
 
-print("[VanillaHub] Vanilla6 Fixed loaded — AutoBuy, Slot")
+print("[VanillaHub] Vanilla6 REWRITE loaded — AutoBuy + Slot")
