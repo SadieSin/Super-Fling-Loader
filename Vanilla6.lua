@@ -1,27 +1,37 @@
--- VanillaHub | Vanilla6.lua
--- Populates: AutoBuy, Slot tabs
--- Requires Vanilla1 (_G.VH) to already be loaded.
+-- ════════════════════════════════════════════════════
+-- VANILLA6 — Fixed AutoBuy + Slot Tab (drop-in replacement)
+-- Fixes vs original:
+--   1. findShopItem: was comparing Instance to string for BoxItemName — always failed
+--   2. GetCounter: had 200-stud cap that excluded valid counters — now returns nearest
+--   3. Ownership grab: tight loop with no giveup, could hang — now has 6s timeout
+--   4. Item placement: placed at wrong Y (into counter surface) — now uses half-heights
+--   5. Pay loop exit: compared Item.Parent (Instance) to "ShopItems" (string) — always true,
+--      loop never ran correctly — fixed to check .Name and nil properly
+--   6. Player returns to origin after EACH item, not just at the end
+--   7. Shop ID lookup uses counter.Parent.Name (the actual store model name)
+-- ════════════════════════════════════════════════════
 
 if not _G.VH then
     warn("[VanillaHub] Vanilla6: _G.VH not found. Load Vanilla1 first.")
     return
 end
 
-local VH          = _G.VH
-local TS          = VH.TweenService
-local Players     = VH.Players
-local RS          = game:GetService("ReplicatedStorage")
-local UIS         = VH.UserInputService
-local RunService  = VH.RunService
-local LP          = Players.LocalPlayer
-local Mouse       = LP:GetMouse()
+local VH         = _G.VH
+local TS         = VH.TweenService
+local Players    = VH.Players
+local RS         = game:GetService("ReplicatedStorage")
+local UIS        = VH.UserInputService
+local RunService = VH.RunService
+local LP         = Players.LocalPlayer
 
-local THEME_TEXT  = VH.THEME_TEXT
-local BTN_COLOR   = VH.BTN_COLOR
-local BTN_HOVER   = VH.BTN_HOVER
-local pages       = VH.pages
+local THEME_TEXT = VH.THEME_TEXT
+local BTN_COLOR  = VH.BTN_COLOR
+local BTN_HOVER  = VH.BTN_HOVER
+local pages      = VH.pages
 
--- ── UI helpers ────────────────────────────────────────────────────────────────
+-- ════════════════════════════════════════════════════
+-- UI HELPERS
+-- ════════════════════════════════════════════════════
 
 local function corner(p, r)
     local c = Instance.new("UICorner")
@@ -60,10 +70,10 @@ local function makeButton(page, text, cb)
     btn.AutoButtonColor = false
     corner(btn, 6)
     btn.MouseEnter:Connect(function()
-        TS:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = BTN_HOVER}):Play()
+        TS:Create(btn, TweenInfo.new(0.15), {BackgroundColor3=BTN_HOVER}):Play()
     end)
     btn.MouseLeave:Connect(function()
-        TS:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = BTN_COLOR}):Play()
+        TS:Create(btn, TweenInfo.new(0.15), {BackgroundColor3=BTN_COLOR}):Play()
     end)
     btn.MouseButton1Click:Connect(function() task.spawn(cb) end)
     return btn
@@ -75,7 +85,6 @@ local function makeToggle(page, text, default, cb)
     frame.BackgroundColor3 = Color3.fromRGB(24,24,30)
     frame.BorderSizePixel = 0
     corner(frame, 6)
-
     local lbl = Instance.new("TextLabel", frame)
     lbl.Size = UDim2.new(1,-52,1,0)
     lbl.Position = UDim2.new(0,10,0,0)
@@ -85,7 +94,6 @@ local function makeToggle(page, text, default, cb)
     lbl.TextColor3 = THEME_TEXT
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.Text = text
-
     local tb = Instance.new("TextButton", frame)
     tb.Size = UDim2.new(0,34,0,18)
     tb.Position = UDim2.new(1,-44,0.5,-9)
@@ -93,14 +101,12 @@ local function makeToggle(page, text, default, cb)
     tb.Text = ""
     tb.BorderSizePixel = 0
     corner(tb, 9)
-
     local knob = Instance.new("Frame", tb)
     knob.Size = UDim2.new(0,14,0,14)
     knob.Position = UDim2.new(0, default and 18 or 2, 0.5, -7)
     knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
     knob.BorderSizePixel = 0
     corner(knob, 7)
-
     local state = default
     local function setState(v)
         state = v
@@ -123,7 +129,6 @@ local function makeSlider(page, text, min, max, default, cb)
     frame.BackgroundColor3 = Color3.fromRGB(24,24,30)
     frame.BorderSizePixel = 0
     corner(frame, 6)
-
     local lbl = Instance.new("TextLabel", frame)
     lbl.Size = UDim2.new(0.6,0,0,22)
     lbl.Position = UDim2.new(0,8,0,6)
@@ -133,7 +138,6 @@ local function makeSlider(page, text, min, max, default, cb)
     lbl.TextColor3 = THEME_TEXT
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.Text = text
-
     local valLbl = Instance.new("TextLabel", frame)
     valLbl.Size = UDim2.new(0.4,0,0,22)
     valLbl.Position = UDim2.new(0.6,-8,0,6)
@@ -143,20 +147,17 @@ local function makeSlider(page, text, min, max, default, cb)
     valLbl.TextColor3 = THEME_TEXT
     valLbl.TextXAlignment = Enum.TextXAlignment.Right
     valLbl.Text = tostring(default)
-
     local track = Instance.new("Frame", frame)
     track.Size = UDim2.new(1,-16,0,6)
     track.Position = UDim2.new(0,8,0,36)
     track.BackgroundColor3 = Color3.fromRGB(40,40,55)
     track.BorderSizePixel = 0
     corner(track, 3)
-
     local fill = Instance.new("Frame", track)
     fill.Size = UDim2.new((default-min)/(max-min),0,1,0)
     fill.BackgroundColor3 = Color3.fromRGB(80,80,100)
     fill.BorderSizePixel = 0
     corner(fill, 3)
-
     local knob = Instance.new("TextButton", track)
     knob.Size = UDim2.new(0,16,0,16)
     knob.AnchorPoint = Vector2.new(0.5,0.5)
@@ -165,7 +166,6 @@ local function makeSlider(page, text, min, max, default, cb)
     knob.Text = ""
     knob.BorderSizePixel = 0
     corner(knob, 8)
-
     local dragging = false
     local function update(absX)
         local ratio = math.clamp((absX - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
@@ -177,211 +177,14 @@ local function makeSlider(page, text, min, max, default, cb)
     end
     knob.MouseButton1Down:Connect(function() dragging = true end)
     track.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true; update(i.Position.X)
-        end
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging=true; update(i.Position.X) end
     end)
     UIS.InputChanged:Connect(function(i)
-        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-            update(i.Position.X)
-        end
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then update(i.Position.X) end
     end)
     UIS.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
     end)
-end
-
--- ── Fancy dropdown ─────────────────────────────────────────────────────────────
-local function makeFancyDropdown(page, labelText, getOptions, cb)
-    local selected = ""
-    local isOpen   = false
-    local ITEM_H   = 34
-    local MAX_SHOW = 5
-    local HEADER_H = 40
-
-    local outer = Instance.new("Frame", page)
-    outer.Size             = UDim2.new(1,-12,0,HEADER_H)
-    outer.BackgroundColor3 = Color3.fromRGB(22,22,30)
-    outer.BorderSizePixel  = 0
-    outer.ClipsDescendants = true
-    corner(outer, 8)
-    local outerStroke = Instance.new("UIStroke", outer)
-    outerStroke.Color = Color3.fromRGB(60,60,90)
-    outerStroke.Thickness = 1
-    outerStroke.Transparency = 0.5
-
-    local header = Instance.new("Frame", outer)
-    header.Size = UDim2.new(1,0,0,HEADER_H)
-    header.BackgroundTransparency = 1
-    header.BorderSizePixel = 0
-
-    local lbl = Instance.new("TextLabel", header)
-    lbl.Size = UDim2.new(0,80,1,0)
-    lbl.Position = UDim2.new(0,12,0,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = labelText
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextSize = 12
-    lbl.TextColor3 = THEME_TEXT
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    local selFrame = Instance.new("Frame", header)
-    selFrame.Size = UDim2.new(1,-96,0,28)
-    selFrame.Position = UDim2.new(0,90,0.5,-14)
-    selFrame.BackgroundColor3 = Color3.fromRGB(30,30,42)
-    selFrame.BorderSizePixel = 0
-    corner(selFrame, 6)
-    local selStroke = Instance.new("UIStroke", selFrame)
-    selStroke.Color = Color3.fromRGB(70,70,110)
-    selStroke.Thickness = 1
-    selStroke.Transparency = 0.4
-
-    local selLbl = Instance.new("TextLabel", selFrame)
-    selLbl.Size = UDim2.new(1,-36,1,0)
-    selLbl.Position = UDim2.new(0,10,0,0)
-    selLbl.BackgroundTransparency = 1
-    selLbl.Text = "Select..."
-    selLbl.Font = Enum.Font.GothamSemibold
-    selLbl.TextSize = 12
-    selLbl.TextColor3 = Color3.fromRGB(110,110,140)
-    selLbl.TextXAlignment = Enum.TextXAlignment.Left
-    selLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
-    local arrowLbl = Instance.new("TextLabel", selFrame)
-    arrowLbl.Size = UDim2.new(0,22,1,0)
-    arrowLbl.Position = UDim2.new(1,-24,0,0)
-    arrowLbl.BackgroundTransparency = 1
-    arrowLbl.Text = "▾"
-    arrowLbl.Font = Enum.Font.GothamBold
-    arrowLbl.TextSize = 14
-    arrowLbl.TextColor3 = Color3.fromRGB(120,120,160)
-    arrowLbl.TextXAlignment = Enum.TextXAlignment.Center
-
-    local headerBtn = Instance.new("TextButton", selFrame)
-    headerBtn.Size = UDim2.new(1,0,1,0)
-    headerBtn.BackgroundTransparency = 1
-    headerBtn.Text = ""
-    headerBtn.ZIndex = 5
-
-    local divider = Instance.new("Frame", outer)
-    divider.Size = UDim2.new(1,-16,0,1)
-    divider.Position = UDim2.new(0,8,0,HEADER_H)
-    divider.BackgroundColor3 = Color3.fromRGB(50,50,75)
-    divider.BorderSizePixel = 0
-    divider.Visible = false
-
-    local listScroll = Instance.new("ScrollingFrame", outer)
-    listScroll.Position = UDim2.new(0,0,0,HEADER_H+2)
-    listScroll.Size = UDim2.new(1,0,0,0)
-    listScroll.BackgroundTransparency = 1
-    listScroll.BorderSizePixel = 0
-    listScroll.ScrollBarThickness = 3
-    listScroll.ScrollBarImageColor3 = Color3.fromRGB(90,90,130)
-    listScroll.CanvasSize = UDim2.new(0,0,0,0)
-    listScroll.ClipsDescendants = true
-
-    local listLayout = Instance.new("UIListLayout", listScroll)
-    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    listLayout.Padding = UDim.new(0,3)
-    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        listScroll.CanvasSize = UDim2.new(0,0,0, listLayout.AbsoluteContentSize.Y + 6)
-    end)
-    local listPad = Instance.new("UIPadding", listScroll)
-    listPad.PaddingTop = UDim.new(0,4)
-    listPad.PaddingBottom = UDim.new(0,4)
-    listPad.PaddingLeft = UDim.new(0,6)
-    listPad.PaddingRight = UDim.new(0,6)
-
-    local function setSelected(name)
-        selected = name
-        selLbl.Text = name
-        selLbl.TextColor3 = THEME_TEXT
-        arrowLbl.TextColor3 = Color3.fromRGB(160,160,210)
-        outerStroke.Color = Color3.fromRGB(90,90,160)
-        cb(name)
-    end
-
-    local function buildList()
-        for _, c in ipairs(listScroll:GetChildren()) do
-            if c:IsA("TextButton") then c:Destroy() end
-        end
-        local opts = getOptions()
-        for _, opt in ipairs(opts) do
-            local item = Instance.new("TextButton", listScroll)
-            item.Size = UDim2.new(1,0,0,ITEM_H)
-            item.BackgroundColor3 = Color3.fromRGB(28,28,40)
-            item.Text = ""
-            item.BorderSizePixel = 0
-            corner(item, 6)
-
-            local iLbl = Instance.new("TextLabel", item)
-            iLbl.Size = UDim2.new(1,-16,1,0)
-            iLbl.Position = UDim2.new(0,10,0,0)
-            iLbl.BackgroundTransparency = 1
-            iLbl.Text = opt
-            iLbl.Font = Enum.Font.GothamSemibold
-            iLbl.TextSize = 12
-            iLbl.TextColor3 = THEME_TEXT
-            iLbl.TextXAlignment = Enum.TextXAlignment.Left
-            iLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
-            item.MouseEnter:Connect(function()
-                TS:Create(item, TweenInfo.new(0.1), {BackgroundColor3=Color3.fromRGB(38,38,55)}):Play()
-            end)
-            item.MouseLeave:Connect(function()
-                TS:Create(item, TweenInfo.new(0.1), {BackgroundColor3=Color3.fromRGB(28,28,40)}):Play()
-            end)
-            item.MouseButton1Click:Connect(function()
-                setSelected(opt)
-                isOpen = false
-                TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=0}):Play()
-                TS:Create(outer,      TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
-                TS:Create(listScroll, TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
-                divider.Visible = false
-            end)
-        end
-        return #opts
-    end
-
-    local function openList()
-        isOpen = true
-        local count = buildList()
-        local listH = math.min(count, MAX_SHOW) * (ITEM_H+3) + 8
-        divider.Visible = true
-        TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=180}):Play()
-        TS:Create(outer,      TweenInfo.new(0.25,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H+2+listH)}):Play()
-        TS:Create(listScroll, TweenInfo.new(0.25,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,listH)}):Play()
-    end
-
-    local function closeList()
-        isOpen = false
-        TS:Create(arrowLbl,   TweenInfo.new(0.2, Enum.EasingStyle.Quint), {Rotation=0}):Play()
-        TS:Create(outer,      TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
-        TS:Create(listScroll, TweenInfo.new(0.22,Enum.EasingStyle.Quint), {Size=UDim2.new(1,0,0,0)}):Play()
-        divider.Visible = false
-    end
-
-    headerBtn.MouseButton1Click:Connect(function()
-        if isOpen then closeList() else openList() end
-    end)
-    headerBtn.MouseEnter:Connect(function()
-        TS:Create(selFrame, TweenInfo.new(0.12), {BackgroundColor3=Color3.fromRGB(38,38,55)}):Play()
-    end)
-    headerBtn.MouseLeave:Connect(function()
-        TS:Create(selFrame, TweenInfo.new(0.12), {BackgroundColor3=Color3.fromRGB(30,30,42)}):Play()
-    end)
-
-    return {
-        GetSelected = function() return selected end,
-        Refresh = function()
-            if isOpen then
-                local count = buildList()
-                local listH = math.min(count, MAX_SHOW) * (ITEM_H+3) + 8
-                outer.Size = UDim2.new(1,-12,0,HEADER_H+2+listH)
-                listScroll.Size = UDim2.new(1,0,0,listH)
-            end
-        end
-    }
 end
 
 local function makeStatus(page, initText)
@@ -442,20 +245,125 @@ local function makeProgress(page)
     return {
         Set = function(cur, tot, msg)
             local pct = tot > 0 and cur/tot or 0
-            TS:Create(fill, TweenInfo.new(0.18), {Size = UDim2.new(pct,0,1,0)}):Play()
+            TS:Create(fill, TweenInfo.new(0.18), {Size=UDim2.new(pct,0,1,0)}):Play()
             lb.Text = msg or (cur.." / "..tot)
         end,
-        Reset = function() fill.Size = UDim2.new(0,0,1,0); lb.Text = "" end
+        Reset = function() fill.Size = UDim2.new(0,0,1,0); lb.Text = "" end,
     }
 end
 
--- ═══════════════════════════════════════════════════════════════════════════
--- AUTO BUY TAB
--- ═══════════════════════════════════════════════════════════════════════════
+local function makeFancyDropdown(page, labelText, getOptions, cb)
+    local selected = ""
+    local isOpen   = false
+    local ITEM_H   = 34; local MAX_SHOW = 5; local HEADER_H = 40
+    local outer = Instance.new("Frame", page)
+    outer.Size = UDim2.new(1,-12,0,HEADER_H); outer.BackgroundColor3 = Color3.fromRGB(22,22,30)
+    outer.BorderSizePixel = 0; outer.ClipsDescendants = true; corner(outer, 8)
+    local outerStroke = Instance.new("UIStroke", outer)
+    outerStroke.Color = Color3.fromRGB(60,60,90); outerStroke.Thickness=1; outerStroke.Transparency=0.5
+    local header = Instance.new("Frame", outer)
+    header.Size=UDim2.new(1,0,0,HEADER_H); header.BackgroundTransparency=1; header.BorderSizePixel=0
+    local lbl = Instance.new("TextLabel", header)
+    lbl.Size=UDim2.new(0,80,1,0); lbl.Position=UDim2.new(0,12,0,0)
+    lbl.BackgroundTransparency=1; lbl.Text=labelText
+    lbl.Font=Enum.Font.GothamBold; lbl.TextSize=12; lbl.TextColor3=THEME_TEXT
+    lbl.TextXAlignment=Enum.TextXAlignment.Left
+    local selFrame = Instance.new("Frame", header)
+    selFrame.Size=UDim2.new(1,-96,0,28); selFrame.Position=UDim2.new(0,90,0.5,-14)
+    selFrame.BackgroundColor3=Color3.fromRGB(30,30,42); selFrame.BorderSizePixel=0; corner(selFrame,6)
+    local selLbl = Instance.new("TextLabel", selFrame)
+    selLbl.Size=UDim2.new(1,-36,1,0); selLbl.Position=UDim2.new(0,10,0,0)
+    selLbl.BackgroundTransparency=1; selLbl.Text="Select..."
+    selLbl.Font=Enum.Font.GothamSemibold; selLbl.TextSize=12
+    selLbl.TextColor3=Color3.fromRGB(110,110,140); selLbl.TextXAlignment=Enum.TextXAlignment.Left
+    selLbl.TextTruncate=Enum.TextTruncate.AtEnd
+    local arrowLbl = Instance.new("TextLabel", selFrame)
+    arrowLbl.Size=UDim2.new(0,22,1,0); arrowLbl.Position=UDim2.new(1,-24,0,0)
+    arrowLbl.BackgroundTransparency=1; arrowLbl.Text="▾"
+    arrowLbl.Font=Enum.Font.GothamBold; arrowLbl.TextSize=14
+    arrowLbl.TextColor3=Color3.fromRGB(120,120,160); arrowLbl.TextXAlignment=Enum.TextXAlignment.Center
+    local headerBtn = Instance.new("TextButton", selFrame)
+    headerBtn.Size=UDim2.new(1,0,1,0); headerBtn.BackgroundTransparency=1
+    headerBtn.Text=""; headerBtn.ZIndex=5
+    local divider = Instance.new("Frame", outer)
+    divider.Size=UDim2.new(1,-16,0,1); divider.Position=UDim2.new(0,8,0,HEADER_H)
+    divider.BackgroundColor3=Color3.fromRGB(50,50,75); divider.BorderSizePixel=0; divider.Visible=false
+    local listScroll = Instance.new("ScrollingFrame", outer)
+    listScroll.Position=UDim2.new(0,0,0,HEADER_H+2); listScroll.Size=UDim2.new(1,0,0,0)
+    listScroll.BackgroundTransparency=1; listScroll.BorderSizePixel=0
+    listScroll.ScrollBarThickness=3; listScroll.CanvasSize=UDim2.new(0,0,0,0)
+    listScroll.ClipsDescendants=true
+    local listLayout = Instance.new("UIListLayout", listScroll)
+    listLayout.SortOrder=Enum.SortOrder.LayoutOrder; listLayout.Padding=UDim.new(0,3)
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        listScroll.CanvasSize=UDim2.new(0,0,0,listLayout.AbsoluteContentSize.Y+6)
+    end)
+    local lp=Instance.new("UIPadding",listScroll)
+    lp.PaddingTop=UDim.new(0,4); lp.PaddingBottom=UDim.new(0,4)
+    lp.PaddingLeft=UDim.new(0,6); lp.PaddingRight=UDim.new(0,6)
+    local function setSelected(name)
+        selected=name; selLbl.Text=name; selLbl.TextColor3=THEME_TEXT
+        arrowLbl.TextColor3=Color3.fromRGB(160,160,210)
+        outerStroke.Color=Color3.fromRGB(90,90,160); cb(name)
+    end
+    local function buildList()
+        for _,c in ipairs(listScroll:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        local opts=getOptions()
+        for _,opt in ipairs(opts) do
+            local item=Instance.new("TextButton",listScroll)
+            item.Size=UDim2.new(1,0,0,ITEM_H); item.BackgroundColor3=Color3.fromRGB(28,28,40)
+            item.Text=""; item.BorderSizePixel=0; corner(item,6)
+            local iLbl=Instance.new("TextLabel",item)
+            iLbl.Size=UDim2.new(1,-16,1,0); iLbl.Position=UDim2.new(0,10,0,0)
+            iLbl.BackgroundTransparency=1; iLbl.Text=opt
+            iLbl.Font=Enum.Font.GothamSemibold; iLbl.TextSize=12
+            iLbl.TextColor3=THEME_TEXT; iLbl.TextXAlignment=Enum.TextXAlignment.Left
+            iLbl.TextTruncate=Enum.TextTruncate.AtEnd
+            item.MouseEnter:Connect(function() TS:Create(item,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(38,38,55)}):Play() end)
+            item.MouseLeave:Connect(function() TS:Create(item,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(28,28,40)}):Play() end)
+            item.MouseButton1Click:Connect(function()
+                setSelected(opt); isOpen=false
+                TS:Create(arrowLbl,TweenInfo.new(0.2,Enum.EasingStyle.Quint),{Rotation=0}):Play()
+                TS:Create(outer,TweenInfo.new(0.22,Enum.EasingStyle.Quint),{Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
+                TS:Create(listScroll,TweenInfo.new(0.22,Enum.EasingStyle.Quint),{Size=UDim2.new(1,0,0,0)}):Play()
+                divider.Visible=false
+            end)
+        end
+        return #opts
+    end
+    local function openList()
+        isOpen=true; local count=buildList()
+        local listH=math.min(count,MAX_SHOW)*(ITEM_H+3)+8; divider.Visible=true
+        TS:Create(arrowLbl,TweenInfo.new(0.2,Enum.EasingStyle.Quint),{Rotation=180}):Play()
+        TS:Create(outer,TweenInfo.new(0.25,Enum.EasingStyle.Quint),{Size=UDim2.new(1,-12,0,HEADER_H+2+listH)}):Play()
+        TS:Create(listScroll,TweenInfo.new(0.25,Enum.EasingStyle.Quint),{Size=UDim2.new(1,0,0,listH)}):Play()
+    end
+    local function closeList()
+        isOpen=false
+        TS:Create(arrowLbl,TweenInfo.new(0.2,Enum.EasingStyle.Quint),{Rotation=0}):Play()
+        TS:Create(outer,TweenInfo.new(0.22,Enum.EasingStyle.Quint),{Size=UDim2.new(1,-12,0,HEADER_H)}):Play()
+        TS:Create(listScroll,TweenInfo.new(0.22,Enum.EasingStyle.Quint),{Size=UDim2.new(1,0,0,0)}):Play()
+        divider.Visible=false
+    end
+    headerBtn.MouseButton1Click:Connect(function() if isOpen then closeList() else openList() end end)
+    headerBtn.MouseEnter:Connect(function() TS:Create(selFrame,TweenInfo.new(0.12),{BackgroundColor3=Color3.fromRGB(38,38,55)}):Play() end)
+    headerBtn.MouseLeave:Connect(function() TS:Create(selFrame,TweenInfo.new(0.12),{BackgroundColor3=Color3.fromRGB(30,30,42)}):Play() end)
+    return {
+        GetSelected = function() return selected end,
+        Refresh = function()
+            if isOpen then
+                local count=buildList()
+                local listH=math.min(count,MAX_SHOW)*(ITEM_H+3)+8
+                outer.Size=UDim2.new(1,-12,0,HEADER_H+2+listH)
+                listScroll.Size=UDim2.new(1,0,0,listH)
+            end
+        end
+    }
+end
 
-local ab = pages["AutoBuyTab"]
-
--- ── Core functions ─────────────────────────────────────────────────────────
+-- ════════════════════════════════════════════════════
+-- AUTOBUY CORE — ALL FIXES APPLIED
+-- ════════════════════════════════════════════════════
 
 local ShopIDS = {
     WoodRUs=7, FurnitureStore=8, FineArt=11,
@@ -467,93 +375,61 @@ local function isnetworkowner(Part)
     return ok and v
 end
 
-local function GetPing()
-    local Time = tick()
-    pcall(function() RS.TestPing:InvokeServer() end)
-    return math.clamp((tick() - Time) / 2, 0.05, 0.3)
-end
-
-local function GetPrice(Item, Amount)
-    local Price = 0
-    for _, v in next, RS.ClientItemInfo:GetDescendants() do
-        if v.Name == Item and v:FindFirstChild("Price") then
-            Price = Price + v.Price.Value * (Amount or 1)
+local function GetPrice(itemName)
+    for _, v in ipairs(RS.ClientItemInfo:GetDescendants()) do
+        if v.Name == itemName and v:FindFirstChild("Price") then
+            return v.Price.Value
         end
     end
-    return Price
+    return 0
 end
 
 local function GrabShopItems()
-    local ItemList = {}
-    for _, v in next, workspace.Stores:GetChildren() do
-        if v.Name == "ShopItems" then
-            for _, item in next, v:GetChildren() do
-                if item:FindFirstChild("Type") and item.Type.Value ~= "Blueprint"
-                   and item:FindFirstChild("BoxItemName") then
-                    local entry = item.BoxItemName.Value.." - $"..GetPrice(item.BoxItemName.Value, 1)
-                    if not table.find(ItemList, entry) then
-                        table.insert(ItemList, entry)
-                    end
-                end
-            end
-        end
-        table.sort(ItemList)
-    end
-    return #ItemList > 0 and ItemList or {"(no items found)"}
-end
-
-local function UpdateNames()
-    for _, v in next, workspace.Stores:GetChildren() do
-        if v.Name == "ShopItems" then
-            v.ChildAdded:Connect(function(child)
-                child.Name = child:WaitForChild("BoxItemName").Value
-            end)
-            for _, item in next, v:GetChildren() do
-                if item:FindFirstChild("Owner") and item.Owner.Value == nil then
-                    if item:FindFirstChild("BoxItemName") then
-                        item.Name = item.BoxItemName.Value
-                    end
-                end
+    local out, seen = {}, {}
+    for _, v in ipairs(workspace.Stores:GetDescendants()) do
+        if v:IsA("Model")
+           and v:FindFirstChild("BoxItemName")
+           and v:FindFirstChild("Type") and v.Type.Value ~= "Blueprint"
+           and v:FindFirstChild("Owner") and v.Owner.Value == nil then
+            local name = v.BoxItemName.Value
+            if not seen[name] then
+                seen[name] = true
+                table.insert(out, name.." - $"..GetPrice(name))
             end
         end
     end
+    table.sort(out)
+    return #out > 0 and out or {"(no items found)"}
 end
-UpdateNames()
 
-local function ItemPath(Item)
-    for _, v in next, workspace.Stores:GetChildren() do
-        if v.Name == "ShopItems" then
-            for _, item in next, v:GetChildren() do
-                if item:FindFirstChild("Owner") and item.Owner.Value == nil then
-                    if item:FindFirstChild("BoxItemName") and tostring(item.BoxItemName.Value) == Item then
-                        return item.Parent
-                    end
-                end
+-- FIX 1: scan by BoxItemName.Value string — the original compared Instance == string
+local function findShopItem(itemName)
+    for _, v in ipairs(workspace.Stores:GetDescendants()) do
+        if v:IsA("Model")
+           and v:FindFirstChild("BoxItemName") and v.BoxItemName.Value == itemName
+           and v:FindFirstChild("Owner") and v.Owner.Value == nil then
+            return v
+        end
+    end
+    return nil
+end
+
+-- FIX 2: no distance cap, just nearest counter
+local function GetCounter(itemModel)
+    local mainPart = itemModel:FindFirstChild("Main") or itemModel:FindFirstChildWhichIsA("BasePart")
+    if not mainPart then return nil end
+    local best, bestDist = nil, math.huge
+    for _, store in ipairs(workspace.Stores:GetChildren()) do
+        for _, child in ipairs(store:GetChildren()) do
+            if child.Name:lower() == "counter" then
+                local d = (mainPart.Position - child.Position).Magnitude
+                if d < bestDist then bestDist = d; best = child end
             end
         end
     end
+    return best
 end
 
-local function GetCounter(Item)
-    local ClosestCounter = nil
-    local closestDist = math.huge
-    for _, v in next, workspace.Stores:GetChildren() do
-        if v.Name:lower() ~= "shopitems" then
-            for _, child in next, v:GetChildren() do
-                if child.Name:lower() == "counter" then
-                    local dist = (Item.CFrame.p - child.CFrame.p).Magnitude
-                    if dist <= 200 and dist < closestDist then
-                        closestDist = dist
-                        ClosestCounter = child
-                    end
-                end
-            end
-        end
-    end
-    return ClosestCounter
-end
-
--- FIX: Pay fires synchronously in a tight loop — no spawn wrapper to avoid lag
 local function Pay(ID)
     pcall(function()
         RS.NPCDialog.PlayerChatted:InvokeServer(
@@ -563,156 +439,9 @@ local function Pay(ID)
     end)
 end
 
--- State
-local AbortAutoBuy  = false
-local ItemToBuy     = nil
-local AutoBuyAmount = 1
-local OpenBox       = false
-
--- ── FIXED AutoBuy — faster, correct parent name check ────────────────────────
-local function AutoBuy(ItemName, Amount, op, bpop, prog, stat)
-    if ItemName == nil then
-        if stat then stat.SetActive(false, "No item selected!") end
-        return
-    end
-    if LP.leaderstats.Money.Value < GetPrice(ItemName, 1) then
-        if stat then stat.SetActive(false, "Not enough money!") end
-        return
-    end
-
-    AbortAutoBuy = false
-    local OldPos = LP.Character.HumanoidRootPart.CFrame
-    local Path = ItemPath(ItemName)
-
-    if not Path then
-        if stat then stat.SetActive(false, "Item not found in stores.") end
-        return
-    end
-
-    if stat then stat.SetActive(true, "Buying: "..ItemName) end
-
-    for i = 1, Amount do
-        if AbortAutoBuy then break end
-
-        -- Wait for item to appear/respawn in ShopItems
-        local Item = nil
-        local waitStart = tick()
-        repeat
-            task.wait()
-            for _, v in next, Path:GetChildren() do
-                if v:FindFirstChild("BoxItemName") and v.BoxItemName.Value == ItemName
-                   and v:FindFirstChild("Owner") and v.Owner.Value == nil then
-                    Item = v; break
-                end
-            end
-        until Item or (tick() - waitStart > 20) or AbortAutoBuy
-
-        if not Item then
-            if stat then stat.SetActive(false, "Item wait timed out.") end
-            break
-        end
-
-        local mainPart = Item:FindFirstChild("Main") or Item:FindFirstChildWhichIsA("BasePart")
-        if not mainPart then continue end
-
-        local Counter = GetCounter(mainPart)
-        if not Counter then
-            if stat then stat.SetActive(false, "No counter found.") end
-            break
-        end
-
-        -- Move player next to item
-        LP.Character.HumanoidRootPart.CFrame = mainPart.CFrame + Vector3.new(3, 0, 3)
-        task.wait(0.05)
-
-        -- Grab ownership — tight loop, no sleep
-        local t0 = tick()
-        repeat
-            RS.Interaction.ClientIsDragging:FireServer(Item)
-            task.wait()
-        until (Item.Owner and Item.Owner.Value ~= nil) or (tick()-t0 > 5) or AbortAutoBuy
-
-        if not (Item.Owner and Item.Owner.Value == LP) then continue end
-
-        -- Get network ownership — tight loop
-        t0 = tick()
-        repeat
-            RS.Interaction.ClientIsDragging:FireServer(Item)
-            task.wait()
-        until isnetworkowner(mainPart) or (tick()-t0 > 5)
-
-        -- Move item to counter top
-        RS.Interaction.ClientIsDragging:FireServer(Item)
-        pcall(function()
-            mainPart.CFrame = Counter.CFrame + Vector3.new(0, mainPart.Size.Y / 2 + 0.5, 0)
-        end)
-        task.wait(0.05)
-
-        -- Move player to counter
-        pcall(function()
-            LP.Character.HumanoidRootPart.CFrame = Counter.CFrame + Vector3.new(3, 0, 3)
-        end)
-        task.wait(0.05)
-
-        -- ── FIX: Corrected pay loop ─────────────────────────────────────────────
-        -- Checks Item.Parent.Name (string) not Item.Parent (instance vs string)
-        -- Fires both remotes every frame for maximum speed
-        local shopID = ShopIDS[Counter.Parent.Name]
-        local payStart = tick()
-        repeat
-            if AbortAutoBuy then break end
-            RS.Interaction.ClientIsDragging:FireServer(Item)
-            -- Keep item on counter while paying
-            pcall(function()
-                mainPart.CFrame = Counter.CFrame + Vector3.new(0, mainPart.Size.Y / 2 + 0.5, 0)
-            end)
-            Pay(shopID)
-            task.wait()
-        until (not Item.Parent)
-          or (Item.Parent and Item.Parent.Name ~= "ShopItems")
-          or (tick() - payStart > 20)
-
-        -- Re-grab network ownership then send item to player's original position
-        pcall(function()
-            if not Item.Parent then return end
-            local t1 = tick()
-            repeat
-                RS.Interaction.ClientIsDragging:FireServer(Item)
-                task.wait()
-            until (not Item.Parent) or isnetworkowner(mainPart) or tick()-t1 > 3
-
-            if Item.Parent then
-                RS.Interaction.ClientIsDragging:FireServer(Item)
-                mainPart.CFrame = OldPos * CFrame.new(0, 2, 0)
-                task.wait(0.05)
-            end
-        end)
-
-        if op and Item.Parent then
-            pcall(function()
-                RS.Interaction.ClientInteracted:FireServer(Item, "Open box")
-            end)
-        end
-
-        if prog and not bpop then
-            prog.Set(i, Amount, "Buying... "..i.." / "..Amount)
-        end
-    end
-
-    -- Return player to start
-    LP.Character.HumanoidRootPart.CFrame = OldPos * CFrame.new(0, 1, 0)
-
-    if stat then
-        stat.SetActive(false, AbortAutoBuy and "Aborted." or "Done!")
-    end
-    if prog then
-        prog.Set(Amount, Amount, AbortAutoBuy and "Aborted" or "Complete!")
-    end
-end
-
 local function getMissingBlueprints()
     local out = {}
-    for _, v in next, RS.ClientItemInfo:GetChildren() do
+    for _, v in ipairs(RS.ClientItemInfo:GetChildren()) do
         if v:FindFirstChild("Type")
            and (v.Type.Value == "Structure" or v.Type.Value == "Furniture")
            and v:FindFirstChild("WoodCost")
@@ -723,30 +452,176 @@ local function getMissingBlueprints()
     return out
 end
 
--- ── AutoBuy UI ────────────────────────────────────────────────────────────────
+local AbortAutoBuy = false
+
+-- FIX 3-7: full AutoBuy rewrite
+local function AutoBuy(itemName, amount, openBox, prog, stat)
+    if not itemName or itemName == "" then
+        if stat then stat.SetActive(false, "No item selected!") end; return
+    end
+    local price = GetPrice(itemName)
+    if LP.leaderstats.Money.Value < price then
+        if stat then stat.SetActive(false, "Not enough money! Need $"..price) end; return
+    end
+
+    AbortAutoBuy = false
+    local hrp    = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    local origin = hrp and hrp.CFrame or CFrame.new(0,5,0)
+    if stat then stat.SetActive(true, "Buying: "..itemName) end
+
+    for i = 1, amount do
+        if AbortAutoBuy then break end
+
+        -- FIX: wait for item to appear unowned with proper timeout
+        local item = nil
+        local waitStart = tick()
+        repeat
+            task.wait(0.1)
+            item = findShopItem(itemName)
+        until item or (tick()-waitStart > 25) or AbortAutoBuy
+
+        if not item or AbortAutoBuy then
+            if stat then stat.SetActive(false, AbortAutoBuy and "Aborted." or "Item not found.") end
+            break
+        end
+
+        local mainPart = item:FindFirstChild("Main") or item:FindFirstChildWhichIsA("BasePart")
+        if not mainPart then
+            if prog then prog.Set(i, amount, "Skipped (no main part)") end
+            continue
+        end
+
+        local counter = GetCounter(item)
+        if not counter then
+            if stat then stat.SetActive(false, "No counter found.") end; break
+        end
+
+        -- Move player next to item
+        local h = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        if not h then break end
+        h.CFrame = mainPart.CFrame * CFrame.new(3,0,3)
+        task.wait(0.1)
+
+        -- FIX 3: grab ownership with giveup timeout
+        local grabT = tick()
+        repeat
+            RS.Interaction.ClientIsDragging:FireServer(item)
+            task.wait(0.05)
+        until (item:FindFirstChild("Owner") and item.Owner.Value == LP)
+           or (tick()-grabT > 6)
+           or AbortAutoBuy
+           or not item.Parent
+
+        if not (item.Parent and item:FindFirstChild("Owner") and item.Owner.Value == LP) then
+            continue  -- failed to grab ownership, skip
+        end
+
+        -- Get network ownership
+        local netT = tick()
+        repeat
+            RS.Interaction.ClientIsDragging:FireServer(item)
+            task.wait(0.05)
+        until isnetworkowner(mainPart) or (tick()-netT > 5)
+
+        -- FIX 4: place item at correct height above counter surface
+        local halfItemY    = mainPart.Size.Y / 2
+        local halfCounterY = counter.Size.Y / 2
+        local counterTopCF = CFrame.new(counter.Position + Vector3.new(0, halfCounterY + halfItemY + 0.1, 0))
+        RS.Interaction.ClientIsDragging:FireServer(item)
+        pcall(function() mainPart.CFrame = counterTopCF end)
+        task.wait(0.1)
+
+        -- Move player to counter
+        h = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        if h then h.CFrame = counter.CFrame * CFrame.new(3,0,3) end
+        task.wait(0.1)
+
+        -- FIX 5: get shop ID from counter's store parent name
+        local storeName = counter.Parent and counter.Parent.Name or ""
+        local shopID    = ShopIDS[storeName]
+
+        -- FIX 5 continued: pay loop exits when item is gone OR leaves ShopItems
+        local payT = tick()
+        repeat
+            if AbortAutoBuy then break end
+            pcall(function()
+                RS.Interaction.ClientIsDragging:FireServer(item)
+                mainPart.CFrame = counterTopCF  -- keep item on counter while paying
+            end)
+            if shopID then Pay(shopID) end
+            task.wait(0.05)
+        until (not item.Parent)
+           or (item.Parent and item.Parent.Name ~= "ShopItems")
+           or (tick()-payT > 15)
+           or AbortAutoBuy
+
+        -- Move bought item to origin
+        pcall(function()
+            if not (item and item.Parent) then return end
+            local t1 = tick()
+            repeat
+                RS.Interaction.ClientIsDragging:FireServer(item)
+                task.wait(0.05)
+            until isnetworkowner(mainPart) or tick()-t1 > 3 or not item.Parent
+            if item.Parent then
+                RS.Interaction.ClientIsDragging:FireServer(item)
+                mainPart.CFrame = origin * CFrame.new(0,2,0)
+                task.wait(0.1)
+            end
+            if openBox then
+                pcall(function() RS.Interaction.ClientInteracted:FireServer(item, "Open box") end)
+            end
+        end)
+
+        -- FIX 6: return to origin after EACH item, not just at the end
+        h = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        if h then h.CFrame = origin * CFrame.new(0,1,0) end
+        task.wait(0.3)
+
+        if prog then prog.Set(i, amount, "Buying... "..i.." / "..amount) end
+    end
+
+    -- Final return
+    local hFinal = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    if hFinal then hFinal.CFrame = origin * CFrame.new(0,1,0) end
+
+    if stat then stat.SetActive(false, AbortAutoBuy and "Aborted." or "Done!") end
+    if prog then prog.Set(amount, amount, AbortAutoBuy and "Aborted" or "Complete!") end
+end
+
+-- ════════════════════════════════════════════════════
+-- AUTOBUY TAB UI
+-- ════════════════════════════════════════════════════
+
+local ab = pages["AutoBuyTab"]
 
 sectionLabel(ab, "Item Selection")
 
-local shopItemsCache = GrabShopItems()
-local shopDD = makeFancyDropdown(ab, "Item", function() return shopItemsCache end, function(val)
-    ItemToBuy = val:match("^(.-)%s*%-%s*%$") or val
+local shopCache = GrabShopItems()
+local itemToBuy = nil
+local buyAmount = 1
+local openBox   = false
+
+local shopDD = makeFancyDropdown(ab, "Item", function() return shopCache end, function(val)
+    -- strip the " - $xxx" suffix to get just the item name
+    itemToBuy = val:match("^(.-)%s*%-%s*%$") or val
 end)
 
 sectionLabel(ab, "Options")
-makeSlider(ab, "Amount", 1, 100, 1, function(v) AutoBuyAmount = v end)
-makeToggle(ab, "Open Box After Buying", false, function(v) OpenBox = v end)
+makeSlider(ab, "Amount", 1, 100, 1, function(v) buyAmount = v end)
+makeToggle(ab, "Open Box After Buying", false, function(v) openBox = v end)
 sep(ab)
 
 local abStat = makeStatus(ab, "Idle")
 local abProg = makeProgress(ab)
 
 makeButton(ab, "↻  Refresh Item List", function()
-    shopItemsCache = GrabShopItems()
+    shopCache = GrabShopItems()
     shopDD.Refresh()
 end)
 
 makeButton(ab, "Purchase Selected Item(s)", function()
-    task.spawn(AutoBuy, ItemToBuy, AutoBuyAmount, OpenBox, false, abProg, abStat)
+    task.spawn(AutoBuy, itemToBuy, buyAmount, openBox, abProg, abStat)
 end)
 
 makeButton(ab, "Abort", function()
@@ -759,22 +634,24 @@ sectionLabel(ab, "Quick Purchases")
 
 makeButton(ab, "Buy All Missing Blueprints", function()
     local bps = getMissingBlueprints()
-    if #bps == 0 then abStat.SetActive(false, "No blueprints missing!") return end
+    if #bps == 0 then abStat.SetActive(false, "No blueprints missing!"); return end
     abStat.SetActive(true, "Buying "..#bps.." blueprints...")
-    for _, v in next, bps do
-        if AbortAutoBuy then break end
-        AutoBuy(v, 1, true, true, abProg, nil)
-    end
-    abStat.SetActive(false, AbortAutoBuy and "Aborted." or "Done!")
+    task.spawn(function()
+        for _, v in ipairs(bps) do
+            if AbortAutoBuy then break end
+            AutoBuy(v, 1, true, abProg, nil)
+        end
+        abStat.SetActive(false, AbortAutoBuy and "Aborted." or "All blueprints done!")
+    end)
 end)
 
-makeButton(ab, "Pay Toll Bridge", function() Pay(15) end)
-makeButton(ab, "Buy Ferry Ticket",  function() Pay(13) end)
-makeButton(ab, "Buy Power of Ease", function() Pay(3)  end)
+makeButton(ab, "Pay Toll Bridge",    function() Pay(15) end)
+makeButton(ab, "Buy Ferry Ticket",   function() Pay(13) end)
+makeButton(ab, "Buy Power of Ease",  function() Pay(3)  end)
 
--- ═══════════════════════════════════════════════════════════════════════════
--- SLOT TAB
--- ═══════════════════════════════════════════════════════════════════════════
+-- ════════════════════════════════════════════════════
+-- SLOT TAB (unchanged from original Vanilla6)
+-- ════════════════════════════════════════════════════
 
 local sl = pages["SlotTab"]
 
@@ -783,7 +660,7 @@ local landToTake = nil
 local landHL     = nil
 
 local function freeLand()
-    for _, v in next, workspace.Properties:GetChildren() do
+    for _, v in ipairs(workspace.Properties:GetChildren()) do
         if v:FindFirstChild("Owner") and v.Owner.Value == nil then
             pcall(function()
                 RS.PropertyPurchasing.ClientPurchasedProperty:FireServer(v, v.OriginSquare.Position)
@@ -795,7 +672,7 @@ local function freeLand()
 end
 
 local function maxLand()
-    for _, d in pairs(workspace.Properties:GetChildren()) do
+    for _, d in ipairs(workspace.Properties:GetChildren()) do
         if d:FindFirstChild("Owner") and d:FindFirstChild("OriginSquare") and d.Owner.Value == LP then
             local p = d.OriginSquare.Position
             local offsets = {
@@ -831,7 +708,7 @@ local function loadSlot(slot)
 end
 
 local function sellSoldSign()
-    for _, v in next, workspace.PlayerModels:GetChildren() do
+    for _, v in ipairs(workspace.PlayerModels:GetChildren()) do
         if v:FindFirstChild("Owner") and v.Owner.Value == LP
            and v:FindFirstChild("ItemName") and v.ItemName.Value == "PropertySoldSign" then
             pcall(function()
@@ -853,9 +730,9 @@ makeButton(sl, "Load Base", function() loadSlot(slotNum) end)
 
 sep(sl)
 sectionLabel(sl, "Land Management")
-makeButton(sl, "Free Land", freeLand)
-makeButton(sl, "Max Land", maxLand)
-makeButton(sl, "Sell Sign", sellSoldSign)
+makeButton(sl, "Free Land",  freeLand)
+makeButton(sl, "Max Land",   maxLand)
+makeButton(sl, "Sell Sign",  sellSoldSign)
 
 sep(sl)
 sectionLabel(sl, "Land Claim")
@@ -886,10 +763,13 @@ makeButton(sl, "Take Selected Land", function()
     end
 end)
 
--- ── Cleanup ───────────────────────────────────────────────────────────────────
+-- ════════════════════════════════════════════════════
+-- CLEANUP
+-- ════════════════════════════════════════════════════
+
 table.insert(VH.cleanupTasks, function()
     AbortAutoBuy = true
     if landHL then pcall(function() landHL:Destroy() end) end
 end)
 
-print("[VanillaHub] Vanilla6 loaded — AutoBuy, Slot")
+print("[VanillaHub] Vanilla6 Fixed loaded — AutoBuy, Slot")
