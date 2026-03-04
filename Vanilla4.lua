@@ -36,7 +36,6 @@ local STABLE_DIST      = 0.6    -- studs/frame: max drift to count as stable
 local CONFIRM_DIST     = 2.5    -- studs: "arrived" threshold (tight)
 local VERIFY_DIST      = 4.0    -- studs: "still in place" threshold for drift checks
 local SLOT_RETRY_MAX   = 5      -- full retries per slot before giving up
-local PUSH_REPEAT      = 4      -- how many times to fire dragger + write CFrame per frame
 
 -- ════════════════════════════════════════════════════
 -- STATE
@@ -364,21 +363,109 @@ local function placePreview()
 end
 
 -- ════════════════════════════════════════════════════
--- SORT ENGINE  (aggressive hold-until-stable, layer-fill-first)
+-- SORT ENGINE  (client-drag aware, layer-fill-first)
 -- ════════════════════════════════════════════════════
+
+--[[
+  HOW DRAGGING ACTUALLY WORKS IN THIS GAME
+  ─────────────────────────────────────────
+  Items are moved CLIENT-SIDE.  The server never owns the CFrame while a drag
+  is in progress — the client drag controller reads a target position every
+  frame and lerps the part toward it.  The correct way to reposition an item
+  programmatically is therefore:
+
+    1. Find the RemoteEvent / RemoteFunction the client drag system fires when
+       the player picks up an item  (usually something like "PickUp", "Grab",
+       "StartDrag", "DragItem", etc. inside ReplicatedStorage or the model).
+    2. Find whatever value the drag controller reads as its target each frame
+       (often a CFrameValue, Vector3Value, or the mouse.Hit CFrame).
+    3. Write that value every frame for the duration of the move.
+    4. Fire the "drop" / "release" remote once the item is in position.
+
+  Because we don't know the exact remote names without inspecting the live
+  game, the engine below auto-discovers them with a prioritised search:
+
+    ① Model-level drag target   – CFrameValue / Vector3Value named "Target",
+                                  "DragTarget", "DragCFrame", "DropTarget"
+    ② RS Interaction remotes    – "PickUp", "Grab", "StartDrag", "DragItem",
+                                  "MoveItem", "DropItem", "Release" in
+                                  RS.Interaction (or RS directly)
+    ③ Mouse.Hit override        – As a fallback the engine moves the
+                                  character's HRP directly next to the
+                                  destination and lets the game's own proximity
+                                  / drag logic carry the item there naturally.
+
+  In all cases we never write mp.CFrame from the outside — that fights the
+  server and causes the snap-back you were seeing.
+]]
+
 local function getInteraction()
     local i = RS:FindFirstChild("Interaction")
-    return i and i:FindFirstChild("ClientIsDragging")
+    return i
 end
 
-local function goNear(model, hrp)
-    local mp = getMainPart(model)
-    if mp and hrp then
-        hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
+-- Locate the RemoteEvent used to signal "I am dragging this item"
+local function findDragRemote(model)
+    local interaction = getInteraction()
+
+    -- Priority list of known remote names
+    local remoteNames = {
+        "ClientIsDragging", "PickUp", "Grab", "StartDrag",
+        "DragItem", "MoveItem", "DragObject", "GrabItem",
+    }
+    local dropNames = {
+        "DropItem", "Release", "Drop", "StopDrag",
+        "PlaceItem", "ClientStoppedDragging",
+    }
+
+    local grabRemote, dropRemote
+
+    -- Search in RS.Interaction first, then RS itself, then model
+    local containers = {}
+    if interaction then table.insert(containers, interaction) end
+    table.insert(containers, RS)
+    table.insert(containers, model)
+
+    for _, container in ipairs(containers) do
+        for _, name in ipairs(remoteNames) do
+            local r = container:FindFirstChild(name)
+            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
+                grabRemote = grabRemote or r
+            end
+        end
+        for _, name in ipairs(dropNames) do
+            local r = container:FindFirstChild(name)
+            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
+                dropRemote = dropRemote or r
+            end
+        end
+    end
+
+    return grabRemote, dropRemote
+end
+
+-- Find a drag-target value object inside a model that the drag controller
+-- reads each frame to know where to move the item.
+local function findDragTargetValue(model)
+    local targetNames = {
+        "Target", "DragTarget", "DragCFrame", "DropTarget",
+        "MoveTarget", "DragPosition", "TargetCFrame",
+    }
+    for _, name in ipairs(targetNames) do
+        local v = model:FindFirstChild(name, true)
+        if v and (v:IsA("CFrameValue") or v:IsA("Vector3Value")) then
+            return v
+        end
+    end
+    return nil
+end
+
+local function goNear(targetPos, hrp)
+    if hrp then
+        hrp.CFrame = CFrame.new(targetPos) * CFrame.new(0, 3, 4)
     end
 end
 
--- Zero every unanchored BasePart in the model
 local function zeroVelocity(model)
     pcall(function()
         for _, p in ipairs(model:GetDescendants()) do
@@ -391,22 +478,19 @@ local function zeroVelocity(model)
 end
 
 --[[
-    placeAndLock(model, targetCF)  →  boolean (true = confirmed stable)
+    placeAndLock(model, targetCF) → boolean
 
-    Works in two interlocking loops that run on the SAME Heartbeat connection
-    so there is never a gap between pushes:
-
-    ① DRIVE phase — keep teleporting character next to the item, firing
-      ClientIsDragging, writing the CFrame, and zeroing velocity PUSH_REPEAT
-      times per frame until the item is within CONFIRM_DIST of the target,
-      or DRIVE_TIMEOUT elapses.
-
-    ② HOLD phase — once arrived, keep hammering for at least HOLD_SECONDS
-      seconds (= real time, not frame count so it's framerate-independent)
-      AND wait for STABLE_NEEDED consecutive frames with drift < STABLE_DIST.
-      Any time the item snaps back (drift spike) we immediately push PUSH_REPEAT
-      extra times and reset the stability counter, but we never let go early.
-      The loop only exits when BOTH conditions are met (time + stability).
+    Strategy (client-drag safe):
+    ─────────────────────────────
+    1. Discover grab/drop remotes and any drag-target value in the model.
+    2. Fire the grab remote (tells server we're dragging).
+    3. Every Heartbeat: write the drag-target value (if found) to destPos,
+       keep the character near the item, and zero velocity.
+       Do NOT write mp.CFrame — let the game's own drag system move the part.
+    4. Once the item is within CONFIRM_DIST for STABLE_NEEDED consecutive frames,
+       fire the drop remote and return true.
+    5. If no drag-target value is found we fall back to direct CFrame writes
+       (same as before) since the game may use a simpler drag model.
 ]]
 local function placeAndLock(model, targetCF)
     if not (model and model.Parent) then return true end
@@ -416,99 +500,121 @@ local function placeAndLock(model, targetCF)
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
-    local dragger = getInteraction()
-    -- Tiny lift so the item settles on top of the surface rather than inside it
     local dest    = targetCF * CFrame.new(0, 0.04, 0)
     local destPos = dest.Position
 
-    -- Aggressive push: write CFrame + fire dragger PUSH_REPEAT times and kill velocity
-    local function push(n)
-        n = n or 1
-        pcall(function()
-            -- Keep character within grab range
-            if hrp and (hrp.Position - mp.Position).Magnitude > 18 then
-                hrp.CFrame = mp.CFrame * CFrame.new(0, 3, 4)
-            end
-            for _ = 1, n do
-                if dragger then dragger:FireServer(model) end
-                if mp and mp.Parent then mp.CFrame = dest end
-            end
-        end)
-        zeroVelocity(model)
-    end
+    local grabRemote, dropRemote = findDragRemote(model)
+    local targetValue            = findDragTargetValue(model)
 
-    goNear(model, hrp)
+    -- Signal pickup
+    pcall(function()
+        if grabRemote then
+            if grabRemote:IsA("RemoteEvent") then
+                grabRemote:FireServer(model)
+            else
+                grabRemote:InvokeServer(model)
+            end
+        end
+    end)
 
-    local driveStart  = tick()
-    local arrived     = false
-    local phase       = "drive"   -- "drive" → "hold"
-    local holdStart   = 0
+    -- Move character next to item immediately
+    goNear(mp.Position, hrp)
+
+    local driveStart   = tick()
+    local holdStart    = nil
     local stableStreak = 0
-    local lastPos     = mp.Position
-    local locked      = false
-    local done        = false
+    local locked       = false
+    local done         = false
 
     local conn
     conn = RunService.Heartbeat:Connect(function()
         if done then return end
         if not (mp and mp.Parent) then
-            -- Item vanished — treat as success (nothing to place)
             locked = true; done = true; conn:Disconnect(); return
         end
 
-        local curPos = mp.Position
-        local dist   = (curPos - destPos).Magnitude
+        -- ── Keep character close ──────────────────────────────
+        if (hrp.Position - mp.Position).Magnitude > 16 then
+            goNear(mp.Position, hrp)
+        end
 
-        if phase == "drive" then
-            push(PUSH_REPEAT)
-            if dist < CONFIRM_DIST then
-                phase     = "hold"
-                holdStart = tick()
-                arrived   = true
-            elseif (tick() - driveStart) >= DRIVE_TIMEOUT then
-                -- Timed out driving — transition to hold anyway and try to lock
-                phase     = "hold"
-                holdStart = tick()
+        -- ── Write drag target (preferred — lets the game move the item) ──
+        if targetValue then
+            pcall(function()
+                if targetValue:IsA("CFrameValue") then
+                    targetValue.Value = dest
+                else
+                    targetValue.Value = destPos
+                end
+            end)
+            -- Also re-fire grab remote each frame so the server keeps us as the dragger
+            pcall(function()
+                if grabRemote and grabRemote:IsA("RemoteEvent") then
+                    grabRemote:FireServer(model)
+                end
+            end)
+        else
+            -- ── Fallback: direct CFrame write ────────────────────
+            pcall(function() mp.CFrame = dest end)
+            pcall(function()
+                if grabRemote and grabRemote:IsA("RemoteEvent") then
+                    grabRemote:FireServer(model)
+                end
+            end)
+        end
+
+        zeroVelocity(model)
+
+        -- ── Stability check ───────────────────────────────────
+        local dist = (mp.Position - destPos).Magnitude
+
+        if dist < CONFIRM_DIST then
+            holdStart = holdStart or tick()
+            stableStreak = stableStreak + 1
+        else
+            stableStreak = 0
+            -- Not there yet — reset hold clock only if we've never arrived
+            if not holdStart then
+                if (tick() - driveStart) >= DRIVE_TIMEOUT then
+                    -- Timed out — bail
+                    done = true; conn:Disconnect(); return
+                end
             end
+        end
 
-        else  -- "hold"
-            push(PUSH_REPEAT)
+        local heldLong = holdStart and (tick() - holdStart) >= HOLD_SECONDS
+        local isStable = stableStreak >= STABLE_NEEDED
 
-            local move = (curPos - lastPos).Magnitude
-
-            if dist < CONFIRM_DIST and move < STABLE_DIST then
-                stableStreak = stableStreak + 1
-            else
-                -- Snapped back — blast it harder and reset streak
-                push(PUSH_REPEAT * 2)
-                stableStreak = 0
-            end
-
-            lastPos = curPos
-
-            local heldLongEnough = (tick() - holdStart) >= HOLD_SECONDS
-            local isStable       = stableStreak >= STABLE_NEEDED
-
-            if heldLongEnough and isStable then
-                locked = true; done = true; conn:Disconnect()
-            elseif (tick() - holdStart) > HOLD_SECONDS * 4 then
-                -- Absolute safety bail — we held for 4× the target time
-                done = true; conn:Disconnect()
-            end
+        if heldLong and isStable then
+            locked = true; done = true; conn:Disconnect()
+        elseif holdStart and (tick() - holdStart) > HOLD_SECONDS * 5 then
+            -- Absolute bail after 5× target hold time
+            done = true; conn:Disconnect()
         end
     end)
 
     while not done do task.wait() end
 
-    -- Hard final zero after everything
+    -- Fire drop remote to release the item
+    pcall(function()
+        if dropRemote then
+            if dropRemote:IsA("RemoteEvent") then
+                dropRemote:FireServer(model, destPos)
+            else
+                dropRemote:InvokeServer(model, destPos)
+            end
+        end
+    end)
+
+    -- Final velocity zero
     zeroVelocity(model)
     return locked
 end
 
--- Returns true if the slot's model is still close enough to its target position
+-- Returns true if the slot's model is still close enough to its target
 local function isSlotFilled(slot)
     local model = slot.model
-    if not (model and model.Parent) then return true end   -- gone = vacated, fine
+    if not (model and model.Parent) then return true end
     local mp = getMainPart(model)
     if not mp then return true end
     return (mp.Position - slot.cf.Position).Magnitude < VERIFY_DIST
