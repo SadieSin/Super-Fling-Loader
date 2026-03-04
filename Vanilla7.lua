@@ -877,7 +877,7 @@ local function vehicleSpawner(color)
                 local waitStart = tick()
                 repeat
                     task.wait(0.05)
-                until spawnedPartColor ~= nil or (tick() - waitStart > 1) or abortSpawner
+                until spawnedPartColor ~= nil or (tick() - waitStart > 0.6) or abortSpawner
             until spawnedPartColor == color or abortSpawner
 
             carAddedConn:Disconnect()
