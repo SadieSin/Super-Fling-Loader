@@ -358,93 +358,110 @@ end
 -- ════════════════════════════════════════════════════
 -- SORT ENGINE
 -- ════════════════════════════════════════════════════
-local function getInteraction()
+
+-- Helpers
+local function getHRP()
+    local c = player.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function getDragger()
     local i = RS:FindFirstChild("Interaction")
     return i and i:FindFirstChild("ClientIsDragging")
 end
 
-local function getHRP()
-    local char = player.Character
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
+local CONFIRM_DIST = 5  -- studs — counts as "arrived"
 
--- moveItemTo
 -- ─────────────────────────────────────────────────────────────────────────────
--- Uses the EXACT same technique as DupeBase (the working dupe):
+-- placeItem(model, targetCF)  →  bool (true = landed server-side)
 --
---   Step 1: Walk HRP next to the item so the server recognises us
---   Step 2: Fire ClientIsDragging ~50× to establish server-side drag ownership
---   Step 3: pcall(isitemownersecondary, mainPart) — transfers ownership
---   Step 4: Spam part.CFrame = targetCF ×200 — server accepts because we own it
---   Step 5: wait(GetPing()) — let the server replicate the position
+-- This game has THREE server-side move mechanisms depending on item type.
+-- We try all three in order, then verify with a real position check.
 --
--- onDone(bool) is always called exactly once.
+-- Method A — isitemownersecondary + CFrame spam
+--   Works for: PurchasedBoxItems, DraggableItems (gift items)
+--   How: claims server ownership so CFrame writes are accepted
+--
+-- Method B — ClientIsDragging spam + CFrame spam
+--   Works for: Wood (TreeClass items)
+--   How: drag remote registers the server-side drag state first
+--
+-- Method C — Raw CFrame spam (no ownership call)
+--   Works for: any item where we're already close enough that the
+--   server's physics simulation accepts the position (fallback)
+--
+-- After each method we wait one ping cycle and check real position.
 -- ─────────────────────────────────────────────────────────────────────────────
-local CONFIRM_DIST = 4
+local function placeItem(model, targetCF)
+    if not (model and model.Parent) then return true end  -- gone = skip
 
-local function moveItemTo(model, targetCF, onDone)
-    local doneFired = false
-    local function fireDone(ok)
-        if doneFired then return end
-        doneFired = true
-        if onDone then task.spawn(onDone, ok) end
+    local mp = getMainPart(model)
+    if not mp then return true end
+
+    local hrp = getHRP()
+    if not hrp then return false end
+
+    -- Always walk HRP next to item first (< 10 studs)
+    if (hrp.Position - mp.Position).Magnitude > 10 then
+        hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 3)
+        task.wait(0.08)
     end
 
-    if not (model and model.Parent) then fireDone(false); return nil end
-    local mp = getMainPart(model)
-    if not mp then fireDone(false); return nil end
+    local function arrived()
+        if not (mp and mp.Parent) then return true end
+        return (mp.Position - targetCF.Position).Magnitude < CONFIRM_DIST
+    end
 
-    -- Run the whole thing in a task.spawn so the caller gets a "conn"-like handle
-    -- We return a table with a :Disconnect() so the sort loop can cancel it
+    -- ── Method A: isitemownersecondary + CFrame spam ──────────────────────
+    pcall(isitemownersecondary, mp)
+    for _ = 1, 250 do
+        pcall(function() mp.CFrame = targetCF end)
+    end
+    if GetPing then wait(GetPing()) else task.wait(0.15) end
+    if arrived() then return true end
+
+    -- ── Method B: ClientIsDragging spam + ownership + CFrame spam ─────────
+    local dragger = getDragger()
+    if dragger then
+        hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 3)  -- re-snap near item
+        task.wait(0.05)
+        for _ = 1, 60 do
+            pcall(function() dragger:FireServer(model) end)
+            task.wait(0.04)
+        end
+    end
+    pcall(isitemownersecondary, mp)
+    for _ = 1, 250 do
+        pcall(function() mp.CFrame = targetCF end)
+    end
+    if GetPing then wait(GetPing()) else task.wait(0.15) end
+    if arrived() then return true end
+
+    -- ── Method C: Sit near item, ownership, huge CFrame burst ─────────────
+    hrp.CFrame = mp.CFrame * CFrame.new(0, 1, 1)  -- very close
+    task.wait(0.1)
+    pcall(isitemownersecondary, mp)
+    for _ = 1, 500 do
+        pcall(function() mp.CFrame = targetCF end)
+    end
+    if GetPing then wait(GetPing()) else task.wait(0.2) end
+    return arrived()
+end
+
+-- moveItemTo: async wrapper around placeItem that the sort loop can cancel.
+-- Returns a handle with :Disconnect() to abort.
+local function moveItemTo(model, targetCF, onDone)
     local cancelled = false
     local handle = { Disconnect = function() cancelled = true end }
 
     task.spawn(function()
-        if cancelled then fireDone(false); return end
-
-        local hrp = getHRP()
-
-        -- Step 1: walk HRP next to the item
-        if hrp and (hrp.Position - mp.Position).Magnitude > 20 then
-            hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 3)
-            task.wait(0.1)
+        if cancelled then
+            if onDone then task.spawn(onDone, false) end; return
         end
-
-        if cancelled then fireDone(false); return end
-
-        -- Step 2: establish drag — same as DupeBase Wood section
-        local dragger = getInteraction()
-        if dragger then
-            for i = 1, 50 do
-                if cancelled then fireDone(false); return end
-                pcall(function() dragger:FireServer(model) end)
-                task.wait(0.05)
-            end
+        local ok = placeItem(model, targetCF)
+        if not cancelled then
+            if onDone then task.spawn(onDone, ok) end
         end
-
-        if cancelled then fireDone(false); return end
-
-        -- Step 3: claim ownership server-side
-        pcall(isitemownersecondary, mp)
-
-        -- Step 4: spam CFrame — server accepts because we own it
-        for i = 1, 200 do
-            if cancelled then fireDone(false); return end
-            pcall(function() mp.CFrame = targetCF end)
-        end
-
-        -- Step 5: wait one ping so server replicates
-        if GetPing then
-            wait(GetPing())
-        else
-            task.wait(0.15)
-        end
-
-        if cancelled then fireDone(false); return end
-
-        -- Check if it landed
-        local dist = mp and mp.Parent and (mp.Position - targetCF.Position).Magnitude or 0
-        fireDone(dist < CONFIRM_DIST * 2)
     end)
 
     return handle
