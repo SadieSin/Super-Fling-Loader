@@ -363,17 +363,6 @@ local function getInteraction()
     return i and i:FindFirstChild("ClientIsDragging")
 end
 
-local function freezeModel(model)
-    pcall(function()
-        for _, p in ipairs(model:GetDescendants()) do
-            if p:IsA("BasePart") and not p.Anchored then
-                p.AssemblyLinearVelocity  = Vector3.zero
-                p.AssemblyAngularVelocity = Vector3.zero
-            end
-        end
-    end)
-end
-
 local function getHRP()
     local char = player.Character
     return char and char:FindFirstChild("HumanoidRootPart")
@@ -381,105 +370,84 @@ end
 
 -- moveItemTo
 -- ─────────────────────────────────────────────────────────────────────────────
--- HOW DRAGGING ACTUALLY WORKS SERVER-SIDE:
---   ClientIsDragging fires with the model, and the server moves the item
---   toward the player's HumanoidRootPart position.  Writing mp.CFrame
---   client-side is immediately overwritten by the server.
+-- Uses the EXACT same technique as DupeBase (the working dupe):
 --
--- CORRECT TECHNIQUE:
---   1. Teleport HRP to the TARGET position (where we want the item to land).
---   2. Fire ClientIsDragging — server sees character at target, pulls item there.
---   3. Repeat every frame until item arrives or timeout.
+--   Step 1: Walk HRP next to the item so the server recognises us
+--   Step 2: Fire ClientIsDragging ~50× to establish server-side drag ownership
+--   Step 3: pcall(isitemownersecondary, mainPart) — transfers ownership
+--   Step 4: Spam part.CFrame = targetCF ×200 — server accepts because we own it
+--   Step 5: wait(GetPing()) — let the server replicate the position
 --
--- We keep HRP at the destination for the entire duration so the server
--- consistently drags the item to the right place every frame.
+-- onDone(bool) is always called exactly once.
 -- ─────────────────────────────────────────────────────────────────────────────
-local SORT_TIMEOUT = 12.0   -- seconds before giving up on a single attempt
-local CONFIRM_DIST = 3.5    -- studs: item counts as "arrived"
-local LOCK_FRAMES  = 60     -- frames of post-arrival lock
+local CONFIRM_DIST = 4
 
 local function moveItemTo(model, targetCF, onDone)
-    if not (model and model.Parent) then
-        if onDone then task.spawn(onDone, false) end; return nil
-    end
-    local mp = getMainPart(model)
-    if not mp then
-        if onDone then task.spawn(onDone, false) end; return nil
-    end
-    local hrp = getHRP()
-    if not hrp then
-        if onDone then task.spawn(onDone, false) end; return nil
-    end
-
-    local dragger   = getInteraction()
-    local startTime = tick()
     local doneFired = false
-    local conn
-
     local function fireDone(ok)
         if doneFired then return end
         doneFired = true
         if onDone then task.spawn(onDone, ok) end
     end
 
-    -- Where the server should drag the item TO = where we put the HRP
-    -- Offset HRP slightly above+behind target so the item lands at targetCF
-    local hrpAtTarget = targetCF * CFrame.new(0, 2, 2)
+    if not (model and model.Parent) then fireDone(false); return nil end
+    local mp = getMainPart(model)
+    if not mp then fireDone(false); return nil end
 
-    -- Move character to item first so the server registers us as the dragger
-    hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 2)
-    task.wait()  -- one frame so server sees us next to item
+    -- Run the whole thing in a task.spawn so the caller gets a "conn"-like handle
+    -- We return a table with a :Disconnect() so the sort loop can cancel it
+    local cancelled = false
+    local handle = { Disconnect = function() cancelled = true end }
 
-    conn = RunService.Heartbeat:Connect(function()
-        if not (mp and mp.Parent) then
-            conn:Disconnect(); fireDone(true); return
+    task.spawn(function()
+        if cancelled then fireDone(false); return end
+
+        local hrp = getHRP()
+
+        -- Step 1: walk HRP next to the item
+        if hrp and (hrp.Position - mp.Position).Magnitude > 20 then
+            hrp.CFrame = mp.CFrame * CFrame.new(0, 2, 3)
+            task.wait(0.1)
         end
 
-        -- Re-fetch hrp each frame in case character respawned
-        local h = getHRP()
-        if not h then return end
+        if cancelled then fireDone(false); return end
 
-        -- Park HRP at the destination — server drags item toward us
-        h.CFrame = hrpAtTarget
-
-        -- Fire drag remote — server moves item toward HRP position
+        -- Step 2: establish drag — same as DupeBase Wood section
+        local dragger = getInteraction()
         if dragger then
-            pcall(function() dragger:FireServer(model) end)
-            pcall(function() dragger:FireServer(model) end)
+            for i = 1, 50 do
+                if cancelled then fireDone(false); return end
+                pcall(function() dragger:FireServer(model) end)
+                task.wait(0.05)
+            end
         end
 
-        -- Kill velocity so physics doesn't send it flying
-        freezeModel(model)
+        if cancelled then fireDone(false); return end
 
-        local dist     = (mp.Position - targetCF.Position).Magnitude
-        local arrived  = dist < CONFIRM_DIST
-        local timedOut = (tick() - startTime) >= SORT_TIMEOUT
+        -- Step 3: claim ownership server-side
+        pcall(isitemownersecondary, mp)
 
-        if arrived or timedOut then
-            conn:Disconnect()
-            -- Phase 2: keep HRP at target and spam drag for LOCK_FRAMES
-            -- to prevent the server snapping the item back
-            task.spawn(function()
-                for _ = 1, LOCK_FRAMES do
-                    if not (mp and mp.Parent) then break end
-                    local h2 = getHRP()
-                    if h2 then h2.CFrame = hrpAtTarget end
-                    if dragger then
-                        pcall(function() dragger:FireServer(model) end)
-                        pcall(function() dragger:FireServer(model) end)
-                    end
-                    freezeModel(model)
-                    task.wait()
-                end
-                -- Final distance check
-                local finalDist = (mp and mp.Parent)
-                    and (mp.Position - targetCF.Position).Magnitude or 0
-                fireDone(finalDist < CONFIRM_DIST * 2)
-            end)
+        -- Step 4: spam CFrame — server accepts because we own it
+        for i = 1, 200 do
+            if cancelled then fireDone(false); return end
+            pcall(function() mp.CFrame = targetCF end)
         end
+
+        -- Step 5: wait one ping so server replicates
+        if GetPing then
+            wait(GetPing())
+        else
+            task.wait(0.15)
+        end
+
+        if cancelled then fireDone(false); return end
+
+        -- Check if it landed
+        local dist = mp and mp.Parent and (mp.Position - targetCF.Position).Magnitude or 0
+        fireDone(dist < CONFIRM_DIST * 2)
     end)
 
-    return conn
+    return handle
 end
 
 -- ════════════════════════════════════════════════════
@@ -883,12 +851,8 @@ Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
 
 -- ════════════════════════════════════════════════════
 -- SORT LOOP
---
--- GUARANTEES:
---  • Every slot is retried until placed (no skip-on-fail).
---  • Layer N is 100% done before layer N+1 starts.
---  • Between slots we run a 20-frame inter-slot lock so
---    the just-placed item stays put while we move to next.
+-- Every slot is retried until placed. Layer N is fully
+-- done before layer N+1 starts.
 -- ════════════════════════════════════════════════════
 local function runSortLoop(slots, startI, total, doneStart)
     local done = doneStart
@@ -905,8 +869,7 @@ local function runSortLoop(slots, startI, total, doneStart)
 
             pbLabel.Text = "Sorting... " .. done .. " / " .. total
 
-            -- ── Keep retrying this slot until placed or item disappears ──
-            -- No attempt cap — we WILL place it.
+            -- Retry this slot indefinitely until placed or item disappears
             local placed = false
             repeat
                 if not isSorting then sortIndex = i; return end
@@ -915,48 +878,30 @@ local function runSortLoop(slots, startI, total, doneStart)
                 currentItemConn = moveItemTo(slot.model, slot.cf, function(ok)
                     placed = ok; finished = true
                 end)
+
                 while not finished and isSorting do task.wait() end
+
+                -- Cancel the handle if stop was pressed
                 if currentItemConn then
                     pcall(function() currentItemConn:Disconnect() end)
                     currentItemConn = nil
                 end
                 if not isSorting then sortIndex = i; return end
 
-                -- If timeout fired, do a final distance check before retrying
+                -- Secondary distance check — accept if close enough
                 if not placed and (slot.model and slot.model.Parent) then
                     local mp2 = getMainPart(slot.model)
                     if mp2 and (mp2.Position - slot.cf.Position).Magnitude < CONFIRM_DIST * 2 then
-                        placed = true  -- close enough — accept it
+                        placed = true
                     end
                 end
 
-                -- Not placed yet and item still exists — brief pause then retry
+                -- Not placed: brief pause before retry
                 if not placed and (slot.model and slot.model.Parent) then
-                    -- Park HRP back near item so server re-registers us as dragger
-                    local hrp2 = getHRP()
-                    local mp2  = getMainPart(slot.model)
-                    if hrp2 and mp2 then
-                        hrp2.CFrame = mp2.CFrame * CFrame.new(0, 2, 2)
-                    end
-                    task.wait(0.5)
+                    task.wait(0.3)
                 end
 
             until placed or not (slot.model and slot.model.Parent)
-
-            -- ── Inter-slot lock: keep hammering the placed item for 20 frames ─
-            -- This prevents the server from snapping it back while we start next.
-            task.spawn(function()
-                local dragger2 = getInteraction()
-                local mp2      = getMainPart(slot.model)
-                local lockCF   = slot.cf * CFrame.new(0, 0.03, 0)
-                for _ = 1, 20 do
-                    if not (mp2 and mp2.Parent) then break end
-                    if dragger2 then pcall(function() dragger2:FireServer(slot.model) end) end
-                    pcall(function() mp2.CFrame = lockCF end)
-                    freezeModel(slot.model)
-                    task.wait()
-                end
-            end)
 
             unhighlightItem(slot.model)
             done = done + 1; sortIndex = i + 1; sortDone = done; i = i + 1
@@ -966,7 +911,7 @@ local function runSortLoop(slots, startI, total, doneStart)
                 { Size = UDim2.new(pct, 0, 1, 0) }):Play()
             pbLabel.Text = "Sorting... " .. done .. " / " .. total
 
-            task.wait(0.2)  -- small gap before next slot
+            task.wait(0.1)
         end
 
         isSorting = false; sortThread = nil; currentItemConn = nil
