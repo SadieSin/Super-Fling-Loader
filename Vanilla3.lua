@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════
--- VANILLA3 — AutoBuy Tab + Settings Tab + Search Tab + Input Handler + Wood Tab
+-- VANILLA3 — Settings Tab + Search Tab + Input Handler + Wood Tab
 -- Imports shared state from Vanilla1 via _G.VH
 -- ════════════════════════════════════════════════════
 
@@ -49,7 +49,103 @@ local function corner(p, r)
     c.Parent = p
 end
 
--- ── Fancy accordion dropdown (matches Dupe tab style) ────────────────────────
+-- ── Floating overlay popup ────────────────────────────────────────────────────
+-- Creates a translucent screen-center message that auto-dismisses or can be
+-- closed. Used for "Click on sawmill", "Click on tree branch", etc.
+local function showOverlay(message, subtext)
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "VH_Overlay"
+    sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    sg.IgnoreGuiInset = true
+    pcall(function() sg.Parent = game:GetService("CoreGui") end)
+    if not sg.Parent then sg.Parent = player.PlayerGui end
+
+    local bg = Instance.new("Frame", sg)
+    bg.Size = UDim2.new(0, 340, 0, 90)
+    bg.AnchorPoint = Vector2.new(0.5, 0.5)
+    bg.Position = UDim2.new(0.5, 0, 0.15, 0)
+    bg.BackgroundColor3 = Color3.fromRGB(18, 14, 26)
+    bg.BorderSizePixel = 0
+    bg.BackgroundTransparency = 0.08
+    corner(bg, 12)
+    local stroke = Instance.new("UIStroke", bg)
+    stroke.Color = Color3.fromRGB(130, 80, 200)
+    stroke.Thickness = 1.5
+    stroke.Transparency = 0.2
+
+    -- Pulsing glow ring
+    task.spawn(function()
+        while bg and bg.Parent do
+            TweenService:Create(stroke, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency=0.6}):Play()
+            task.wait(0.8)
+            TweenService:Create(stroke, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency=0.1}):Play()
+            task.wait(0.8)
+        end
+    end)
+
+    -- Icon dot
+    local dot = Instance.new("Frame", bg)
+    dot.Size = UDim2.new(0, 10, 0, 10)
+    dot.Position = UDim2.new(0, 16, 0, 16)
+    dot.BackgroundColor3 = Color3.fromRGB(150, 80, 220)
+    dot.BorderSizePixel = 0
+    corner(dot, 5)
+
+    local title = Instance.new("TextLabel", bg)
+    title.Size = UDim2.new(1, -50, 0, 28)
+    title.Position = UDim2.new(0, 34, 0, 6)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 14
+    title.TextColor3 = Color3.fromRGB(210, 180, 240)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Text = message
+
+    if subtext then
+        local sub = Instance.new("TextLabel", bg)
+        sub.Size = UDim2.new(1, -16, 0, 20)
+        sub.Position = UDim2.new(0, 8, 0, 38)
+        sub.BackgroundTransparency = 1
+        sub.Font = Enum.Font.Gotham
+        sub.TextSize = 11
+        sub.TextColor3 = Color3.fromRGB(130, 110, 160)
+        sub.TextXAlignment = Enum.TextXAlignment.Center
+        sub.Text = subtext
+    end
+
+    local closeBtn = Instance.new("TextButton", bg)
+    closeBtn.Size = UDim2.new(0, 20, 0, 20)
+    closeBtn.Position = UDim2.new(1, -24, 0, 4)
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.Text = "✕"
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 12
+    closeBtn.TextColor3 = Color3.fromRGB(120, 100, 140)
+    closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
+
+    -- Slide in
+    bg.Position = UDim2.new(0.5, 0, -0.05, 0)
+    TweenService:Create(bg, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, 0, 0.15, 0)
+    }):Play()
+
+    return {
+        Dismiss = function()
+            if not (sg and sg.Parent) then return end
+            TweenService:Create(bg, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                Position = UDim2.new(0.5, 0, -0.1, 0),
+                BackgroundTransparency = 1,
+            }):Play()
+            task.delay(0.25, function() pcall(function() sg:Destroy() end) end)
+        end,
+        SetText = function(msg, sub)
+            if title then title.Text = msg end
+        end,
+    }
+end
+
+-- ── Fancy accordion dropdown ──────────────────────────────────────────────────
 local function makeFancyDropdown(page, labelText, getOptions, cb)
     local selected  = ""
     local isOpen    = false
@@ -249,7 +345,6 @@ local function updateSearchResults(query)
         if child:IsA("TextButton") then child:Destroy() end
     end
     local lq = string.lower(query or "")
-
     local functions = {
         {"Fly","PlayerTab"},{"Noclip","PlayerTab"},{"InfJump","PlayerTab"},
         {"Walkspeed","PlayerTab"},{"Jump Power","PlayerTab"},{"Fly Speed","PlayerTab"},{"Fly Key","PlayerTab"},
@@ -266,7 +361,6 @@ local function updateSearchResults(query)
         {"Sell Selected Logs","WoodTab"},{"Clear Selection","WoodTab"},
         {"Dismember Tree","WoodTab"},{"View LoneCave","WoodTab"},
     }
-
     local seen = {}
     for _, name in ipairs(tabs) do
         if lq == "" or string.find(string.lower(name), lq) then
@@ -319,26 +413,16 @@ searchInput:GetPropertyChangedSignal("Text"):Connect(function() updateSearchResu
 task.delay(0.1, function() updateSearchResults("") end)
 
 -- ════════════════════════════════════════════════════
--- WOOD TAB  — CORE ENGINE (ported from Butterhub leak)
+-- WOOD TAB — CORE ENGINE
 -- ════════════════════════════════════════════════════
 
-local woodPage = pages["WoodTab"]
+local woodPage  = pages["WoodTab"]
 local woodMouse = player:GetMouse()
 
--- Sell destination: wood dropoff conveyor entry
 local SELL_POS = Vector3.new(315.14, -0.40, 86.32)
-
--- ── Axe hit point table (from Butterhub source) ───────────────────────────────
-local HitPoints = {
-    Beesaxe=1.4, AxeAmber=3.39, ManyAxe=10.2, BasicHatchet=0.2,
-    Axe1=0.55, Axe2=0.93, AxeAlphaTesters=1.5, Rukiryaxe=1.68,
-    Axe3=1.45, AxeBetaTesters=1.45, FireAxe=0.6, SilverAxe=1.6,
-    EndTimesAxe=1.58, AxeChicken=0.9, CandyCaneAxe=0, AxeTwitter=1.65,
-}
 
 local AxeClassesFolder = RS.AxeClasses
 
--- tp: teleport character to a CFrame or Vector3 — exact port from Butterhub
 local function tp(pos, infeaxerange)
     if infeaxerange then
         if typeof(pos) == "CFrame" then
@@ -355,7 +439,6 @@ local function tp(pos, infeaxerange)
     end
 end
 
--- DragModel1: fire ClientIsDragging 4x then MoveTo a Vector3 — exact port
 local function DragModel1(model, targetVec3)
     pcall(function()
         RS.Interaction.ClientIsDragging:FireServer(model)
@@ -367,7 +450,6 @@ local function DragModel1(model, targetVec3)
     model:MoveTo(targetVec3)
 end
 
--- getPosition: returns Vector3 of character HRP
 local function getPosition()
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return Vector3.new(0,0,0) end
@@ -375,7 +457,8 @@ local function getPosition()
 end
 
 local function isnetworkowner(Part)
-    return Part.ReceiveAge == 0
+    local ok, v = pcall(function() return Part.ReceiveAge == 0 end)
+    return ok and v
 end
 
 local function calculateHitsForEndPart(part)
@@ -448,7 +531,6 @@ local function ChopTree(CutEventRemote, ID, Height, Tree)
     })
 end
 
--- Higher-fidelity getBestAxe used by bringTree (supports SpecialTrees properly)
 local function getToolStats(tool)
     local toolName = (typeof(tool) ~= "string") and tool.ToolName.Value or tool
     return require(RS.AxeClasses["AxeClass_"..toolName]).new()
@@ -588,77 +670,79 @@ local function GodMode(tpCF)
     Clone.CFrame = tpCF
 end
 
--- getgenv flags used by bringTree
 getgenv().treeCut   = false
 getgenv().treestop  = true
 getgenv().doneend   = true
 getgenv().Infeaxerange = nil
 
+-- ── FIXED bringTree ────────────────────────────────────────────────────────────
+-- Changes from original:
+-- 1. Player teleports to the tree trunk (base section ID=1)
+-- 2. Cuts ONLY the lowest part of the tree (height=0, sectionId=1)
+-- 3. When log spawns via treeListener, drags it back to oldPosition
+-- 4. Called in a loop by the "Bring Tree" button for the requested amount
 local function bringTree(treeClass, godmodeval)
     getgenv().treestop = true
     player.Character.Humanoid.BreakJointsOnDeath = false
 
-    local success, data = getBestAxeForTree(treeClass)
-    if not success then return end
-
-    local tree = getBiggestTree(treeClass)
-    if not tree then return end
-    if not (tree.trunk.Size.X >= 1 and tree.trunk.Size.Y >= 2 and tree.trunk.Size.Z >= 1) then
-        return
+    local toolData, err = getBestAxeForTree(treeClass)
+    if not toolData then
+        warn("[VanillaHub] bringTree: ".. (err or "no tool"))
+        return false
     end
 
-    -- oldPosition is a Vector3 — used for DragModel1 and tp() return
-    local oldPosition = getPosition()
+    local tree = getBiggestTree(treeClass)
+    if not tree or not tree.trunk then
+        return false
+    end
+
+    -- Must be a real trunk
+    if not (tree.trunk.Size.X >= 1 and tree.trunk.Size.Y >= 2 and tree.trunk.Size.Z >= 1) then
+        return false
+    end
+
+    local oldPosition = getPosition()   -- Vector3, returned to after cut
 
     if godmodeval then
         workspace.Camera.CameraType = Enum.CameraType.Fixed
         GodMode(tree.trunk.CFrame)
         workspace.Camera.CameraType = Enum.CameraType.Custom
-        tp(tree.trunk.CFrame)  -- CFrame teleport
+        tp(tree.trunk.CFrame)
     end
-    task.wait(0.5)
+    task.wait(0.3)
 
-    -- treeListener: when the log spawns, set treeCut=true and drag it to oldPosition
+    -- Teleport player to trunk base
+    player.Character.HumanoidRootPart.CFrame = tree.trunk.CFrame * CFrame.new(0, 0, 3)
+    task.wait(0.15)
+
+    -- Register log-spawn listener BEFORE cutting so we never miss it
+    getgenv().treeCut = false
     treeListener(treeClass, function(log)
-        log.PrimaryPart = log:FindFirstChild("WoodSection")
+        -- When the cut log appears, immediately drag it to the player's original spot
+        log.PrimaryPart = log:FindFirstChild("WoodSection") or log.PrimaryPart
         getgenv().treeCut = true
-        for _ = 1, 60 do
-            DragModel1(log, oldPosition)  -- Vector3 target
+        for _ = 1, 80 do
+            if not log or not log.Parent then break end
+            DragModel1(log, oldPosition)
             task.wait()
         end
     end)
-    task.wait(0.15)
-
-    -- Keep teleporting player onto the trunk until the tree is cut
-    task.spawn(function()
-        if treeClass == "LoneCave" then
-            getgenv().doneend = false
-            repeat
-                if not getgenv().treestop then break end
-                tp(tree.trunk.CFrame)
-                task.wait()
-            until getgenv().treeCut
-        else
-            repeat
-                if not getgenv().treestop then break end
-                tp(tree.trunk.CFrame)
-                task.wait()
-            until getgenv().treeCut
-        end
-    end)
-    task.wait()
+    task.wait(0.1)
 
     if treeClass == "LoneCave" and godmodeval then
+        -- LoneCave special: need godmode + EndTimesAxe hits
+        getgenv().doneend = false
         local numHits = calculateHitsForEndPart(tree.trunk) - 1
         for _ = 1, numHits do
-            cutPart(tree.tree.CutEvent, 1, 0.3, data, treeClass)
+            if not getgenv().treestop then break end
+            player.Character.HumanoidRootPart.CFrame = tree.trunk.CFrame * CFrame.new(0, 0, 3)
+            cutPart(tree.tree.CutEvent, 1, 0, toolData, treeClass)
             task.wait(1)
         end
         getgenv().treeCut   = false
         getgenv().treestop  = false
         DropTools()
         task.wait(0.3)
-        -- Teleport to LoneCave revival spot
         player.Character.HumanoidRootPart.CFrame = CFrame.new(-1675, 261, 1284)
         task.wait(0.5)
         pcall(function()
@@ -667,29 +751,38 @@ local function bringTree(treeClass, godmodeval)
         task.wait(0.3)
         GetToolsfix()
         task.wait(0.5)
+        -- Recurse once to finish the cut without godmode
         bringTree("LoneCave", false)
     else
+        -- Standard tree: keep player on trunk and keep cutting lowest section
+        -- until treeCut flag is set (log spawned)
+        local cutStart = tick()
         repeat
             if not getgenv().treestop then break end
-            cutPart(tree.tree.CutEvent, 1, 0.3, data, treeClass)
-            task.wait()
-        until getgenv().treeCut
+            -- Keep player close to trunk base
+            pcall(function()
+                player.Character.HumanoidRootPart.CFrame = tree.trunk.CFrame * CFrame.new(0, 0, 3)
+            end)
+            -- Cut the base section (ID=1, height=0 = ground level cut)
+            cutPart(tree.tree.CutEvent, 1, 0, toolData, treeClass)
+            task.wait(0.05)
+        until getgenv().treeCut or (tick() - cutStart > 30)
     end
+
+    -- Wait a moment then return player
+    task.wait(0.8)
+    getgenv().treeCut = false
+    tp(oldPosition)
 
     if treeClass == "LoneCave" then
-        task.wait(1)
-        tp(oldPosition)  -- Vector3 teleport back
         getgenv().doneend  = true
-        getgenv().treeCut  = false
         getgenv().treestop = false
-    else
-        task.wait(1)
-        getgenv().treeCut = false
-        tp(oldPosition)  -- Vector3 teleport back
     end
+
+    return true
 end
 
--- ── BringAllLogs (exact port) ─────────────────────────────────────────────────
+-- ── BringAllLogs ──────────────────────────────────────────────────────────────
 local function BringAllLogs()
     local OldPos = player.Character.HumanoidRootPart.CFrame
     for _, v in next, workspace.LogModels:GetChildren() do
@@ -707,7 +800,7 @@ local function BringAllLogs()
     player.Character.HumanoidRootPart.CFrame = OldPos
 end
 
--- ── SellAllLogs (exact port) ──────────────────────────────────────────────────
+-- ── SellAllLogs ───────────────────────────────────────────────────────────────
 local function SellAllLogs()
     local OldPos = player.Character.HumanoidRootPart.CFrame
     for _, v in next, workspace.LogModels:GetChildren() do
@@ -729,7 +822,7 @@ local function SellAllLogs()
     player.Character.HumanoidRootPart.CFrame = OldPos
 end
 
--- ── DismemberTree (exact port) ────────────────────────────────────────────────
+-- ── DismemberTree ─────────────────────────────────────────────────────────────
 local function DismemberTree()
     local OldPos = player.Character.HumanoidRootPart.CFrame
     local LogChopped = false
@@ -768,7 +861,7 @@ local function DismemberTree()
     player.Character.HumanoidRootPart.CFrame = OldPos
 end
 
--- ── ViewEndTree (exact port) ──────────────────────────────────────────────────
+-- ── ViewEndTree ───────────────────────────────────────────────────────────────
 local function ViewEndTree(Val)
     for _, v in pairs(workspace:GetChildren()) do
         if v.Name == "TreeRegion" then
@@ -785,9 +878,7 @@ local function ViewEndTree(Val)
     end
 end
 
--- ChopTree is defined earlier (line ~439) — used by DismemberTree AND OneUnitCutter
--- OneUnitCutter: exact port from Butterhub
--- Click a WoodSection → auto-chop down to ≤1.88 studs on each axis
+-- ── OneUnitCutter ─────────────────────────────────────────────────────────────
 local UnitCutter      = false
 local PlankReAdded    = nil
 local UnitCutterClick = nil
@@ -804,24 +895,20 @@ local function OneUnitCutter(Val)
         if UnitCutterClick then UnitCutterClick:Disconnect(); UnitCutterClick = nil end
         return
     end
-    -- Listen for new planks added to PlayerModels (after a cut)
     PlankReAdded = workspace.PlayerModels.ChildAdded:Connect(function(v)
         if v:WaitForChild("TreeClass") and v:WaitForChild("WoodSection") then
             SelTree = v
             task.wait()
         end
     end)
-    -- Use Mouse.Button1Up (legacy API) — exact match to Butterhub source
     UnitCutterClick = woodMouse.Button1Up:Connect(function()
         local Clicked = woodMouse.Target
         if not PlrHasTool() then return end
         if Clicked and Clicked.Name == "WoodSection" then
             SelTree = Clicked.Parent
-            -- Move player next to the wood section
             player.Character:MoveTo(Clicked.Position + Vector3.new(0, 3, -3))
             repeat
                 if UnitCutter == false then break end
-                -- height=1 (not 0.3) — exact Butterhub value for 1x1 cut
                 ChopTree(SelTree.CutEvent, 1, 1, SelTree.TreeClass.Value)
                 if SelTree:FindFirstChild("WoodSection") then
                     player.Character:MoveTo(
@@ -836,9 +923,10 @@ local function OneUnitCutter(Val)
     end)
 end
 
--- ── ModWood (exact port from Butterhub) ───────────────────────────────────────
--- Modded wood: uses lava-fire to separate a branch from the tree then
--- delivers the selected branch to the sawmill's cut zone.
+-- ── ModWood — FIXED with popup overlay ────────────────────────────────────────
+-- Step 1: Show overlay "Click on sawmill" → player clicks → store sawmill
+-- Step 2: Overlay updates to "Click on tree branch" → player clicks → process
+-- The actual cut + deliver logic is unchanged from the original.
 local ModWoodSawmill  = nil
 local ModWoodOn       = false
 local ModwoodConn     = nil
@@ -850,20 +938,6 @@ local parentbranch    = nil
 local childbranchId   = nil
 local firstpart       = nil
 
--- SelectSawmill: player clicks a sawmill and we store the reference
-local SelectSawmillConn = nil
-local function SelectSawmill(typeStr)
-    SelectSawmillConn = woodMouse.Button1Up:Connect(function()
-        local target = woodMouse.Target
-        if not target then return end
-        local model = target.Parent
-        if model:FindFirstChild("ItemName") and model.ItemName.Value:find("Sawmill") then
-            ModWoodSawmill = model
-            if SelectSawmillConn then SelectSawmillConn:Disconnect(); SelectSawmillConn = nil end
-        end
-    end)
-end
-
 local function ifworked()
     worked = false
     addedstuff = workspace.LogModels.ChildAdded:Connect(function(v)
@@ -874,27 +948,51 @@ local function ifworked()
 end
 
 local function ModWood()
-    ModWoodSawmill = nil
-    SelectSawmill("Mod Wood")
-    repeat task.wait() until ModWoodSawmill
+    -- Show overlay for sawmill selection
+    local overlay = showOverlay("🪚  Click on a Sawmill", "Click the sawmill you want to use for Mod Wood")
 
-    ModWoodOn = true
+    ModWoodSawmill = nil
+    ModWoodOn = false
     treelimbblist = {}
     childbranch   = nil
     parentbranch  = nil
     firstpart     = nil
 
+    -- Step 1: Wait for player to click a sawmill
+    local sawmillConn
+    sawmillConn = woodMouse.Button1Up:Connect(function()
+        local target = woodMouse.Target
+        if not target then return end
+        local model = target.Parent
+        if model:FindFirstChild("ItemName") and model.ItemName.Value:find("Sawmill") then
+            ModWoodSawmill = model
+            sawmillConn:Disconnect()
+            -- Update overlay to next step
+            overlay.Dismiss()
+            task.wait(0.1)
+            overlay = showOverlay("🌲  Click on a tree branch", "Click the branch you want to mod-cut")
+        end
+    end)
+
+    -- Wait until sawmill selected
+    repeat task.wait() until ModWoodSawmill
+
+    ModWoodOn = true
+
+    -- Step 2: Wait for player to click a tree branch
     ModwoodConn = woodMouse.Button1Down:Connect(function()
         local Clicked = woodMouse.Target
         if not Clicked then return end
         if Clicked.Parent:FindFirstAncestor("LogModels") then
             if Clicked.Parent:FindFirstChild("Owner") and Clicked.Parent.Owner.Value == player then
+                -- Find all leaf IDs (sections with no children)
                 for _, v in pairs(Clicked.Parent:GetDescendants()) do
                     if v.Name == "ChildIDs" and #(v:GetChildren()) == 0 then
                         table.insert(treelimbblist, v.Parent.ID.Value)
                     end
                 end
                 table.sort(treelimbblist)
+                -- Find parent and child branch
                 for _, v in pairs(Clicked.Parent:GetDescendants()) do
                     if v.Name == "ChildIDs" then
                         for _, v2 in pairs(v:GetChildren()) do
@@ -915,7 +1013,14 @@ local function ModWood()
         end
     end)
 
+    -- Wait until branch selected
     repeat task.wait() until childbranch
+
+    -- Dismiss overlay — processing begins
+    overlay.Dismiss()
+
+    -- Disconnect the click listener now that we have our branch
+    if ModwoodConn then ModwoodConn:Disconnect(); ModwoodConn = nil end
 
     local oldpos   = player.Character.HumanoidRootPart.CFrame
     local LavaPart = GetLava()
@@ -959,7 +1064,6 @@ local function ModWood()
     RS.Interaction.ClientIsDragging:FireServer(childbranch.Parent)
     childbranch:PivotTo(CFrame.new(-1055, 291, -458))
 
-    -- Clean up lava forces
     pcall(function() parentbranch:FindFirstChild("LavaFire"):Destroy() end)
     pcall(function() parentbranch:FindFirstChild("BodyAngularVelocity"):Destroy() end)
     pcall(function() parentbranch:FindFirstChild("BodyVelocity"):Destroy() end)
@@ -967,7 +1071,7 @@ local function ModWood()
     player.Character.HumanoidRootPart.CFrame = parentbranch.CFrame
     task.wait(0.1)
 
-    -- Sell the parent branch at wood dropoff
+    -- Sell parent branch at wood dropoff
     repeat
         RS.Interaction.ClientIsDragging:FireServer(parentbranch.Parent)
         parentbranch:PivotTo(CFrame.new(314.54, -0.5, 86.823))
@@ -985,7 +1089,7 @@ local function ModWood()
         until worked
     end)
 
-    -- Chop the child branch off with best axe
+    -- Chop child branch
     repeat
         task.wait()
         RS.Interaction.RemoteProxy:FireServer(
@@ -1014,7 +1118,7 @@ local function ModWood()
     RS.Interaction.ClientIsDragging:FireServer(childbranch.Parent)
     task.wait(0.3)
 
-    -- Deliver child branch to sawmill
+    -- Deliver child branch to selected sawmill
     childbranch:PivotTo(ModWoodSawmill.Particles.CFrame + Vector3.new(0, .5, 0))
 
     player.Character.HumanoidRootPart.CFrame = oldpos
@@ -1027,15 +1131,14 @@ local function ModWood()
     treelimbblist = {}
     firstpart     = nil
     ModWoodSawmill = nil
-    if addedstuff      then addedstuff:Disconnect();   addedstuff   = nil end
-    if ModwoodConn     then ModwoodConn:Disconnect();  ModwoodConn  = nil end
+    if addedstuff then addedstuff:Disconnect(); addedstuff = nil end
 end
 
 -- ════════════════════════════════════════════════════
--- WOOD TAB — SELL ENGINE  (smooth per-log sell)
+-- WOOD TAB — SELL ENGINE
 -- ════════════════════════════════════════════════════
 
-local SELL_CONFIRM = 6     -- studs
+local SELL_CONFIRM = 6
 local SELL_TIMEOUT = 3.0
 
 local function isWoodLog(model)
@@ -1046,7 +1149,6 @@ local function isWoodLog(model)
     return true
 end
 
--- Selection state
 local woodSelected    = {}
 local clickSellEnabled   = false
 local groupSelectEnabled = false
@@ -1374,12 +1476,11 @@ end
 
 local TREE_LIST = {
     "Generic","Walnut","Cherry","Oak","Birch","Koa","Fir",
-    "Pine","Palm","Koa",
+    "Pine","Palm",
     "SnowGlow","Frost","Spooky","SpookyNeon",
     "Volcano","GreenSwampy","GoldSwampy","CaveCrawler",
     "LoneCave",
 }
--- deduplicate
 do
     local seen = {}; local out = {}
     for _, v in ipairs(TREE_LIST) do
@@ -1390,8 +1491,8 @@ end
 
 local selectedTree = nil
 local bringAmount  = 1
+local bringAbort   = false   -- flag to stop the bring loop
 
--- ── Bring Tree section ───────────────────────────────────────────────────────
 createWSectionLabel("Bring Tree")
 makeFancyDropdown(woodPage, "Tree", function() return TREE_LIST end, function(val)
     selectedTree = val
@@ -1439,27 +1540,38 @@ do
     end)
 end
 
+-- ── FIX: Bring Tree button loops for requested amount ─────────────────────────
+-- Each iteration: TP to tree → cut trunk base → log dragged back → loop
 createWButton("Bring Tree", Color3.fromRGB(35,80,35), function()
     if not selectedTree then return end
+    bringAbort = false
+    getgenv().treestop = true
     task.spawn(function()
         if selectedTree == "LoneCave" then
+            -- LoneCave always does 1 run (godmode required)
             bringTree(selectedTree, true)
         else
-            for _ = 1, bringAmount do
-                bringTree(selectedTree, false)
+            for i = 1, bringAmount do
+                if bringAbort then break end
+                local success = bringTree(selectedTree, false)
+                if not success then break end
+                -- Small cooldown between runs so the tree can respawn
+                if i < bringAmount then
+                    task.wait(2)
+                end
             end
         end
     end)
 end)
 
 createWButton("Abort Bring", BTN_COLOR, function()
+    bringAbort = true
     getgenv().treestop = false
     task.wait(5)
     getgenv().treestop = true
 end)
 
 createWSep()
--- ── Log Actions ───────────────────────────────────────────────────────────────
 createWSectionLabel("Log Actions")
 createWButton("Bring All Logs", BTN_COLOR, function()
     task.spawn(BringAllLogs)
@@ -1469,7 +1581,6 @@ createWButton("Sell All Logs", Color3.fromRGB(35,90,35), function()
 end)
 
 createWSep()
--- ── Click Sell / Selection ────────────────────────────────────────────────────
 createWSectionLabel("Sell Features")
 createWToggle("Click Sell (click log to sell it)", false, function(val)
     clickSellEnabled = val
@@ -1513,7 +1624,6 @@ end)
 createWButton("Clear Selection", BTN_COLOR, function() unhighlightAllWood() end)
 
 createWSep()
--- ── 1x1 Cut ───────────────────────────────────────────────────────────────────
 createWSectionLabel("Sawmill — 1x1 Cut")
 createWInfoLabel("  Enables click-to-cut. Click any plank/WoodSection to chop it down to 1×1 size.")
 createWToggle("1x1 Cut (click to cut)", false, function(val)
@@ -1522,11 +1632,13 @@ createWToggle("1x1 Cut (click to cut)", false, function(val)
 end)
 
 createWSep()
--- ── Advanced ──────────────────────────────────────────────────────────────────
 createWSectionLabel("Advanced Wood")
+
+-- ── FIX: Mod Wood now shows a popup overlay guiding the user ─────────────────
 createWButton("Mod Wood (click tree branch)", Color3.fromRGB(60,40,80), function()
     task.spawn(ModWood)
 end)
+
 createWButton("Dismember Tree (click log)", BTN_COLOR, function()
     task.spawn(DismemberTree)
 end)
@@ -1582,13 +1694,13 @@ end)
 table.insert(cleanupTasks, function()
     if inputConn     then inputConn:Disconnect();     inputConn     = nil end
     isSellRunning    = false; clickSellBusy = false
+    bringAbort       = true
     if clickSellConn   then pcall(function() clickSellConn:Disconnect()   end); clickSellConn   = nil end
     if currentSellConn then pcall(function() currentSellConn:Disconnect() end); currentSellConn = nil end
     if PlankReAdded    then PlankReAdded:Disconnect();   PlankReAdded   = nil end
     if UnitCutterClick then UnitCutterClick:Disconnect(); UnitCutterClick = nil end
     if ModwoodConn     then ModwoodConn:Disconnect();    ModwoodConn    = nil end
     if addedstuff      then addedstuff:Disconnect();     addedstuff     = nil end
-    if SelectSawmillConn then SelectSawmillConn:Disconnect(); SelectSawmillConn = nil end
     disconnectWoodMouse()
     enableCharCollision(player.Character)
     unhighlightAllWood()
