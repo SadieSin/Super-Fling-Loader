@@ -853,9 +853,9 @@ makeButton(sl, "Load Base", function() loadSlot(slotNum) end)
 
 sep(sl)
 sectionLabel(sl, "Land Management")
-makeButton(sl, "Claim Free Land", freeLand)
-makeButton(sl, "Max Expand Land", maxLand)
-makeButton(sl, "Sell Sold Sign", sellSoldSign)
+makeButton(sl, "Free Land", freeLand)
+makeButton(sl, "Max Land", maxLand)
+makeButton(sl, "Sell Sign", sellSoldSign)
 
 sep(sl)
 sectionLabel(sl, "Land Claim")
