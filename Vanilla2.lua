@@ -416,7 +416,6 @@ local _, getReceiverName = makeDupeDropdown("Receiver")
 createDSep()
 createDSection("What to Transfer")
 
--- "Teleport" prefix added to all transfer toggle labels
 local _, getStructures = createDToggle("Teleport Structures",      false)
 local _, getFurniture  = createDToggle("Teleport Furniture",       false)
 local _, getTrucks     = createDToggle("Teleport Trucks",          false)
@@ -501,7 +500,6 @@ end)
 -- ════════════════════════════════════════════════════
 
 -- Seconds for trucks and cargo to travel to receiver plot.
--- Raise this number to make movement even slower.
 local TRUCK_TWEEN_DURATION = 2.0
 
 -- Smoothly tween a single BasePart's CFrame to targetCF over duration seconds
@@ -515,20 +513,25 @@ local function tweenPartCFrame(part, targetCF, duration)
     tween.Completed:Wait()
 end
 
--- Smoothly tween an entire Model to targetCF via its PrimaryPart
+-- ════════════════════════════════════════════════════
+-- FIX: tweenModelCFrame now moves the truck's Main
+-- BasePart directly so welds drag the whole model.
+-- ════════════════════════════════════════════════════
 local function tweenModelCFrame(model, targetCF, duration)
-    local primary = model.PrimaryPart
-    if not primary then
-        model:SetPrimaryPartCFrame(targetCF)
+    -- Prefer "Main" — the welded root part in LT2 trucks
+    local main = model:FindFirstChild("Main")
+    if main and main:IsA("BasePart") then
+        tweenPartCFrame(main, targetCF, duration)
         return
     end
-    local tween = TweenService:Create(
-        primary,
-        TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
-        { CFrame = targetCF }
-    )
-    tween:Play()
-    tween.Completed:Wait()
+    -- Fallback: PrimaryPart
+    local primary = model.PrimaryPart
+    if primary then
+        tweenPartCFrame(primary, targetCF, duration)
+        return
+    end
+    -- Last resort: instant move
+    pcall(function() model:SetPrimaryPartCFrame(targetCF) end)
 end
 
 -- ════════════════════════════════════════════════════
@@ -621,11 +624,13 @@ function DupeBase()
     local function TeleportTruck()
         if getgenv().DidTruckTeleport then return end
         if not Character.Humanoid.SeatPart then return end
-        local TruckCFrame = Character.Humanoid.SeatPart.Parent:FindFirstChild("Main").CFrame
+        local truckModel = Character.Humanoid.SeatPart.Parent
+        local TruckCFrame = truckModel:FindFirstChild("Main") and truckModel.Main.CFrame
+        if not TruckCFrame then return end
         local newPos = TruckCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
         local Offset = CFrame.new(newPos) * TruckCFrame.Rotation
-        -- Slowly tween the whole truck model to the receiver plot
-        tweenModelCFrame(Character.Humanoid.SeatPart.Parent, Offset, TRUCK_TWEEN_DURATION)
+        -- FIX: tween Main directly so the whole truck moves with its welds
+        tweenModelCFrame(truckModel, Offset, TRUCK_TWEEN_DURATION)
         getgenv().DidTruckTeleport = true
     end
 
@@ -656,7 +661,6 @@ function DupeBase()
                                         local PartCFrame   = part.CFrame
                                         local nPos         = PartCFrame.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                                         local targetOffset = CFrame.new(nPos) * PartCFrame.Rotation
-                                        -- Slowly tween cargo parts toward receiver plot
                                         tweenPartCFrame(part, targetOffset, TRUCK_TWEEN_DURATION)
                                         table.insert(teleportedParts, { Instance=part, OldPos=oldPos, TargetCFrame=targetOffset })
                                     end
@@ -665,8 +669,10 @@ function DupeBase()
                         end
                     end
 
-                    -- Slowly tween truck itself to receiver plot
-                    TeleportTruck()
+                    -- FIX: spawn truck tween so it runs alongside cargo tweens
+                    task.spawn(function()
+                        TeleportTruck()
+                    end)
 
                     local SitPart   = Character.Humanoid.SeatPart
                     local DoorHinge = SitPart.Parent:FindFirstChild("PaintParts").DoorLeft:FindFirstChild("ButtonRemote_Hinge")
@@ -753,7 +759,7 @@ function DupeBase()
                     end
                     pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
-                    task.wait(0.6)  -- item teleport delay
+                    task.wait(0.6)
                     print("Sent Item")
                 end
             end
@@ -778,7 +784,7 @@ function DupeBase()
                     end
                     pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
-                    task.wait(0.6)  -- item teleport delay
+                    task.wait(0.6)
                     print("Sent Item")
                 end
             end
@@ -786,6 +792,7 @@ function DupeBase()
     end
 
     -- ── Wood ─────────────────────────────────────────
+    -- task.wait delay set to 0 for instant wood teleport
     if getgenv().TeleportWood then
         for _, v in pairs(workspace.PlayerModels:GetDescendants()) do
             if v.Name == "Owner" and tostring(v.Value) == getgenv().GiverPlayer then
@@ -807,7 +814,7 @@ function DupeBase()
                     end
                     pcall(isitemownersecondary, part)
                     for i = 1, 200 do part.CFrame = Offset end
-                    task.wait(0.6)  -- item teleport delay
+                    task.wait(0)   -- instant: was 0.6
                     print("Sent Item")
                 end
             end
@@ -923,7 +930,6 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
                             local pCF    = part.CFrame
                             local nPos   = pCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
                             local target = CFrame.new(nPos) * pCF.Rotation
-                            -- Slowly tween cargo toward receiver plot
                             task.spawn(function()
                                 tweenPartCFrame(part, target, TRUCK_TWEEN_DURATION)
                             end)
@@ -933,11 +939,14 @@ createDBtn("Teleport Single Truck", Color3.fromRGB(45,70,120), function()
                 end
             end
 
-            -- ── Slowly tween the truck itself ─────────────────
+            -- ── FIX: Spawn truck tween non-blocking so sit runs concurrently ──
             local tCF   = truckModel.Main.CFrame
             local tNPos = tCF.Position - GiveBaseOrigin.Position + ReceiverBaseOrigin.Position
             local tOff  = CFrame.new(tNPos) * tCF.Rotation
-            tweenModelCFrame(truckModel, tOff, TRUCK_TWEEN_DURATION)
+            task.spawn(function()
+                tweenModelCFrame(truckModel, tOff, TRUCK_TWEEN_DURATION)
+            end)
+            task.wait(0.1) -- small gap so player sits while truck is still reachable
 
             -- ── Sit in DriveSeat, then eject + open door ──────
             local Humanoid = char and char:FindFirstChild("Humanoid")
